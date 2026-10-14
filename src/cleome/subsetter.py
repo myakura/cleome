@@ -57,11 +57,10 @@ def _create_subset_options(
     return options
 
 
-# Per-worker cached font bytes to avoid re-reading disk on every slice in ProcessPoolExecutor
+# Per-worker cached font bytes and options to avoid re-reading disk on every slice
 _WORKER_FONT_BYTES: bytes | None = None
-_WORKER_PATCH_UVS: bool = True
-_WORKER_RETAIN_CLOSURE: bool = True
-_WORKER_DROP_TABLES: tuple[str, ...] = ()
+_WORKER_PATCH_UVS: bool = False
+_WORKER_OPTIONS: Options | None = None
 
 
 def _init_subset_worker(
@@ -70,11 +69,19 @@ def _init_subset_worker(
     retain_closure: bool,
     drop_tables: tuple[str, ...],
 ) -> None:
-    global _WORKER_FONT_BYTES, _WORKER_PATCH_UVS, _WORKER_RETAIN_CLOSURE, _WORKER_DROP_TABLES
+    global _WORKER_FONT_BYTES, _WORKER_PATCH_UVS, _WORKER_OPTIONS
     _WORKER_FONT_BYTES = font_bytes
     _WORKER_PATCH_UVS = patch_uvs
-    _WORKER_RETAIN_CLOSURE = retain_closure
-    _WORKER_DROP_TABLES = drop_tables
+    _WORKER_OPTIONS = _create_subset_options(
+        retain_layout_closure=retain_closure,
+        drop_tables=drop_tables,
+    )
+
+
+def _clear_subset_worker() -> None:
+    global _WORKER_FONT_BYTES, _WORKER_OPTIONS
+    _WORKER_FONT_BYTES = None
+    _WORKER_OPTIONS = None
 
 
 def _subset_single_slice_worker(
@@ -82,25 +89,20 @@ def _subset_single_slice_worker(
 ) -> tuple[str, int, int]:
     """Worker function: subset cached font bytes to `codepoints` and write WOFF2 to `out_path_str`."""
     codepoints, out_path_str = task
-    assert _WORKER_FONT_BYTES is not None
-    font = TTFont(io.BytesIO(_WORKER_FONT_BYTES))
-    if _WORKER_PATCH_UVS:
-        patch_uvs_missing_base_cmap(font)
+    assert _WORKER_FONT_BYTES is not None and _WORKER_OPTIONS is not None
+    with TTFont(io.BytesIO(_WORKER_FONT_BYTES), lazy=True) as font:
+        if _WORKER_PATCH_UVS:
+            patch_uvs_missing_base_cmap(font)
 
-    options = _create_subset_options(
-        retain_layout_closure=_WORKER_RETAIN_CLOSURE,
-        drop_tables=_WORKER_DROP_TABLES,
-    )
-    subsetter = Subsetter(options=options)
-    subsetter.populate(unicodes=codepoints)
-    subsetter.subset(font)
+        subsetter = Subsetter(options=_WORKER_OPTIONS)
+        subsetter.populate(unicodes=codepoints)
+        subsetter.subset(font)
 
-    font.flavor = "woff2"
-    out_path = Path(out_path_str)
-    font.save(out_path)
-    num_glyphs = len(font.getGlyphOrder())
+        font.flavor = "woff2"
+        out_path = Path(out_path_str)
+        font.save(out_path)
+        num_glyphs = len(font.getGlyphOrder())
     size_bytes = out_path.stat().st_size
-    font.close()
     return out_path_str, size_bytes, num_glyphs
 
 
@@ -115,7 +117,7 @@ def serialize_font_to_bytes(font: TTFont) -> bytes:
 
 
 def export_woff2_slices(
-    font_or_bytes: TTFont | bytes | Path,
+    font_or_bytes: TTFont | bytes | Path | str,
     meta: FontMetadata,
     slice_specs: list[SliceSpec],
     slices_dir: Path,
@@ -130,16 +132,25 @@ def export_woff2_slices(
 
     slices_dir.mkdir(parents=True, exist_ok=True)
 
+    worker_needs_uvs_patch = False
     if isinstance(font_or_bytes, (str, Path)):
         p = Path(font_or_bytes)
-        # If input is already a WOFF2 file, decompress to SFNT bytes once so workers load fast
-        tmp_font = TTFont(p)
-        if config.patch_uvs_only_cmap:
-            patch_uvs_missing_base_cmap(tmp_font)
-        font_bytes = serialize_font_to_bytes(tmp_font)
-        tmp_font.close()
+        with TTFont(p, lazy=True) as probe:
+            is_woff = probe.flavor is not None
+        if not is_woff and not meta.patched_uvs_codepoints:
+            # Fast path: raw SFNT (.ttf/.otf) on disk with no missing UVS cmap entries
+            font_bytes = p.read_bytes()
+        elif not is_woff and meta.patched_uvs_codepoints:
+            # Fast path: read raw SFNT bytes once and let workers apply lightweight cmap dict patch
+            font_bytes = p.read_bytes()
+            worker_needs_uvs_patch = True
+        else:
+            with TTFont(p) as tmp_font:
+                if config.patch_uvs_only_cmap:
+                    patch_uvs_missing_base_cmap(tmp_font)
+                font_bytes = serialize_font_to_bytes(tmp_font)
     elif isinstance(font_or_bytes, TTFont):
-        if config.patch_uvs_only_cmap:
+        if config.patch_uvs_only_cmap and not meta.patched_uvs_codepoints:
             patch_uvs_missing_base_cmap(font_or_bytes)
         font_bytes = serialize_font_to_bytes(font_or_bytes)
     else:
@@ -169,25 +180,31 @@ def export_woff2_slices(
     if max_workers <= 1 or len(tasks) <= 2:
         _init_subset_worker(
             font_bytes,
-            False,  # already patched before serialization
+            worker_needs_uvs_patch,
             config.retain_layout_closure,
             config.drop_tables,
         )
-        for t in tasks:
-            out_str, sz, ng = _subset_single_slice_worker(t)
-            results_map[out_str] = (sz, ng)
+        try:
+            for t in tasks:
+                out_str, sz, ng = _subset_single_slice_worker(t)
+                results_map[out_str] = (sz, ng)
+        finally:
+            _clear_subset_worker()
     else:
+        chunksize = max(1, len(tasks) // (max_workers * 2))
         with ProcessPoolExecutor(
             max_workers=max_workers,
             initializer=_init_subset_worker,
             initargs=(
                 font_bytes,
-                False,
+                worker_needs_uvs_patch,
                 config.retain_layout_closure,
                 config.drop_tables,
             ),
         ) as pool:
-            for out_str, sz, ng in pool.map(_subset_single_slice_worker, tasks):
+            for out_str, sz, ng in pool.map(
+                _subset_single_slice_worker, tasks, chunksize=chunksize
+            ):
                 results_map[out_str] = (sz, ng)
 
     built_files: list[BuiltSliceFile] = []
@@ -205,3 +222,4 @@ def export_woff2_slices(
             )
         )
     return built_files
+

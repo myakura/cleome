@@ -161,17 +161,18 @@ def slice_fonts(
     subdir = config.slices_subdir.strip().strip("/")
     slices_dir = out_path if (not subdir or subdir == ".") else (out_path / subdir)
 
-    loaded_fonts: list[tuple[TTFont, bool]] = []
+    loaded_fonts: list[tuple[TTFont, Path | None, bool]] = []
     try:
         for f in fonts:
             if isinstance(f, TTFont):
-                loaded_fonts.append((f, False))
+                loaded_fonts.append((f, None, False))
             else:
-                loaded_fonts.append((TTFont(Path(f)), True))
+                p = Path(f)
+                loaded_fonts.append((TTFont(p, lazy=True), p, True))
 
         # 1. Extract metadata from each font
         raw_metas: list[FontMetadata] = []
-        for tt, _ in loaded_fonts:
+        for tt, _, _ in loaded_fonts:
             m = extract_font_metadata(
                 tt,
                 family_override=family_name,
@@ -198,22 +199,32 @@ def slice_fonts(
                 style_css=m.style_css,
                 variant_suffix=v_suf,
                 codepoints=m.codepoints,
+                patched_uvs_codepoints=m.patched_uvs_codepoints,
             )
             for m, v_suf in zip(raw_metas, variant_suffixes)
         ]
 
-        # 2. Build dynamic 4-tier slice plan from the union of codepoints across all input variants
-        union_codepoints = frozenset({*m.codepoints for m in metas})
-        slice_specs = build_slice_plan(union_codepoints, config=config)
+        # 2. Build dynamic 4-tier slice plan (cached by codepoints frozenset so variants with
+        # identical cmaps share the plan, while variants with differing cmaps get exact ranges)
+        plan_cache: dict[frozenset[int], list[SliceSpec]] = {}
+        for m in metas:
+            if m.codepoints not in plan_cache:
+                plan_cache[m.codepoints] = build_slice_plan(m.codepoints, config=config)
 
-        # 3. Export WOFF2 slices for each input font
+        union_codepoints = frozenset({*m.codepoints for m in metas})
+        slice_specs = plan_cache.get(union_codepoints) or build_slice_plan(
+            union_codepoints, config=config
+        )
+
+        # 3. Export WOFF2 slices for each input font (pass disk Path when available to avoid TTFont.save())
         fonts_and_files: list[tuple[FontMetadata, list[BuiltSliceFile]]] = []
         all_built_files: list[BuiltSliceFile] = []
-        for (tt, _), m in zip(loaded_fonts, metas):
+        for (tt, src_path, _), m in zip(loaded_fonts, metas):
+            variant_specs = plan_cache[m.codepoints]
             built = export_woff2_slices(
-                tt,
+                src_path if src_path is not None else tt,
                 meta=m,
-                slice_specs=slice_specs,
+                slice_specs=variant_specs,
                 slices_dir=slices_dir,
                 config=config,
                 workers=workers,
@@ -238,7 +249,7 @@ def slice_fonts(
             fonts_metadata=metas,
         )
     finally:
-        for tt, should_close in loaded_fonts:
+        for tt, _, should_close in loaded_fonts:
             if should_close:
                 tt.close()
 
