@@ -8,7 +8,7 @@ version = "0.1.0"
 description = "Smart unicode-range WOFF2 slicer and @font-face CSS generator for Japanese Variable and Static web fonts"
 readme = "README.md"
 license = { file = "LICENSE" }
-requires-python = ">=3.12"
+requires-python = ">=3.15"
 dependencies = [
     "fonttools[woff]>=4.50.0",
     "brotli>=1.1.0",
