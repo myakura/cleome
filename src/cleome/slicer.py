@@ -71,6 +71,7 @@ class FontMetadata:
     style_css: str
     variant_suffix: str = ""
     codepoints: frozenset[int] = field(default_factory=frozenset)
+    patched_uvs_codepoints: tuple[int, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -99,9 +100,10 @@ def slugify_family(name: str) -> str:
 
 def patch_uvs_missing_base_cmap(font: TTFont) -> list[int]:
     """
-    Detect characters that exist in cmap Format 14 (UVS) with a concrete default/variant glyph
+    Detect characters that exist in cmap Format 14 (UVS) with a concrete variant glyph
     but were accidentally omitted from Format 4/12 (such as U+553E '唾' in Adobe SourceHanSansJP-VF.otf v2.005)
-    and patch them into the best cmap tables in-memory.
+    and patch them into the base cmap tables in-memory.
+    Iterates variation selectors in ascending codepoint order so U+E0100 (standard base form) always wins.
     """
     if "cmap" not in font:
         return []
@@ -109,20 +111,22 @@ def patch_uvs_missing_base_cmap(font: TTFont) -> list[int]:
     uvs_additions: dict[int, str] = {}
     for table in font["cmap"].tables:
         if getattr(table, "format", None) == 14 and hasattr(table, "uvsDict"):
-            for _uvs_selector, records in table.uvsDict.items():
+            for _uvs_selector, records in sorted(table.uvsDict.items()):
                 for cp, gname in records:
                     if cp not in best_cmap and cp not in uvs_additions and gname is not None:
                         uvs_additions[cp] = gname
     if not uvs_additions:
         return []
 
+    patched: set[int] = set()
     for table in font["cmap"].tables:
         if getattr(table, "format", None) in (4, 12) and hasattr(table, "cmap"):
             for cp, gname in uvs_additions.items():
                 if table.format == 4 and cp > 0xFFFF:
                     continue
                 table.cmap[cp] = gname
-    return sorted(uvs_additions.keys())
+                patched.add(cp)
+    return sorted(patched)
 
 
 def _fmt_num(val: float) -> str:
@@ -143,8 +147,7 @@ def extract_font_metadata(
     patch_uvs: bool = True,
 ) -> FontMetadata:
     """Inspect TTFont tables (`name`, `fvar`, `OS/2`, `post`, `cmap`) to build FontMetadata."""
-    if patch_uvs:
-        patch_uvs_missing_base_cmap(font)
+    patched_uvs = tuple(patch_uvs_missing_base_cmap(font)) if patch_uvs else ()
 
     # 1. Detect family name (prefer Typographic Family Name ID 16, then Family Name ID 1)
     detected_family = "Custom Font"
@@ -225,6 +228,7 @@ def extract_font_metadata(
         style_css=style_css,
         variant_suffix=variant_suffix,
         codepoints=codepoints,
+        patched_uvs_codepoints=patched_uvs,
     )
 
 

@@ -274,6 +274,35 @@ class TestCleomeSlicer(unittest.TestCase):
             has_tip = any(0x30000 <= c <= 0x323AF for c in ur_cps)
             self.assertFalse(has_sip and has_tip, f"Slice {s.slice_id} bridged SIP and TIP: {s.css_unicode_range}")
 
+    def test_uvs_selector_deterministic_priority(self) -> None:
+        """
+        Verify that when multiple UVS selectors exist in Format 14 for an unmapped base character,
+        the lowest selector (U+E0100 standard base form) always takes precedence regardless of dict order.
+        """
+        tt = _create_synthetic_ttfont([ord("A")])
+        # Manually append two glyphs and a Format 14 table with U+E0102 inserted before U+E0100
+        glyph_order = tt.getGlyphOrder() + ["glyph_iv2", "glyph_iv0"]
+        tt.setGlyphOrder(glyph_order)
+        tt["glyf"]["glyph_iv2"] = tt["glyf"]["uni0041"]
+        tt["glyf"]["glyph_iv0"] = tt["glyf"]["uni0041"]
+        tt["hmtx"]["glyph_iv2"] = (1000, 100)
+        tt["hmtx"]["glyph_iv0"] = (1000, 100)
+
+        sub14 = CmapSubtable.newSubtable(14)
+        sub14.platformID = 0
+        sub14.platEncID = 5
+        sub14.language = 0
+        sub14.cmap = {}
+        sub14.uvsDict = {
+            0xE0102: [(0x553E, "glyph_iv2")],
+            0xE0100: [(0x553E, "glyph_iv0")],
+        }
+        tt["cmap"].tables.append(sub14)
+
+        meta = extract_font_metadata(tt, patch_uvs=True)
+        self.assertIn(0x553E, meta.codepoints)
+        self.assertEqual(tt.getBestCmap()[0x553E], "glyph_iv0")
+
     def test_end_to_end_variable_and_static_export(self) -> None:
         """Test actual WOFF2 slice generation and CSS output for Variable and Static fonts."""
         sample_chars = "A0€あむモヶ「」→▶①Ωα日人一𠮟𠮷鷗" + "".join(chr(cp) for cp in range(0x4E10, 0x4E30))
