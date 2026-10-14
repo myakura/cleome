@@ -214,23 +214,26 @@ class TestCleomeSlicer(unittest.TestCase):
                 )
 
         # Check Kana Core zero-omission guarantee (`む`, `モ`, `ヶ`, `ヵ`, `ゐ`, `ヱ`, `ゔ`, `「`, `」`, `０`)
-        kana_slice = next(s for s in plan if s.slice_id == "kana-core")
+        kana_slice = next((s for s in plan if s.slice_id == "kana-core"), None)
         for ch in "あむモヶヵゐヱゔ、。「」【】０９ＡＺㇰㇿ":
             cp = ord(ch)
             if cp in codepoints:
+                self.assertIsNotNone(kana_slice)
                 self.assertIn(cp, kana_slice.binary_codepoints, f"'{ch}' missing from kana-core")
 
         # Check Latin & UI Symbols placement
-        latin_slice = next(s for s in plan if s.slice_id == "latin")
+        latin_slice = next((s for s in plan if s.slice_id == "latin"), None)
         for ch in "A0€₩™ℓĀāĪīŪūĒēŌō":
             cp = ord(ch)
             if cp in codepoints:
+                self.assertIsNotNone(latin_slice)
                 self.assertIn(cp, latin_slice.binary_codepoints, f"'{ch}' missing from latin")
 
-        sym_ui_slice = next(s for s in plan if s.slice_id == "symbols-ui")
+        sym_ui_slice = next((s for s in plan if s.slice_id == "symbols-ui"), None)
         for ch in "→▶◀✓✔⚠♡♥★♪❶❿①⑳":
             cp = ord(ch)
             if cp in codepoints:
+                self.assertIsNotNone(sym_ui_slice)
                 self.assertIn(cp, sym_ui_slice.binary_codepoints, f"'{ch}' missing from symbols-ui")
 
         # Check that all 2010 Joyo Kanji (including JIS Level 3 𠮟塡剝頰 & 唾) + 𠮷 reside in Tier 3 (kanji-freq)
@@ -254,6 +257,22 @@ class TestCleomeSlicer(unittest.TestCase):
                 f"CSS Cascade Shadowing mismatch for U+{cp:04X} ({chr(cp)}): "
                 f"CSS matched {winner.slice_id}, but binary does not contain it!",
             )
+
+    def test_sip_and_tip_planes_never_bridge_in_tier4(self) -> None:
+        """
+        Verify that Rare Kanji in Plane 2 (SIP, U+20000..2FA1F) and Plane 3 (TIP, U+30000..323AF)
+        are placed in separate Tier 4 slices so no 1-token hex range spans across planes.
+        """
+        cps = {ord("A"), ord("あ"), 0x20001, 0x2FA1D, 0x30000, 0x31350}
+        plan = build_slice_plan(cps)
+        self._assert_plan_invariants(plan, frozenset(cps))
+        rare_slices = [s for s in plan if s.tier == 4]
+        self.assertEqual(len(rare_slices), 2)
+        for s in rare_slices:
+            ur_cps = parse_unicode_range(s.css_unicode_range)
+            has_sip = any(0x20000 <= c <= 0x2FA1F for c in ur_cps)
+            has_tip = any(0x30000 <= c <= 0x323AF for c in ur_cps)
+            self.assertFalse(has_sip and has_tip, f"Slice {s.slice_id} bridged SIP and TIP: {s.css_unicode_range}")
 
     def test_end_to_end_variable_and_static_export(self) -> None:
         """Test actual WOFF2 slice generation and CSS output for Variable and Static fonts."""

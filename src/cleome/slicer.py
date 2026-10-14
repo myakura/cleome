@@ -21,6 +21,14 @@ from cleome.data.kanji_freq import KANJI_FREQ_CODEPOINTS, KANJI_FREQ_RANK
 
 type CodepointSet = set[int] | frozenset[int]
 
+CJK_IDEOGRAPH_REGIONS: tuple[tuple[str, int, int], ...] = (
+    ("Ext-A", 0x3400, 0x4DBF),
+    ("BMP", 0x4E00, 0x9FFF),
+    ("Compat", 0xF900, 0xFAFF),
+    ("SIP", 0x20000, 0x2FA1F),
+    ("TIP", 0x30000, 0x323AF),
+)
+
 
 @dataclass(frozen=True, slots=True)
 class SliceConfig:
@@ -271,11 +279,11 @@ def parse_unicode_range(ur_str: str) -> set[int]:
 def is_cjk_ideograph(cp: int) -> bool:
     """Return True if `cp` is a CJK Unified or Compatibility Ideograph (Kanji)."""
     return (
-        (0x3400 <= cp <= 0x4DBF)     # CJK Unified Ideographs Extension A
-        or (0x4E00 <= cp <= 0x9FFF)  # CJK Unified Ideographs (BMP)
-        or (0xF900 <= cp <= 0xFAFF)  # CJK Compatibility Ideographs
-        or (0x20000 <= cp <= 0x2FA1F)  # CJK Unified Ideographs Ext B..F & Compat Supplement
-        or (0x30000 <= cp <= 0x323AF)  # CJK Unified Ideographs Ext G..I
+        (0x3400 <= cp <= 0x4DBF)       # CJK Unified Ideographs Extension A
+        or (0x4E00 <= cp <= 0x9FFF)    # CJK Unified Ideographs (BMP)
+        or (0xF900 <= cp <= 0xFAFF)    # CJK Compatibility Ideographs
+        or (0x20000 <= cp <= 0x2FA1F)  # CJK Unified Ideographs Ext B..F & Compat Supplement (SIP)
+        or (0x30000 <= cp <= 0x323AF)  # CJK Unified Ideographs Ext G..I (TIP)
     )
 
 
@@ -438,14 +446,8 @@ def build_slice_plan(
     #   - SIP/TIP Extensions B..I (`U+20000..323AF`)
     # then each rare Kanji slice's `U+XXXX-YYYY` stays 100% inside pure CJK Ideograph blocks
     # AND has a compact 1-token `unicode-range: U+XXXX-YYYY;`!
-    cjk_regions = [
-        ("Ext-A", 0x3400, 0x4DBF),
-        ("BMP", 0x4E00, 0x9FFF),
-        ("Compat", 0xF900, 0xFAFF),
-        ("SIP+", 0x20000, 0x323AF),
-    ]
     rare_chunk_tuples: list[tuple[str, list[int], int, int]] = []
-    for reg_name, reg_lo, reg_hi in cjk_regions:
+    for reg_name, reg_lo, reg_hi in CJK_IDEOGRAPH_REGIONS:
         reg_cps = [cp for cp in rare_kanji_sorted if reg_lo <= cp <= reg_hi]
         if not reg_cps:
             continue
