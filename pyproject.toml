@@ -1,0 +1,21 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "cleome"
+version = "0.1.0"
+description = "Smart unicode-range WOFF2 slicer and @font-face CSS generator for Japanese Variable and Static web fonts"
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.12"
+dependencies = [
+    "fonttools[woff]>=4.50.0",
+    "brotli>=1.1.0",
+]
+
+[project.scripts]
+cleome = "cleome.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/cleome"]
