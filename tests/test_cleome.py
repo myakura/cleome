@@ -10,10 +10,12 @@ Comprehensive test suite for cleome:
 from __future__ import annotations
 
 from pathlib import Path
+import sys
 import tempfile
 import unittest
 from fontTools.ttLib import TTFont
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 from cleome import (
     SliceConfig,
     build_slice_plan,
@@ -88,10 +90,30 @@ class TestCleomeSlicer(unittest.TestCase):
 
         # Check Kana Core zero-omission guarantee (`む`, `モ`, `ヶ`, `ヵ`, `ゐ`, `ヱ`, `ゔ`, `「`, `」`, `０`)
         kana_slice = next(s for s in plan if s.slice_id == "kana-core")
-        for ch in "あむモヶヵゐヱゔ、。「」【】０９ＡＺ":
+        for ch in "あむモヶヵゐヱゔ、。「」【】０９ＡＺㇰㇿ":
             cp = ord(ch)
             if cp in codepoints:
                 self.assertIn(cp, kana_slice.binary_codepoints, f"'{ch}' missing from kana-core")
+
+        # Check Latin & UI Symbols placement
+        latin_slice = next(s for s in plan if s.slice_id == "latin")
+        for ch in "A0€₩™ℓĀāĪīŪūĒēŌō":
+            cp = ord(ch)
+            if cp in codepoints:
+                self.assertIn(cp, latin_slice.binary_codepoints, f"'{ch}' missing from latin")
+
+        sym_ui_slice = next(s for s in plan if s.slice_id == "symbols-ui")
+        for ch in "→▶◀✓✔⚠♡♥★♪❶❿①⑳":
+            cp = ord(ch)
+            if cp in codepoints:
+                self.assertIn(cp, sym_ui_slice.binary_codepoints, f"'{ch}' missing from symbols-ui")
+
+        # Check that all 2010 Joyo Kanji (including JIS Level 3 𠮟塡剝頰 & 唾) + 𠮷 reside in Tier 3 (kanji-freq)
+        tier3_cps = frozenset().union(*(s.binary_codepoints for s in plan if s.tier == 3))
+        for ch in "唾𠮟塡剝頰𠮷鷗噓繫﨑髙楷諧毀憬錮傲恣嘲喩慄":
+            cp = ord(ch)
+            if cp in codepoints:
+                self.assertIn(cp, tier3_cps, f"'{ch}' (U+{cp:04X}) should be in Tier 3 kanji-freq")
 
         # Pre-parse unicode-range for fast cascade simulation across all codepoints
         parsed_ranges = [(spec, parse_unicode_range(spec.css_unicode_range)) for spec in plan]

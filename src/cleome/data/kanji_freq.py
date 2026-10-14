@@ -1,12 +1,14 @@
 """
-Deterministic Japanese Kanji frequency ranking table (3,136 characters).
+Deterministic Japanese Kanji frequency ranking table (3,169 characters).
 
 Constructed from:
 1. Top 2,619 Web-frequent Kanji extracted from Google Fonts Noto Sans JP (.118 down to .60),
    covering 82.5% of JIS Level 1 (2,445 chars) + 168 frequent JIS Level 2 / IBM / non-JIS Kanji.
-2. All remaining 517 JIS X 0208 Level 1 Kanji (sorted by Unicode codepoint), ensuring 100% of
-   Joyo + JIS Level 1 Kanji (2,965 chars) reside within Tier 3 (frequency-ranked slices) and never
-   spill into Tier 4 (rare Kanji hex blocks).
+2. All remaining 517 JIS X 0208 Level 1 Kanji (sorted by Unicode codepoint).
+3. All remaining 14 Joyo Kanji from the 2010 revision (`楷諧毀憬錮傲恣𠮟嘲塡剝頰喩慄`, including the 4 JIS Level 3
+   Joyo Kanji `𠮟塡剝頰`), `𠮷` (`U+20BB7` Tsuchiyoshi), and 18 common Hyogai standard print forms (`鷗噓繫禱屛焰摑俱吞啞麴麵瘦竝萊潑瀆弯`),
+   guaranteeing that 100% of all 2,136 official Joyo Kanji + 100% of JIS Level 1 (2,965 chars) + `𠮷`
+   reside within Tier 3 (`kanji-freq-*`) and never spill into Tier 4 (`kanji-rare-*`).
 """
 
 KANJI_FREQ_CHARS: str = (
@@ -59,6 +61,8 @@ KANJI_FREQ_CHARS: str = (
     "糟糠糾紬絃綜綬緬繭纂罫罷翫翰而耽聯聾肇肋肱胤脹臆臥舛舜舵舷艮芙苅苓苧荊荏莞莫莱菖菟菰萄萱葎葡葦葺蒋蒐蒜蓉蓑蓬蔀蔚蕃蕊蕗蕩蕪薗薮薯"
     "藁藷虞虻蚕蚤蛋蛎蛤蛭蛸蛾蝉蝋蝕蝦蝿蟻衷袈袷裟裡襖註詑詔誼諌諜諮諺謁謂謄謬賂賄賎賦贋赫趨蹄蹟躯輯轍轡迂迩迭逓逼遁遜鄭酉酋酌醇醗釆釦"
     "鈎鈷鉦鉾銑鋒鋤鋪鋲鋸錐錘錨錫鍍鍔鍬鍾鎗鎚鏑鐙鐸鑓閏閤陪隻雁鞠韮頗頚頴顛馨駁駈駕魯鮒鮪鯵鰍鰐鰭鰯鰹鱈鱒鳶鴇鴎鴛鴫鴬鵠鵡鵬麿黍黛鼎鼠"
+    "楷諧毀憬錮傲恣𠮟嘲塡剝頰喩慄𠮷鷗噓繫禱屛焰摑俱吞啞麴麵瘦竝萊潑瀆弯"
 )
 
 KANJI_FREQ_CODEPOINTS: tuple[int, ...] = tuple(ord(c) for c in KANJI_FREQ_CHARS)
+

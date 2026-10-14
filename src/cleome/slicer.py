@@ -34,7 +34,7 @@ class SliceConfig:
         (200, 2),  # Rank 1..400: 200 chars x 2 slices
         (80, 10),  # Rank 401..1200: 80 chars x 10 slices
     )
-    freq_tail_chunk_size: int = 69  # Rank 1201..3136: ~69 chars/slice (28 slices for 1,936 chars)
+    freq_tail_chunk_size: int = 70  # Rank 1201..3169: ~70 chars/slice (28 slices for 1,969 chars)
 
     # Target character count per slice for Tier 4 (rare Kanji) and Tier 2 (`symbols-ext`):
     rare_kanji_chunk_size: int = 250
