@@ -7,8 +7,6 @@ Comprehensive self-contained test suite for cleome:
 - Variable Font (`wght` x `wdth`) and Multi-file Static Font WOFF2 slicing and CSS generation
 """
 
-from __future__ import annotations
-
 from pathlib import Path
 import sys
 import tempfile
@@ -28,7 +26,7 @@ from cleome import (
     slice_font,
     slice_fonts,
 )
-from cleome.data.kanji_freq import KANJI_FREQ_CODEPOINTS
+from cleome.data.kanji_freq import KANJI_FREQ_CODEPOINTS, KANJI_FREQ_RANK
 
 
 def _build_synthetic_charset(*, full: bool) -> frozenset[int]:
@@ -168,6 +166,7 @@ class TestCleomeSlicer(unittest.TestCase):
         every mapped codepoint resolves via CSS cascade to the exact slice whose
         binary contains that codepoint, and Tier 4 slices use 1-token hex ranges.
         """
+        self.assertIsInstance(KANJI_FREQ_RANK, frozendict)
         full_cps = _build_synthetic_charset(full=True)
         sub_cps = _build_synthetic_charset(full=False)
 
@@ -235,7 +234,7 @@ class TestCleomeSlicer(unittest.TestCase):
                 self.assertIn(cp, sym_ui_slice.binary_codepoints, f"'{ch}' missing from symbols-ui")
 
         # Check that all 2010 Joyo Kanji (including JIS Level 3 𠮟塡剝頰 & 唾) + 𠮷 reside in Tier 3 (kanji-freq)
-        tier3_cps = frozenset().union(*(s.binary_codepoints for s in plan if s.tier == 3))
+        tier3_cps = {*s.binary_codepoints for s in plan if s.tier == 3}
         for ch in "唾𠮟塡剝頰𠮷鷗噓繫﨑髙楷諧毀憬錮傲恣嘲喩慄":
             cp = ord(ch)
             if cp in codepoints:

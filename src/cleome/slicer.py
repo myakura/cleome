@@ -12,14 +12,14 @@ Implements the 4-tier architecture:
   zero omissions for `む`, `モ`, `ヶ`, `ヵ`), and core Western/Latin (`latin`) declared LAST (highest priority).
 """
 
-from __future__ import annotations
-
 from dataclasses import dataclass, field
 import re
 from pathlib import Path
 from fontTools.ttLib import TTFont
 
-from cleome.data.kanji_freq import KANJI_FREQ_CODEPOINTS
+from cleome.data.kanji_freq import KANJI_FREQ_CODEPOINTS, KANJI_FREQ_RANK
+
+type CodepointSet = set[int] | frozenset[int]
 
 
 @dataclass(frozen=True, slots=True)
@@ -355,7 +355,7 @@ def _chunk_sorted_codepoints(
 
 
 def build_slice_plan(
-    codepoints: set[int] | frozenset[int],
+    codepoints: CodepointSet,
     config: SliceConfig | None = None,
 ) -> list[SliceSpec]:
     """
@@ -393,7 +393,9 @@ def build_slice_plan(
     # -----------------------------------------------------------------------
     # 2. Partition Kanji into Tier 3 (Frequency-Ranked) and Tier 4 (Rare/Extended)
     # -----------------------------------------------------------------------
-    available_freq_kanji = [cp for cp in KANJI_FREQ_CODEPOINTS if cp in kanji_cps]
+    available_freq_kanji = sorted(
+        kanji_cps & KANJI_FREQ_RANK.keys(), key=KANJI_FREQ_RANK.__getitem__
+    )
 
     freq_chunks: list[tuple[int, int, frozenset[int]]] = []
     cursor = 0
@@ -413,9 +415,8 @@ def build_slice_plan(
             freq_chunks.append((cursor + 1, cursor + len(sub), frozenset(sub)))
             cursor += len(sub)
 
-    tier3_kanji_set = (
-        frozenset().union(*(c[2] for c in freq_chunks)) if freq_chunks else frozenset()
-    )
+    # Python 3.15 (PEP 798): unpacking in set comprehension
+    tier3_kanji_set = frozenset({*c[2] for c in freq_chunks})
     rare_kanji_sorted = sorted(kanji_cps - tier3_kanji_set)
 
     # -----------------------------------------------------------------------

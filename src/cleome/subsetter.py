@@ -5,8 +5,6 @@ Uses `fontTools.subset` while preserving all OpenType Layout features (`GSUB`, `
 and Variable Font tables (`fvar`, `gvar`, `CFF2`, `HVAR`, `VVAR`, `MVAR`, `STAT`, `avar`).
 """
 
-from __future__ import annotations
-
 from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass
 import io
@@ -163,7 +161,9 @@ def export_woff2_slices(
     if not tasks:
         return []
 
-    max_workers = workers if workers is not None else min(len(tasks), os.cpu_count() or 4)
+    max_workers = (
+        workers if workers is not None else min(len(tasks), os.process_cpu_count() or 4)
+    )
     results_map: dict[str, tuple[int, int]] = {}
 
     if max_workers <= 1 or len(tasks) <= 2:

@@ -66,3 +66,7 @@ KANJI_FREQ_CHARS: str = (
 
 KANJI_FREQ_CODEPOINTS: tuple[int, ...] = tuple(ord(c) for c in KANJI_FREQ_CHARS)
 
+# Python 3.15 (PEP 814) built-in immutable mapping from codepoint to 1-based frequency rank
+KANJI_FREQ_RANK: frozendict[int, int] = frozendict(
+    {cp: rank for rank, cp in enumerate(KANJI_FREQ_CODEPOINTS, start=1)}
+)

@@ -3,8 +3,6 @@ Command-line interface (`cleome`) for slicing Japanese Variable and Static fonts
 into Web-optimized `unicode-range` WOFF2 chunks and `@font-face` CSS.
 """
 
-from __future__ import annotations
-
 import argparse
 from pathlib import Path
 import sys
@@ -113,8 +111,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--freq-tail-chunk-size",
         type=int,
-        default=69,
-        help="Target characters per slice for remaining Tier 3 Kanji (default: 69)",
+        default=70,
+        help="Target characters per slice for remaining Tier 3 Kanji (default: 70)",
     )
     parser.add_argument(
         "--rare-chunk-size",
@@ -190,7 +188,7 @@ def main(argv: list[str] | None = None) -> int:
                         patch_uvs=config.patch_uvs_only_cmap,
                     )
                 )
-        union_cps = frozenset().union(*(m.codepoints for m in metas))
+        union_cps = frozenset({*m.codepoints for m in metas})
         plan = build_slice_plan(union_cps, config=config)
         first = metas[0]
         print(f"Font Family : {first.family_name} (slug: {first.slug})")

@@ -2,8 +2,6 @@
 CSS `@font-face` stylesheet generator and high-level Python API (`slice_font` / `slice_fonts`) for cleome.
 """
 
-from __future__ import annotations
-
 from dataclasses import dataclass
 from pathlib import Path
 from fontTools.ttLib import TTFont
@@ -205,7 +203,7 @@ def slice_fonts(
         ]
 
         # 2. Build dynamic 4-tier slice plan from the union of codepoints across all input variants
-        union_codepoints = frozenset().union(*(m.codepoints for m in metas))
+        union_codepoints = frozenset({*m.codepoints for m in metas})
         slice_specs = build_slice_plan(union_codepoints, config=config)
 
         # 3. Export WOFF2 slices for each input font
