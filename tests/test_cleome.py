@@ -1,5 +1,5 @@
 """
-Comprehensive test suite for cleome:
+Comprehensive self-contained test suite for cleome:
 - Dynamic 4-tier slice planning & CSS Cascade Shadowing invariant across variable character sets
 - Zero-omission guarantee for Kana (`む`, `モ`, `ヶ`, `ヵ`, `ゐ`, `ヱ`, `ゔ`) and CJK punctuation
 - 1-token hex range verification for Tier 4 rare Kanji
@@ -13,7 +13,11 @@ from pathlib import Path
 import sys
 import tempfile
 import unittest
+from fontTools.fontBuilder import FontBuilder
+from fontTools.pens.ttGlyphPen import TTGlyphPen
 from fontTools.ttLib import TTFont
+from fontTools.ttLib.tables._c_m_a_p import CmapSubtable
+from fontTools.ttLib.tables.TupleVariation import TupleVariation
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 from cleome import (
@@ -24,50 +28,172 @@ from cleome import (
     slice_font,
     slice_fonts,
 )
+from cleome.data.kanji_freq import KANJI_FREQ_CODEPOINTS
 
 
-def resolve_winning_slice(plan, cp: int):
+def _build_synthetic_charset(*, full: bool) -> frozenset[int]:
+    """Build a realistic Japanese font codepoint set (either ~8,300 subset or ~16,700 full)."""
+    cps: set[int] = set()
+    # Core Latin (`U+0020..007E`, `U+00A0..024F`, `U+2000..206F`, `U+20A0..20CF`, `ℓ`, `™`)
+    cps.update(range(0x0020, 0x007F))
+    cps.update(range(0x00A0, 0x0250))
+    cps.update(range(0x2000, 0x2070))
+    cps.update(range(0x20A0, 0x20D0))
+    cps.update((0x2113, 0x2122))
+    # Core Kana (`U+3000..30FF`, `U+31F0..31FF`, `U+FF01..FF60`, `U+FFE0..FFE6`)
+    cps.update(range(0x3000, 0x3100))
+    cps.update(range(0x31F0, 0x3200))
+    cps.update(range(0xFF01, 0xFF61))
+    cps.update(range(0xFFE0, 0xFFE7))
+    # UI Symbols (`U+2190..21FF`, `U+2460..2473`, `U+24EA`, `U+25A0..266F`, `U+26A0`, `U+2713..2714`, `U+2776..277F`)
+    cps.update(range(0x2190, 0x2200))
+    cps.update(range(0x2460, 0x2474))
+    cps.add(0x24EA)
+    cps.update(range(0x25A0, 0x2670))
+    cps.add(0x26A0)
+    cps.update((0x2713, 0x2714))
+    cps.update(range(0x2776, 0x2780))
+    # All Tier 3 frequent Kanji (3,169 chars including 2,136 Joyo, JIS Level 1, 𠮷, etc.)
+    cps |= set(KANJI_FREQ_CODEPOINTS)
+
+    if full:
+        # Extended symbols (~2,100 chars across Greek, Cyrillic, Box Drawing, Enclosed CJK, etc.)
+        cps.update(range(0x0391, 0x0450))
+        cps.update(range(0x2500, 0x2580))
+        cps.update(range(0x3200, 0x33FF))
+        cps.update(range(0x1F100, 0x1F260))
+        # ~10,500 Rare & Extended Kanji (JIS Level 2-4, CJK Ext A/B)
+        cps.update(range(0x3400, 0x3800))
+        cps.update(range(0x4E00, 0x7800))
+        cps.update(range(0x20000, 0x20200))
+    else:
+        # Smaller subset (~8,300 chars total): ~900 extended symbols + ~3,500 JIS Level 2 rare Kanji
+        cps.update(range(0x0391, 0x03D0))
+        cps.update(range(0x2500, 0x2550))
+        cps.update(range(0x3220, 0x3360))
+        cps.update(range(0x4E00, 0x6200))
+
+    return frozenset(cps)
+
+
+def _create_synthetic_ttfont(
+    codepoints: list[int],
+    *,
+    family_name: str = "Test Sans JP",
+    weight: int = 400,
+    width_class: int = 5,
+    is_variable: bool = False,
+    uvs_only_cp: tuple[int, int] | None = None,
+) -> TTFont:
     """
-    Simulate CSS `@font-face` cascade resolution:
-    Later rules in CSS override earlier rules when `unicode-range` overlaps.
+    Create an in-memory TrueType font with optional `wght` + `wdth` variable axes
+    and optional UVS Format 14 sequence for testing missing base cmap auto-patching.
     """
-    winner = None
-    for spec in plan:
-        if cp in parse_unicode_range(spec.css_unicode_range):
-            winner = spec
-    return winner
+    glyph_order = [".notdef"] + [f"uni{cp:04X}" for cp in codepoints]
+    cmap = {cp: f"uni{cp:04X}" for cp in codepoints}
+
+    if uvs_only_cp is not None:
+        uvs_cp, uvs_sel = uvs_only_cp
+        uvs_gname = f"uni{uvs_cp:04X}_uvs"
+        glyph_order.append(uvs_gname)
+
+    fb = FontBuilder(1000, isTTF=True)
+    fb.setupGlyphOrder(glyph_order)
+    fb.setupCharacterMap(cmap)
+
+    pen = TTGlyphPen(None)
+    pen.moveTo((100, 0))
+    pen.lineTo((100, 700))
+    pen.lineTo((800, 700))
+    pen.lineTo((800, 0))
+    pen.closePath()
+    base_glyph = pen.glyph()
+
+    empty_pen = TTGlyphPen(None)
+    glyf_map = {g: ( empty_pen.glyph() if g == ".notdef" else base_glyph ) for g in glyph_order}
+    fb.setupGlyf(glyf_map)
+
+    metrics = {g: (1000, 100) for g in glyph_order}
+    fb.setupHorizontalMetrics(metrics)
+    fb.setupHorizontalHeader(ascent=880, descent=-120)
+    fb.setupNameTable(
+        {
+            "familyName": family_name,
+            "styleName": "Regular" if weight == 400 else "Bold",
+        }
+    )
+    fb.setupOS2(sTypoAscender=880, sTypoDescender=-120, usWeightClass=weight, usWidthClass=width_class)
+    fb.setupPost()
+
+    if is_variable:
+        axes = [
+            ("wght", 250, 400, 900, "Weight"),
+            ("wdth", 70, 100, 100, "Width"),
+        ]
+        fb.setupFvar(axes, [])
+        # Add minimal gvar so fontTools.subset treats it as a valid TrueType variable font
+        variations = {
+            g: [
+                TupleVariation(
+                    {"wght": (0.0, 1.0, 1.0)},
+                    [(0, 0), (0, 10), (10, 10), (10, 0), None, None, None, None],
+                )
+            ]
+            if g != ".notdef"
+            else []
+            for g in glyph_order
+        }
+        fb.setupGvar(variations)
+
+    tt = fb.font
+
+    if uvs_only_cp is not None:
+        uvs_cp, uvs_sel = uvs_only_cp
+        uvs_gname = f"uni{uvs_cp:04X}_uvs"
+        sub14 = CmapSubtable.newSubtable(14)
+        sub14.platformID = 0
+        sub14.platEncID = 5
+        sub14.language = 0
+        sub14.cmap = {}
+        sub14.uvsDict = {uvs_sel: [(uvs_cp, uvs_gname)]}
+        tt["cmap"].tables.append(sub14)
+
+    return tt
 
 
 class TestCleomeSlicer(unittest.TestCase):
     def test_cascade_shadowing_invariant_small_and_full_charsets(self) -> None:
         """
-        Verify that for both an 8,340-char subset and a 16,743-char full CJK font,
+        Verify that for both an ~8,300-char subset and a ~16,700-char full CJK charset,
         every mapped codepoint resolves via CSS cascade to the exact slice whose
         binary contains that codepoint, and Tier 4 slices use 1-token hex ranges.
         """
-        shs_path = Path("/Users/myakura/projects/gensou-font/sources/jp/SourceHanSansJP-VF.otf")
-        if not shs_path.exists():
-            self.skipTest("SourceHanSansJP-VF.otf not found")
+        full_cps = _build_synthetic_charset(full=True)
+        sub_cps = _build_synthetic_charset(full=False)
 
-        with TTFont(shs_path) as tt:
-            meta = extract_font_metadata(tt)
+        plan_full = build_slice_plan(full_cps)
+        self._assert_plan_invariants(plan_full, full_cps)
 
-        # 1. Test full 16,743-char cmap (including patched U+553E '唾')
+        plan_sub = build_slice_plan(sub_cps)
+        self._assert_plan_invariants(plan_sub, sub_cps)
+
+        # Smaller font must dynamically produce fewer Tier 4 rare slices than full font
+        rare_full = [s for s in plan_full if s.tier == 4]
+        rare_sub = [s for s in plan_sub if s.tier == 4]
+        self.assertLess(len(rare_sub), len(rare_full))
+
+    def test_uvs_format14_missing_base_cmap_autopatch(self) -> None:
+        """
+        Verify that a character present in cmap Format 14 (UVS) but missing from
+        base Format 4/12 (like U+553E '唾' in SourceHanSansJP-VF.otf v2.005) is
+        automatically patched into the base cmap before slicing.
+        """
+        tt = _create_synthetic_ttfont(
+            [ord("A"), ord("あ"), ord("日")],
+            uvs_only_cp=(0x553E, 0xE0100),
+        )
+        meta = extract_font_metadata(tt, patch_uvs=True)
         self.assertIn(0x553E, meta.codepoints, "U+553E '唾' should be auto-patched from UVS Format 14")
-        plan_full = build_slice_plan(meta.codepoints)
-        self._assert_plan_invariants(plan_full, meta.codepoints)
-
-        # 2. Test smaller subset (~8,340 chars)
-        gensou_vf = Path("/Users/myakura/projects/gensou-font/dist/jp/variable/GenSouSansJP-VF.ttf")
-        if gensou_vf.exists():
-            with TTFont(gensou_vf) as g_tt:
-                g_meta = extract_font_metadata(g_tt)
-            plan_sub = build_slice_plan(g_meta.codepoints)
-            self._assert_plan_invariants(plan_sub, g_meta.codepoints)
-            # Smaller font must dynamically produce fewer Tier 4 rare slices than full font
-            rare_full = [s for s in plan_full if s.tier == 4]
-            rare_sub = [s for s in plan_sub if s.tier == 4]
-            self.assertLess(len(rare_sub), len(rare_full))
 
     def _assert_plan_invariants(self, plan, codepoints: frozenset[int]) -> None:
         # Check partition completeness & mutual exclusivity of binary_codepoints
@@ -132,33 +258,50 @@ class TestCleomeSlicer(unittest.TestCase):
 
     def test_end_to_end_variable_and_static_export(self) -> None:
         """Test actual WOFF2 slice generation and CSS output for Variable and Static fonts."""
-        gensou_vf = Path("/Users/myakura/projects/gensou-font/dist/jp/variable/GenSouSansJP-VF.ttf")
-        if not gensou_vf.exists():
-            self.skipTest("GenSouSansJP-VF.ttf not found")
+        sample_chars = "A0€あむモヶ「」→▶①Ωα日人一𠮟𠮷鷗" + "".join(chr(cp) for cp in range(0x4E10, 0x4E30))
+        sample_cps = sorted({ord(c) for c in sample_chars})
+
+        vf_tt = _create_synthetic_ttfont(
+            sample_cps,
+            family_name="Test Sans JP",
+            is_variable=True,
+        )
 
         with tempfile.TemporaryDirectory() as tmp:
             out_dir = Path(tmp) / "vf_web"
-            res = slice_font(gensou_vf, out_dir=out_dir)
+            res = slice_font(vf_tt, out_dir=out_dir, workers=2)
             self.assertTrue(res.css_path.exists())
-            self.assertEqual(res.css_path.name, "gensou-sans-jp.css")
+            self.assertEqual(res.css_path.name, "test-sans-jp.css")
             self.assertIn("font-weight: 250 900;", res.css_text)
             self.assertIn("font-stretch: 70% 100%;", res.css_text)
             self.assertTrue(all(bf.path.exists() and bf.size_bytes > 0 for bf in res.built_files))
 
-            # Also test multi-file static fonts if available
-            static_ttf_dir = Path("/Users/myakura/projects/gensou-font/dist/jp/static/ttf")
-            if static_ttf_dir.exists():
-                reg = static_ttf_dir / "GenSouSansJP-Cond-Regular.ttf"
-                bold = static_ttf_dir / "GenSouSansJP-Cond-Bold.ttf"
-                if reg.exists() and bold.exists():
-                    static_out = Path(tmp) / "static_web"
-                    # Limit to a small synthetic cmap or test directly with workers
-                    s_res = slice_fonts([reg, bold], out_dir=static_out)
-                    self.assertTrue(s_res.css_path.exists())
-                    self.assertIn("font-weight: 400;", s_res.css_text)
-                    self.assertIn("font-weight: 700;", s_res.css_text)
-                    self.assertEqual(len(s_res.built_files), len(s_res.slice_specs) * 2)
+            # Test multi-file static fonts (Condensed Regular 400 + Condensed Bold 700)
+            reg_path = Path(tmp) / "TestSansJP-Cond-Regular.ttf"
+            bold_path = Path(tmp) / "TestSansJP-Cond-Bold.ttf"
+            _create_synthetic_ttfont(
+                sample_cps,
+                family_name="Test Sans JP Cond",
+                weight=400,
+                width_class=3,  # Condensed (75%)
+                is_variable=False,
+            ).save(reg_path)
+            _create_synthetic_ttfont(
+                sample_cps,
+                family_name="Test Sans JP Cond",
+                weight=700,
+                width_class=3,  # Condensed (75%)
+                is_variable=False,
+            ).save(bold_path)
+
+            static_out = Path(tmp) / "static_web"
+            s_res = slice_fonts([reg_path, bold_path], out_dir=static_out, workers=2)
+            self.assertTrue(s_res.css_path.exists())
+            self.assertIn("font-weight: 400;", s_res.css_text)
+            self.assertIn("font-weight: 700;", s_res.css_text)
+            self.assertEqual(len(s_res.built_files), len(s_res.slice_specs) * 2)
 
 
 if __name__ == "__main__":
     unittest.main()
+
