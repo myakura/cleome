@@ -243,13 +243,15 @@ class TestCleomeSlicer(unittest.TestCase):
             if cp in codepoints:
                 self.assertIn(cp, tier3_cps, f"'{ch}' (U+{cp:04X}) should be in Tier 3 kanji-freq")
 
-        # Pre-parse unicode-range for fast cascade simulation across all codepoints
-        parsed_ranges = [(spec, parse_unicode_range(spec.css_unicode_range)) for spec in plan]
+        # Simulate CSS cascade across all @font-face rules in declaration order
+        resolved: dict[int, object] = {}
+        for spec in plan:
+            ur_set = parse_unicode_range(spec.css_unicode_range)
+            for cp in ur_set & codepoints:
+                resolved[cp] = spec
+
         for cp in codepoints:
-            winner = None
-            for spec, ur_set in parsed_ranges:
-                if cp in ur_set:
-                    winner = spec
+            winner = resolved.get(cp)
             self.assertIsNotNone(winner, f"Codepoint U+{cp:04X} not matched by any CSS unicode-range")
             self.assertIn(
                 cp,
@@ -330,14 +332,14 @@ class TestCleomeSlicer(unittest.TestCase):
                 sample_cps,
                 family_name="Test Sans JP Cond",
                 weight=400,
-                width_class=3,  # Condensed (75%)
+                width_class=3,
                 is_variable=False,
             ).save(reg_path)
             _create_synthetic_ttfont(
                 sample_cps,
                 family_name="Test Sans JP Cond",
                 weight=700,
-                width_class=3,  # Condensed (75%)
+                width_class=3,
                 is_variable=False,
             ).save(bold_path)
 

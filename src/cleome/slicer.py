@@ -12,6 +12,7 @@ Implements the 4-tier architecture:
   zero omissions for `む`, `モ`, `ヶ`, `ヵ`), and core Western/Latin (`latin`) declared LAST (highest priority).
 """
 
+from bisect import bisect_left, bisect_right
 from dataclasses import dataclass, field
 import re
 from pathlib import Path
@@ -232,8 +233,8 @@ def extract_font_metadata(
     )
 
 
-def format_unicode_range(codepoints: set[int] | frozenset[int] | list[int]) -> str:
-    """Format a set of integer codepoints into a minimal CSS `unicode-range` string."""
+def format_unicode_range(codepoints: CodepointSet | list[int]) -> str:
+    """Format a collection of integer codepoints into a minimal CSS `unicode-range` string."""
     sorted_cps = sorted(set(codepoints))
     if not sorted_cps:
         return ""
@@ -246,13 +247,9 @@ def format_unicode_range(codepoints: set[int] | frozenset[int] | list[int]) -> s
             ranges.append((start, prev))
             start = prev = cp
     ranges.append((start, prev))
-    parts: list[str] = []
-    for s, e in ranges:
-        if s == e:
-            parts.append(f"U+{s:X}")
-        else:
-            parts.append(f"U+{s:X}-{e:X}")
-    return ", ".join(parts)
+    return ", ".join(
+        f"U+{s:X}" if s == e else f"U+{s:X}-{e:X}" for s, e in ranges
+    )
 
 
 def parse_unicode_range(ur_str: str) -> set[int]:
@@ -395,12 +392,19 @@ def build_slice_plan(
     # -----------------------------------------------------------------------
     # 1. Partition Non-Kanji into Tier 1 (latin, kana-core) and Tier 2 (symbols-ui, symbols-ext)
     # -----------------------------------------------------------------------
-    latin_cps = {cp for cp in non_kanji_cps if is_tier1_latin(cp)}
-    kana_cps = {cp for cp in (non_kanji_cps - latin_cps) if is_tier1_kana_core(cp)}
-    sym_ui_cps = {
-        cp for cp in (non_kanji_cps - latin_cps - kana_cps) if is_tier2_symbols_ui(cp)
-    }
-    sym_ext_cps = non_kanji_cps - latin_cps - kana_cps - sym_ui_cps
+    latin_cps: set[int] = set()
+    kana_cps: set[int] = set()
+    sym_ui_cps: set[int] = set()
+    sym_ext_cps: set[int] = set()
+    for cp in non_kanji_cps:
+        if is_tier1_latin(cp):
+            latin_cps.add(cp)
+        elif is_tier1_kana_core(cp):
+            kana_cps.add(cp)
+        elif is_tier2_symbols_ui(cp):
+            sym_ui_cps.add(cp)
+        else:
+            sym_ext_cps.add(cp)
 
     # -----------------------------------------------------------------------
     # 2. Partition Kanji into Tier 3 (Frequency-Ranked) and Tier 4 (Rare/Extended)
@@ -437,40 +441,20 @@ def build_slice_plan(
     slices: list[SliceSpec] = []
 
     # --- Tier 4: Rare / Extended Kanji (declared first in CSS, 1-token hex range) ---
-    # Wait: what if a rare Kanji range [start_cp, end_cp] spans across non-Kanji blocks
-    # (for instance, between U+4DBF (Ext-A) and U+4E00 (BMP), or U+9FFF (BMP) and U+F900 (Compat),
-    # or U+FAFF (Compat) and U+20000 (SIP))?
-    # If a single rare Kanji chunk spanned U+9F00-FA10, its 1-token `U+9F00-FA10` would cover
-    # U+A000..F8FF (which might contain symbols-ext if any existed there, though symbols-ext is
-    # declared AFTER Tier 4 so symbols-ext would shadow it anyway!).
-    # Even better: if we group rare Kanji by major CJK ideograph region first:
-    #   - Ext-A (`U+3400..4DBF`)
-    #   - BMP Unified (`U+4E00..9FFF`)
-    #   - Compatibility (`U+F900..FAFF`)
-    #   - SIP/TIP Extensions B..I (`U+20000..323AF`)
-    # then each rare Kanji slice's `U+XXXX-YYYY` stays 100% inside pure CJK Ideograph blocks
-    # AND has a compact 1-token `unicode-range: U+XXXX-YYYY;`!
     rare_chunk_tuples: list[tuple[str, list[int], int, int]] = []
     for reg_name, reg_lo, reg_hi in CJK_IDEOGRAPH_REGIONS:
-        reg_cps = [cp for cp in rare_kanji_sorted if reg_lo <= cp <= reg_hi]
+        lo_idx = bisect_left(rare_kanji_sorted, reg_lo)
+        hi_idx = bisect_right(rare_kanji_sorted, reg_hi)
+        reg_cps = rare_kanji_sorted[lo_idx:hi_idx]
         if not reg_cps:
             continue
         reg_chunks = _chunk_sorted_codepoints(reg_cps, config.rare_kanji_chunk_size)
-        for idx_in_reg, ch_cps in enumerate(reg_chunks):
-            # Contiguous hex bounds: from first rare kanji in chunk to last rare kanji in chunk
-            # (or clean block boundaries). Using `ch_cps[0]` to `ch_cps[-1]` is a single token
-            # `U+XXXX-YYYY` that is 100% tight and has zero overlap with adjacent rare chunks!
-            s_hex = ch_cps[0]
-            e_hex = ch_cps[-1]
-            rare_chunk_tuples.append((reg_name, ch_cps, s_hex, e_hex))
+        for ch_cps in reg_chunks:
+            rare_chunk_tuples.append((reg_name, ch_cps, ch_cps[0], ch_cps[-1]))
 
     total_rare = len(rare_chunk_tuples)
-    # Declare from highest codepoint (SIP+) down to lowest (or 01..N):
-    # Since rare chunks have mutually disjoint [s_hex, e_hex] ranges, their relative order
-    # within Tier 4 does not affect cascading, and numbering `kanji-rare-01` .. `kanji-rare-NN`
-    # in ascending order is very clean and readable in CSS.
     for i, (reg_name, ch_cps, s_hex, e_hex) in enumerate(rare_chunk_tuples, start=1):
-        ur_token = f"U+{s_hex:04X}" if s_hex == e_hex else f"U+{s_hex:04X}-{e_hex:04X}"
+        ur_token = f"U+{s_hex:X}" if s_hex == e_hex else f"U+{s_hex:X}-{e_hex:X}"
         slices.append(
             SliceSpec(
                 slice_id=f"kanji-rare-{i:02d}",
@@ -509,28 +493,22 @@ def build_slice_plan(
         )
 
     # --- Tier 2: Extended Non-Kanji (`symbols-ext`) & High-Frequency UI Symbols (`symbols-ui`) ---
+    kanji_sorted = sorted(kanji_cps)
     if sym_ext_cps:
         sym_ext_sorted = sorted(sym_ext_cps)
         sym_ext_chunks = _chunk_sorted_codepoints(
             sym_ext_sorted, config.symbols_ext_chunk_size
         )
-        # Can we compact `symbols-ext` CSS `unicode-range` using cascade shadowing over
-        # `symbols-ui` and Tier 1 (`kana-core`, `latin`)?
-        # Wait: `symbols-ext` is declared BEFORE `symbols-ui`, `kana-core`, and `latin`,
-        # Effortless optimization: within each `symbols-ext` chunk, any gap that consists ONLY
-        # of unassigned codepoints (not in `all_cps`) OR codepoints in `sym_ui_cps | kana_cps | latin_cps`
-        # (which are declared AFTER `symbols-ext` and will shadow it!) can be bridged into a single
-        # contiguous range `U+XXXX-YYYY`, as long as it does NOT bridge across Kanji (`kanji_cps`,
-        # which are declared BEFORE `symbols-ext` in Tier 3/4) or other `symbols-ext` chunks!
+        # Since `sym_ext_chunks` partitions `sym_ext_sorted` into contiguous ascending intervals,
+        # no codepoint from another `symbols-ext` chunk can lie between `ch_cps[0]` and `ch_cps[-1]`.
+        # Thus only `kanji_sorted` (Tier 3/4, declared earlier) must be avoided when bridging gaps.
         for idx, ch_cps in enumerate(sym_ext_chunks, start=1):
             slice_id = (
                 "symbols-ext"
                 if len(sym_ext_chunks) == 1
                 else f"symbols-ext-{idx:02d}"
             )
-            ch_set = frozenset(ch_cps)
-            forbidden = kanji_cps | (sym_ext_cps - ch_set)
-            ur_str = _compact_range_with_shadowing(ch_cps, forbidden)
+            ur_str = _compact_range_with_shadowing(ch_cps, kanji_sorted)
             slices.append(
                 SliceSpec(
                     slice_id=slice_id,
@@ -538,17 +516,17 @@ def build_slice_plan(
                     category="symbols-ext",
                     description=(
                         f"Tier 2: Extended Symbols & Non-Kanji "
-                        f"({ idx }/{ len(sym_ext_chunks) }, {len(ch_cps)} chars)"
+                        f"({idx}/{len(sym_ext_chunks)}, {len(ch_cps)} chars)"
                     ),
-                    binary_codepoints=ch_set,
+                    binary_codepoints=frozenset(ch_cps),
                     css_unicode_range=ur_str,
                     uses_cascade_shadowing=True,
                 )
             )
 
     if sym_ui_cps:
-        forbidden_ui = kanji_cps | sym_ext_cps
-        ur_ui = _compact_range_with_shadowing(sorted(sym_ui_cps), forbidden_ui)
+        forbidden_ui_sorted = sorted(kanji_cps | sym_ext_cps)
+        ur_ui = _compact_range_with_shadowing(sorted(sym_ui_cps), forbidden_ui_sorted)
         slices.append(
             SliceSpec(
                 slice_id="symbols-ui",
@@ -563,8 +541,8 @@ def build_slice_plan(
 
     # --- Tier 1: Core Kana/Punctuation (`kana-core`) & Core Western (`latin`) ---
     if kana_cps:
-        forbidden_kana = kanji_cps | sym_ext_cps | sym_ui_cps
-        ur_kana = _compact_range_with_shadowing(sorted(kana_cps), forbidden_kana)
+        forbidden_kana_sorted = sorted(kanji_cps | sym_ext_cps | sym_ui_cps)
+        ur_kana = _compact_range_with_shadowing(sorted(kana_cps), forbidden_kana_sorted)
         slices.append(
             SliceSpec(
                 slice_id="kana-core",
@@ -581,8 +559,8 @@ def build_slice_plan(
         )
 
     if latin_cps:
-        forbidden_latin = kanji_cps | sym_ext_cps | sym_ui_cps | kana_cps
-        ur_latin = _compact_range_with_shadowing(sorted(latin_cps), forbidden_latin)
+        forbidden_latin_sorted = sorted(kanji_cps | sym_ext_cps | sym_ui_cps | kana_cps)
+        ur_latin = _compact_range_with_shadowing(sorted(latin_cps), forbidden_latin_sorted)
         slices.append(
             SliceSpec(
                 slice_id="latin",
@@ -600,24 +578,23 @@ def build_slice_plan(
 
 def _compact_range_with_shadowing(
     sorted_target_cps: list[int],
-    forbidden_cps: set[int] | frozenset[int],
+    forbidden_sorted: list[int],
     max_gap: int = 0x80,
 ) -> str:
     """
     Merge adjacent target codepoints into contiguous hex ranges `[start, end]` whenever:
     1. The gap between consecutive target codepoints is `<= max_gap`, AND
-    2. The gap contains ZERO codepoints from `forbidden_cps` (codepoints belonging to
-       earlier/lower-priority slices that must NOT be shadowed by this slice).
+    2. The open interval `(prev, cp)` contains ZERO codepoints from `forbidden_sorted`
+       (verified in O(log F) via binary search).
     """
     if not sorted_target_cps:
         return ""
     ranges: list[tuple[int, int]] = []
     start = prev = sorted_target_cps[0]
     for cp in sorted_target_cps[1:]:
-        if cp == prev + 1:
-            prev = cp
-        elif (cp - prev) <= max_gap and not any(
-             f_cp in forbidden_cps for f_cp in range(prev + 1, cp)
+        if cp == prev + 1 or (
+            (cp - prev) <= max_gap
+            and bisect_right(forbidden_sorted, prev) == bisect_left(forbidden_sorted, cp)
         ):
             prev = cp
         else:
@@ -625,12 +602,6 @@ def _compact_range_with_shadowing(
             start = prev = cp
     ranges.append((start, prev))
 
-    parts: list[str] = []
-    for s, e in ranges:
-        if s == e:
-            parts.append(f"U+{s:04X}" if s >= 0x100 else f"U+{s:02X}")
-        else:
-            s_fmt = f"{s:04X}" if s >= 0x100 else f"{s:02X}"
-            e_fmt = f"{e:04X}" if e >= 0x100 else f"{e:02X}"
-            parts.append(f"U+{s_fmt}-{e_fmt}")
-    return ", ".join(parts)
+    return ", ".join(
+        f"U+{s:X}" if s == e else f"U+{s:X}-{e:X}" for s, e in ranges
+    )
