@@ -7,10 +7,12 @@ Comprehensive self-contained test suite for cleome:
 - Variable Font (`wght` x `wdth`) and Multi-file Static Font WOFF2 slicing and CSS generation
 """
 
+from io import StringIO
 from pathlib import Path
 import sys
 import tempfile
 import unittest
+from contextlib import redirect_stdout
 from fontTools.fontBuilder import FontBuilder
 from fontTools.pens.ttGlyphPen import TTGlyphPen
 from fontTools.ttLib import TTFont
@@ -26,6 +28,7 @@ from cleome import (
     slice_font,
     slice_fonts,
 )
+from cleome.cli import main as cli_main
 from cleome.data.kanji_freq import KANJI_FREQ_CODEPOINTS, KANJI_FREQ_RANK
 
 
@@ -400,6 +403,82 @@ class TestCleomeSlicer(unittest.TestCase):
             # Duplicate (weight=400, stretch=None, style='normal') descriptors -> ValueError
             with self.assertRaisesRegex(ValueError, "Duplicate @font-face descriptors"):
                 slice_fonts([f1, f3_dup], out_dir=Path(tmp) / "dup", workers=1)
+
+    def test_cli_validation_and_dry_run(self) -> None:
+        """
+        Verify CLI argument parsing for --drop-tables, --layout-features, --dry-run,
+        and validation errors for non-positive --freq-tiers / --rare-chunk-size.
+        """
+        from contextlib import redirect_stderr
+
+        sample_cps = [ord("A"), ord("あ"), ord("日")]
+        with tempfile.TemporaryDirectory() as tmp:
+            font_path = Path(tmp) / "CliTest.ttf"
+            _create_synthetic_ttfont(sample_cps, family_name="CLI Test").save(font_path, reorderTables=False)
+
+            # 1. --drop-tables before positional input must not swallow positional input
+            buf = StringIO()
+            with redirect_stdout(buf):
+                rc = cli_main(["--drop-tables", "DSIG,GPOS", "--layout-features", "kern,palt", "--dry-run", str(font_path)])
+            self.assertEqual(rc, 0)
+            self.assertIn("3 chars -> 3 slices", buf.getvalue())
+
+            # 2. Invalid --freq-tiers (0 or negative) must fail with SystemExit(2)
+            with redirect_stderr(StringIO()), self.assertRaises(SystemExit) as cm:
+                cli_main(["--freq-tiers", "200x0", "--dry-run", str(font_path)])
+            self.assertEqual(cm.exception.code, 2)
+
+            with redirect_stderr(StringIO()), self.assertRaises(SystemExit) as cm2:
+                cli_main(["--rare-chunk-size", "0", "--dry-run", str(font_path)])
+            self.assertEqual(cm2.exception.code, 2)
+
+    def test_layout_features_passed_to_workers(self) -> None:
+        """
+        Verify that `SliceConfig.layout_features` is propagated to worker processes and controls
+        which GSUB features remain in generated `.woff2` slices (e.g. `kana-core`).
+        """
+        from fontTools.feaLib.builder import addOpenTypeFeaturesFromString
+
+        sample_cps = [ord("A"), ord("あ"), ord("ー"), ord("日"), 0x4E00]
+        tt = _create_synthetic_ttfont(sample_cps, family_name="Feature Font")
+        fea_code = """
+        languagesystem DFLT dflt;
+        languagesystem kana dflt;
+        feature vert {
+            sub uni30FC by uni3042;
+        } vert;
+        feature liga {
+            sub uni3042 uni30FC by uni3042;
+        } liga;
+        """
+        addOpenTypeFeaturesFromString(tt, fea_code)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            # 1. Retain only 'vert' across 2 parallel workers
+            out_vert = Path(tmp) / "vert_only"
+            res_vert = slice_font(
+                tt,
+                out_dir=out_vert,
+                config=SliceConfig(layout_features=("vert",)),
+                workers=2,
+            )
+            kana_vert = next(bf.path for bf in res_vert.built_files if bf.spec.slice_id == "kana-core")
+            with TTFont(kana_vert) as woff2_tt:
+                gsub_tags = [f.FeatureTag for f in woff2_tt["GSUB"].table.FeatureList.FeatureRecord]
+                self.assertEqual(gsub_tags, ["vert"])
+
+            # 2. Default '*' retains both 'liga' and 'vert'
+            out_all = Path(tmp) / "all_features"
+            res_all = slice_font(
+                tt,
+                out_dir=out_all,
+                config=SliceConfig(layout_features=("*",)),
+                workers=2,
+            )
+            kana_all = next(bf.path for bf in res_all.built_files if bf.spec.slice_id == "kana-core")
+            with TTFont(kana_all) as woff2_tt:
+                gsub_tags_all = sorted(f.FeatureTag for f in woff2_tt["GSUB"].table.FeatureList.FeatureRecord)
+                self.assertEqual(gsub_tags_all, ["liga", "vert"])
 
 
 if __name__ == "__main__":

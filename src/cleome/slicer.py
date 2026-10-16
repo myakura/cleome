@@ -65,6 +65,7 @@ class SliceConfig:
 
     # Subsetting & WOFF2 options:
     retain_layout_closure: bool = True
+    layout_features: tuple[str, ...] = ("*",)
     drop_tables: tuple[str, ...] = ()
     patch_uvs_only_cmap: bool = True
 
@@ -72,6 +73,19 @@ class SliceConfig:
     slices_subdir: str = "slices"
     url_prefix: str | None = None
     font_display: str = "swap"
+
+    def __post_init__(self) -> None:
+        for chunk_size, num_chunks in self.freq_tiers:
+            if chunk_size <= 0 or num_chunks <= 0:
+                raise ValueError(
+                    f"freq_tiers entries must have positive (chunk_size, num_chunks), got {(chunk_size, num_chunks)}"
+                )
+        if self.freq_tail_chunk_size <= 0:
+            raise ValueError(f"freq_tail_chunk_size must be > 0, got {self.freq_tail_chunk_size}")
+        if self.rare_kanji_chunk_size <= 0:
+            raise ValueError(f"rare_kanji_chunk_size must be > 0, got {self.rare_kanji_chunk_size}")
+        if self.symbols_ext_chunk_size <= 0:
+            raise ValueError(f"symbols_ext_chunk_size must be > 0, got {self.symbols_ext_chunk_size}")
 
 
 @dataclass(frozen=True, slots=True)

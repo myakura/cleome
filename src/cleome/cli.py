@@ -5,6 +5,7 @@ into Web-optimized `unicode-range` WOFF2 chunks and `@font-face` CSS.
 
 import argparse
 from pathlib import Path
+import re
 import sys
 import time
 from fontTools.ttLib import TTFont
@@ -15,6 +16,16 @@ from cleome.slicer import (
     extract_font_metadata,
 )
 from cleome.css import slice_fonts, validate_and_compute_variant_suffixes
+
+
+def _positive_int(val_str: str) -> int:
+    try:
+        val = int(val_str)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(f"Expected a positive integer, got '{val_str}'.") from exc
+    if val <= 0:
+        raise argparse.ArgumentTypeError(f"Value must be > 0, got {val}.")
+    return val
 
 
 def _parse_freq_tiers(spec_str: str) -> tuple[tuple[int, int], ...]:
@@ -31,8 +42,26 @@ def _parse_freq_tiers(spec_str: str) -> tuple[tuple[int, int], ...]:
                 f"Invalid --freq-tiers item '{item}'. Expected format 'SIZE'x'COUNT' (e.g. '200x2,80x10')."
             )
         sz_s, cnt_s = item.lower().split("x", 1)
-        tiers.append((int(sz_s), int(cnt_s)))
+        try:
+            sz, cnt = int(sz_s), int(cnt_s)
+        except ValueError as exc:
+            raise argparse.ArgumentTypeError(
+                f"Invalid --freq-tiers item '{item}'. Both SIZE and COUNT must be integers."
+            ) from exc
+        if sz <= 0 or cnt <= 0:
+            raise argparse.ArgumentTypeError(
+                f"Invalid --freq-tiers item '{item}'. Both SIZE and COUNT must be > 0."
+            )
+        tiers.append((sz, cnt))
+    if not tiers:
+        raise argparse.ArgumentTypeError("--freq-tiers cannot be empty.")
     return tuple(tiers)
+
+
+def _parse_tag_list(spec_str: str) -> tuple[str, ...]:
+    """Parse a comma- or whitespace-separated list of OpenType table or feature tags."""
+    tags = [t.strip() for t in re.split(r"[,\s]+", spec_str.strip()) if t.strip()]
+    return tuple(tags)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -110,21 +139,27 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--freq-tail-chunk-size",
-        type=int,
+        type=_positive_int,
         default=70,
         help="Target characters per slice for remaining Tier 3 Kanji (default: 70)",
     )
     parser.add_argument(
         "--rare-chunk-size",
-        type=int,
+        type=_positive_int,
         default=250,
         help="Target characters per slice for Tier 4 rare/extended Kanji (default: 250)",
     )
     parser.add_argument(
         "--symbols-chunk-size",
-        type=int,
+        type=_positive_int,
         default=350,
         help="Target characters per slice for Tier 2 extended symbols (default: 350)",
+    )
+    parser.add_argument(
+        "--layout-features",
+        type=_parse_tag_list,
+        default=("*",),
+        help="Comma-separated OpenType layout feature tags to retain (default: '*')",
     )
     parser.add_argument(
         "--no-layout-closure",
@@ -133,14 +168,14 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--drop-tables",
-        nargs="*",
+        type=_parse_tag_list,
         default=(),
-        help="Optional OpenType table tags to drop during subsetting (e.g. GPOS GSUB vhea vmtx)",
+        help="Comma-separated OpenType table tags to drop during subsetting (e.g. 'GPOS,GSUB,vhea,vmtx')",
     )
     parser.add_argument(
         "-j",
         "--workers",
-        type=int,
+        type=_positive_int,
         default=None,
         help="Number of parallel worker processes for WOFF2 compression (default: CPU count)",
     )
@@ -167,6 +202,7 @@ def main(argv: list[str] | None = None) -> int:
         rare_kanji_chunk_size=args.rare_chunk_size,
         symbols_ext_chunk_size=args.symbols_chunk_size,
         retain_layout_closure=not args.no_layout_closure,
+        layout_features=tuple(args.layout_features),
         drop_tables=tuple(args.drop_tables),
         slices_subdir=args.slices_dir,
         url_prefix=args.url_prefix,
@@ -217,18 +253,23 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     t0 = time.time()
-    result = slice_fonts(
-        fonts=args.inputs,
-        out_dir=args.out_dir,
-        family_name=args.family,
-        slug=args.slug,
-        css_filename=args.css_name,
-        weight=args.weight,
-        stretch=args.stretch,
-        style=args.style,
-        config=config,
-        workers=args.workers,
-    )
+    try:
+        result = slice_fonts(
+            fonts=args.inputs,
+            out_dir=args.out_dir,
+            family_name=args.family,
+            slug=args.slug,
+            css_filename=args.css_name,
+            weight=args.weight,
+            stretch=args.stretch,
+            style=args.style,
+            config=config,
+            workers=args.workers,
+        )
+    except ValueError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 1
+
     elapsed = time.time() - t0
 
     print(
@@ -243,3 +284,4 @@ def main(argv: list[str] | None = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+

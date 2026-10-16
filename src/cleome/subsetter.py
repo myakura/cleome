@@ -36,14 +36,15 @@ class BuiltSliceFile:
 
 def _create_subset_options(
     retain_layout_closure: bool = True,
+    layout_features: tuple[str, ...] = ("*",),
     drop_tables: tuple[str, ...] = (),
 ) -> Options:
     options = Options()
     options.flavor = "woff2"
     options.desubroutinize = False
-    # Retain all layout features and scripts so kerning, vertical forms (`vert`/`vrt2`),
+    # Retain specified layout features and all scripts so kerning, vertical forms (`vert`/`vrt2`),
     # proportional metrics (`palt`/`vpal`/`halt`/`vhal`), and ligatures work within each slice.
-    options.layout_features = ["*"]
+    options.layout_features = list(layout_features)
     options.layout_scripts = ["*"]
     options.layout_closure = retain_layout_closure
     # Preserve Copyright (0), Family/Subfamily/Version/PS (1..6), License Description (13),
@@ -70,6 +71,7 @@ def _init_subset_worker(
     font_bytes: bytes,
     patch_uvs: bool,
     retain_closure: bool,
+    layout_features: tuple[str, ...],
     drop_tables: tuple[str, ...],
 ) -> None:
     global _WORKER_FONT_BYTES, _WORKER_PATCH_UVS, _WORKER_OPTIONS
@@ -77,6 +79,7 @@ def _init_subset_worker(
     _WORKER_PATCH_UVS = patch_uvs
     _WORKER_OPTIONS = _create_subset_options(
         retain_layout_closure=retain_closure,
+        layout_features=layout_features,
         drop_tables=drop_tables,
     )
 
@@ -194,6 +197,7 @@ def export_woff2_slices(
             font_bytes,
             worker_needs_uvs_patch,
             config.retain_layout_closure,
+            config.layout_features,
             config.drop_tables,
         )
         try:
@@ -211,6 +215,7 @@ def export_woff2_slices(
                 font_bytes,
                 worker_needs_uvs_patch,
                 config.retain_layout_closure,
+                config.layout_features,
                 config.drop_tables,
             ),
         ) as pool:
