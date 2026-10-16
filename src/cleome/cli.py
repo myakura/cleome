@@ -159,7 +159,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--layout-features",
         type=_parse_tag_list,
         default=("*",),
-        help="Comma-separated OpenType layout feature tags to retain (default: '*')",
+        help=(
+            "Comma-separated OpenType layout feature tags to retain "
+            "(default: '*' keeps all features; specifying tags replaces the default list, "
+            "so include vertical/composition tags like 'ccmp,locl,kern,mark,mkmk,liga,palt,halt,vpal,vhal,vkrn,vert,vrt2,ruby')"
+        ),
     )
     parser.add_argument(
         "--no-layout-closure",
@@ -284,4 +288,3 @@ def main(argv: list[str] | None = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
