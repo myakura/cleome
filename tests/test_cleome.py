@@ -216,8 +216,8 @@ class TestCleomeSlicer(unittest.TestCase):
             disk_out = Path(tmp) / "disk_out"
             disk_res = slice_font(disk_font, out_dir=disk_out, workers=2)
             disk_kanji_woff2 = next(bf.path for bf in disk_res.built_files if "kanji-freq" in bf.spec.slice_id)
-            with TTFont(disk_kanji_woff2) as slice_tt2:
-                self.assertIn(0x553E, slice_tt2.getBestCmap(), "WOFF2 slice from disk Path must contain U+553E")
+            with TTFont(disk_kanji_woff2) as slice_tt:
+                self.assertIn(0x553E, slice_tt.getBestCmap(), "WOFF2 slice from disk Path must contain U+553E")
 
     def _assert_plan_invariants(self, plan, codepoints: frozenset[int]) -> None:
         # Check partition completeness & mutual exclusivity of binary_codepoints
@@ -287,10 +287,10 @@ class TestCleomeSlicer(unittest.TestCase):
 
     def test_sip_and_tip_planes_never_bridge_in_tier4(self) -> None:
         """
-        Verify that Rare Kanji in Plane 2 (SIP, U+20000..2FA1F) and Plane 3 (TIP, U+30000..3347F,
-        including Unicode 17.0 Ext J) are placed in separate Tier 4 slices so no 1-token hex range spans planes.
+        Verify that Rare Kanji in Plane 2 (SIP, U+20000..2FA1F) and Plane 3 (TIP, U+30000..3347F)
+        are placed in separate Tier 4 slices so no 1-token hex range spans across planes.
         """
-        cps = {ord("A"), ord("あ"), 0x20001, 0x2FA1D, 0x30000, 0x3347F}
+        cps = {ord("A"), ord("あ"), 0x20001, 0x2FA1D, 0x30000, 0x323B0}
         plan = build_slice_plan(cps)
         self._assert_plan_invariants(plan, frozenset(cps))
         rare_slices = [s for s in plan if s.tier == 4]
@@ -301,10 +301,11 @@ class TestCleomeSlicer(unittest.TestCase):
             has_tip = any(0x30000 <= c <= 0x3347F for c in ur_cps)
             self.assertFalse(has_sip and has_tip, f"Slice {s.slice_id} bridged SIP and TIP: {s.css_unicode_range}")
 
-    def test_uvs_selector_deterministic_priority(self) -> None:
+    def test_uvs_selector_deterministic_priority_ivs_over_vs(self) -> None:
         """
-        Verify that when multiple UVS selectors exist in Format 14 for an unmapped base character
-        (including standardized VS1 U+FE00 and IVS U+E0102/U+E0100), U+E0100 always takes precedence.
+        Verify that when multiple UVS selectors exist in Format 14 for an unmapped base character,
+        IVS selectors (U+E0100..U+E01EF) take precedence over VS1..VS16 (U+FE00..U+FE0F), and
+        U+E0100 takes precedence over U+E0102 regardless of dict insertion order.
         """
         tt = _create_synthetic_ttfont([ord("A")])
         glyph_order = tt.getGlyphOrder() + ["glyph_vs1", "glyph_iv2", "glyph_iv0"]
@@ -550,7 +551,25 @@ class TestCleomeSlicer(unittest.TestCase):
                 gsub_tags_all = sorted(f.FeatureTag for f in woff2_tt["GSUB"].table.FeatureList.FeatureRecord)
                 self.assertEqual(gsub_tags_all, ["liga", "vert"])
 
+    def test_multi_font_differing_cmaps_variant_slice_specs(self) -> None:
+        """
+        Verify that when bundling multiple fonts with differing `cmap`s, `variant_slice_specs`
+        contains each font's own slice plan (matching `built_files`), while `slice_specs` holds the union plan.
+        """
+        f_reg = _create_synthetic_ttfont([ord("A"), ord("あ")], family_name="Diff Cmap", weight=400)
+        f_bold = _create_synthetic_ttfont([ord("A"), ord("あ"), ord("日"), 0x4E02], family_name="Diff Cmap", weight=700)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            res = slice_fonts([f_reg, f_bold], out_dir=Path(tmp) / "diff_cmap", workers=2)
+            self.assertEqual(len(res.variant_slice_specs), 2)
+            self.assertEqual(len(res.variant_slice_specs[0]), 2)  # latin + kana-core
+            self.assertEqual(len(res.variant_slice_specs[1]), 4)  # rare + freq + kana-core + latin
+            self.assertEqual(len(res.slice_specs), 4)  # union plan
+            self.assertEqual(
+                len(res.built_files),
+                len(res.variant_slice_specs[0]) + len(res.variant_slice_specs[1]),
+            )
+
 
 if __name__ == "__main__":
     unittest.main()
-

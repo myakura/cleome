@@ -2,7 +2,7 @@
 CSS `@font-face` stylesheet generator and high-level Python API (`slice_font` / `slice_fonts`) for cleome.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import io
 from pathlib import Path
 from fontTools.ttLib import TTFont
@@ -23,7 +23,14 @@ from cleome.subsetter import (
 
 @dataclass(frozen=True, slots=True)
 class SliceBundleResult:
-    """Complete result returned by `slice_font` / `slice_fonts`."""
+    """
+    Complete result returned by `slice_font` / `slice_fonts`.
+
+    - `slice_specs`: Slice plan for a single font, or the union plan across all input
+      codepoints when bundling multiple fonts.
+    - `variant_slice_specs`: Per-font slice plans aligned 1:1 with `fonts_metadata`
+      (matching the `BuiltSliceFile.spec` items in `built_files` for each variant).
+    """
 
     family_name: str
     slug: str
@@ -33,6 +40,7 @@ class SliceBundleResult:
     slice_specs: list[SliceSpec]
     built_files: list[BuiltSliceFile]
     fonts_metadata: list[FontMetadata]
+    variant_slice_specs: list[list[SliceSpec]] = field(default_factory=list)
 
     @property
     def total_woff2_bytes(self) -> int:
@@ -250,6 +258,7 @@ def slice_fonts(
             if m.codepoints not in plan_cache:
                 plan_cache[m.codepoints] = build_slice_plan(m.codepoints, config=config)
 
+        variant_plans = [plan_cache[m.codepoints] for m in metas]
         union_codepoints = frozenset({*m.codepoints for m in metas})
         slice_specs = plan_cache.get(union_codepoints) or build_slice_plan(
             union_codepoints, config=config
@@ -258,8 +267,7 @@ def slice_fonts(
         # 3. Export WOFF2 slices for each input font
         fonts_and_files: list[tuple[FontMetadata, list[BuiltSliceFile]]] = []
         all_built_files: list[BuiltSliceFile] = []
-        for (_, export_src, _), m in zip(loaded_fonts, metas):
-            variant_specs = plan_cache[m.codepoints]
+        for (_, export_src, _), m, variant_specs in zip(loaded_fonts, metas, variant_plans):
             built = export_woff2_slices(
                 export_src,
                 meta=m,
@@ -286,6 +294,7 @@ def slice_fonts(
             slice_specs=slice_specs,
             built_files=all_built_files,
             fonts_metadata=metas,
+            variant_slice_specs=variant_plans,
         )
     finally:
         for tt, _, should_close in loaded_fonts:
@@ -326,4 +335,3 @@ def slice_font(
         config=config,
         workers=workers,
     )
-
