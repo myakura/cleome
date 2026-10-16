@@ -176,7 +176,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.dry_run:
         metas = []
         for p in args.inputs:
-            with TTFont(p) as tt:
+            with TTFont(p, lazy=True, recalcTimestamp=False) as tt:
                 metas.append(
                     extract_font_metadata(
                         tt,

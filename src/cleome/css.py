@@ -3,6 +3,7 @@ CSS `@font-face` stylesheet generator and high-level Python API (`slice_font` / 
 """
 
 from dataclasses import dataclass
+import io
 from pathlib import Path
 from fontTools.ttLib import TTFont
 
@@ -13,7 +14,11 @@ from cleome.slicer import (
     build_slice_plan,
     extract_font_metadata,
 )
-from cleome.subsetter import BuiltSliceFile, export_woff2_slices
+from cleome.subsetter import (
+    BuiltSliceFile,
+    export_woff2_slices,
+    serialize_font_to_bytes,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -161,14 +166,19 @@ def slice_fonts(
     subdir = config.slices_subdir.strip().strip("/")
     slices_dir = out_path if (not subdir or subdir == ".") else (out_path / subdir)
 
-    loaded_fonts: list[tuple[TTFont, Path | None, bool]] = []
+    # Tuple of (probe_tt, source_for_export, should_close)
+    loaded_fonts: list[tuple[TTFont, Path | bytes, bool]] = []
     try:
         for f in fonts:
             if isinstance(f, TTFont):
-                loaded_fonts.append((f, None, False))
+                # Serialize once without mutating caller's TTFont instance
+                raw_bytes = serialize_font_to_bytes(f)
+                probe_tt = TTFont(io.BytesIO(raw_bytes), lazy=True, recalcTimestamp=False)
+                loaded_fonts.append((probe_tt, raw_bytes, True))
             else:
                 p = Path(f)
-                loaded_fonts.append((TTFont(p, lazy=True), p, True))
+                probe_tt = TTFont(p, lazy=True, recalcTimestamp=False)
+                loaded_fonts.append((probe_tt, p, True))
 
         # 1. Extract metadata from each font
         raw_metas: list[FontMetadata] = []
@@ -216,13 +226,13 @@ def slice_fonts(
             union_codepoints, config=config
         )
 
-        # 3. Export WOFF2 slices for each input font (pass disk Path when available to avoid TTFont.save())
+        # 3. Export WOFF2 slices for each input font
         fonts_and_files: list[tuple[FontMetadata, list[BuiltSliceFile]]] = []
         all_built_files: list[BuiltSliceFile] = []
-        for (tt, src_path, _), m in zip(loaded_fonts, metas):
+        for (_, export_src, _), m in zip(loaded_fonts, metas):
             variant_specs = plan_cache[m.codepoints]
             built = export_woff2_slices(
-                src_path if src_path is not None else tt,
+                export_src,
                 meta=m,
                 slice_specs=variant_specs,
                 slices_dir=slices_dir,

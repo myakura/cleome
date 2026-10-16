@@ -108,7 +108,7 @@ def _create_synthetic_ttfont(
     base_glyph = pen.glyph()
 
     empty_pen = TTGlyphPen(None)
-    glyf_map = {g: ( empty_pen.glyph() if g == ".notdef" else base_glyph ) for g in glyph_order}
+    glyf_map = {g: (empty_pen.glyph() if g == ".notdef" else base_glyph) for g in glyph_order}
     fb.setupGlyf(glyf_map)
 
     metrics = {g: (1000, 100) for g in glyph_order}
@@ -118,6 +118,8 @@ def _create_synthetic_ttfont(
         {
             "familyName": family_name,
             "styleName": "Regular" if weight == 400 else "Bold",
+            "licenseDescription": "SIL Open Font License 1.1",
+            "licenseInfoURL": "https://openfontlicense.org",
         }
     )
     fb.setupOS2(sTypoAscender=880, sTypoDescender=-120, usWeightClass=weight, usWidthClass=width_class)
@@ -144,6 +146,7 @@ def _create_synthetic_ttfont(
         fb.setupGvar(variations)
 
     tt = fb.font
+    tt["head"].modified = 3700000000  # Fixed deterministic timestamp
 
     if uvs_only_cp is not None:
         uvs_cp, uvs_sel = uvs_only_cp
@@ -181,18 +184,36 @@ class TestCleomeSlicer(unittest.TestCase):
         rare_sub = [s for s in plan_sub if s.tier == 4]
         self.assertLess(len(rare_sub), len(rare_full))
 
-    def test_uvs_format14_missing_base_cmap_autopatch(self) -> None:
+    def test_uvs_format14_missing_base_cmap_autopatch_and_e2e_woff2(self) -> None:
         """
         Verify that a character present in cmap Format 14 (UVS) but missing from
         base Format 4/12 (like U+553E '唾' in SourceHanSansJP-VF.otf v2.005) is
-        automatically patched into the base cmap before slicing.
+        automatically patched into the generated WOFF2 slice both when slicing a
+        TTFont in memory (without mutating the caller's TTFont) and when slicing a Path.
         """
         tt = _create_synthetic_ttfont(
             [ord("A"), ord("あ"), ord("日")],
             uvs_only_cp=(0x553E, 0xE0100),
         )
-        meta = extract_font_metadata(tt, patch_uvs=True)
-        self.assertIn(0x553E, meta.codepoints, "U+553E '唾' should be auto-patched from UVS Format 14")
+        self.assertNotIn(0x553E, tt.getBestCmap())
+
+        with tempfile.TemporaryDirectory() as tmp:
+            # 1. Pass in-memory TTFont: caller's TTFont must NOT be mutated, yet WOFF2 has U+553E
+            mem_out = Path(tmp) / "mem_out"
+            mem_res = slice_font(tt, out_dir=mem_out, workers=2)
+            self.assertNotIn(0x553E, tt.getBestCmap(), "Caller's in-memory TTFont must not be mutated")
+            kanji_woff2 = next(bf.path for bf in mem_res.built_files if "kanji-freq" in bf.spec.slice_id)
+            with TTFont(kanji_woff2) as slice_tt:
+                self.assertIn(0x553E, slice_tt.getBestCmap(), "WOFF2 slice from in-memory TTFont must contain U+553E")
+
+            # 2. Pass Path on disk: worker process patches Format 14 -> base cmap in WOFF2
+            disk_font = Path(tmp) / "uvs_font.ttf"
+            tt.save(disk_font, reorderTables=False)
+            disk_out = Path(tmp) / "disk_out"
+            disk_res = slice_font(disk_font, out_dir=disk_out, workers=2)
+            disk_kanji_woff2 = next(bf.path for bf in disk_res.built_files if "kanji-freq" in bf.spec.slice_id)
+            with TTFont(disk_kanji_woff2) as slice_tt2:
+                self.assertIn(0x553E, slice_tt2.getBestCmap(), "WOFF2 slice from disk Path must contain U+553E")
 
     def _assert_plan_invariants(self, plan, codepoints: frozenset[int]) -> None:
         # Check partition completeness & mutual exclusivity of binary_codepoints
@@ -305,8 +326,11 @@ class TestCleomeSlicer(unittest.TestCase):
         self.assertIn(0x553E, meta.codepoints)
         self.assertEqual(tt.getBestCmap()[0x553E], "glyph_iv0")
 
-    def test_end_to_end_variable_and_static_export(self) -> None:
-        """Test actual WOFF2 slice generation and CSS output for Variable and Static fonts."""
+    def test_end_to_end_variable_and_static_export_with_woff2_verification(self) -> None:
+        """
+        Test WOFF2 slice generation, exact cmap verification of every built slice,
+        license nameID (13, 14) preservation, head.modified determinism, and static font-stretch.
+        """
         sample_chars = "A0€あむモヶ「」→▶①Ωα日人一𠮟𠮷鷗" + "".join(chr(cp) for cp in range(0x4E10, 0x4E30))
         sample_cps = sorted({ord(c) for c in sample_chars})
 
@@ -323,9 +347,17 @@ class TestCleomeSlicer(unittest.TestCase):
             self.assertEqual(res.css_path.name, "test-sans-jp.css")
             self.assertIn("font-weight: 250 900;", res.css_text)
             self.assertIn("font-stretch: 70% 100%;", res.css_text)
-            self.assertTrue(all(bf.path.exists() and bf.size_bytes > 0 for bf in res.built_files))
 
-            # Test multi-file static fonts (Condensed Regular 400 + Condensed Bold 700)
+            for bf in res.built_files:
+                self.assertTrue(bf.path.exists() and bf.size_bytes > 0)
+                with TTFont(bf.path) as woff2_tt:
+                    self.assertEqual(set(woff2_tt.getBestCmap().keys()), set(bf.spec.binary_codepoints))
+                    self.assertEqual(woff2_tt["head"].modified, 3700000000)
+                    name_ids = {r.nameID for r in woff2_tt["name"].names}
+                    self.assertIn(13, name_ids, "License description (nameID 13) must be retained")
+                    self.assertIn(14, name_ids, "License info URL (nameID 14) must be retained")
+
+            # Test multi-file static fonts (Condensed Regular 400 + Condensed Bold 700, width_class=3 -> 75%)
             reg_path = Path(tmp) / "TestSansJP-Cond-Regular.ttf"
             bold_path = Path(tmp) / "TestSansJP-Cond-Bold.ttf"
             _create_synthetic_ttfont(
@@ -334,14 +366,14 @@ class TestCleomeSlicer(unittest.TestCase):
                 weight=400,
                 width_class=3,
                 is_variable=False,
-            ).save(reg_path)
+            ).save(reg_path, reorderTables=False)
             _create_synthetic_ttfont(
                 sample_cps,
                 family_name="Test Sans JP Cond",
                 weight=700,
                 width_class=3,
                 is_variable=False,
-            ).save(bold_path)
+            ).save(bold_path, reorderTables=False)
 
             static_out = Path(tmp) / "static_web"
             s_res = slice_fonts([reg_path, bold_path], out_dir=static_out, workers=2)

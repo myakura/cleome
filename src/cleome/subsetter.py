@@ -1,8 +1,9 @@
 """
 WOFF2 subsetting and parallel export engine for cleome.
 
-Uses `fontTools.subset` while preserving all OpenType Layout features (`GSUB`, `GPOS`, `GDEF`)
-and Variable Font tables (`fvar`, `gvar`, `CFF2`, `HVAR`, `VVAR`, `MVAR`, `STAT`, `avar`).
+Uses `fontTools.subset` while preserving OpenType Layout features (`GSUB`, `GPOS`, `GDEF`),
+OFL/license metadata (`nameID` 0, 13, 14), source `head.modified` timestamps, and
+Variable Font tables (`fvar`, `gvar`, `CFF2`, `HVAR`, `VVAR`, `MVAR`, `STAT`, `avar`).
 """
 
 from concurrent.futures import ProcessPoolExecutor
@@ -45,7 +46,9 @@ def _create_subset_options(
     options.layout_features = ["*"]
     options.layout_scripts = ["*"]
     options.layout_closure = retain_layout_closure
-    options.name_IDs = [0, 1, 2, 3, 4, 5, 6, 16, 17]
+    # Preserve Copyright (0), Family/Subfamily/Version/PS (1..6), License Description (13),
+    # License Info URL (14), and Typographic Family/Subfamily (16, 17).
+    options.name_IDs = [0, 1, 2, 3, 4, 5, 6, 13, 14, 16, 17]
     options.name_legacy = True
     options.name_languages = ["*"]
     options.notdef_glyph = True
@@ -90,7 +93,9 @@ def _subset_single_slice_worker(
     """Worker function: subset cached font bytes to `codepoints` and write WOFF2 to `out_path_str`."""
     codepoints, out_path_str = task
     assert _WORKER_FONT_BYTES is not None and _WORKER_OPTIONS is not None
-    with TTFont(io.BytesIO(_WORKER_FONT_BYTES), lazy=True) as font:
+    with TTFont(
+        io.BytesIO(_WORKER_FONT_BYTES), lazy=True, recalcTimestamp=False
+    ) as font:
         if _WORKER_PATCH_UVS:
             patch_uvs_missing_base_cmap(font)
 
@@ -110,9 +115,14 @@ def serialize_font_to_bytes(font: TTFont) -> bytes:
     """Serialize an in-memory `TTFont` (as uncommitted SFNT) into bytes for parallel workers."""
     buf = io.BytesIO()
     orig_flavor = font.flavor
+    orig_recalc = font.recalcTimestamp
     font.flavor = None
-    font.save(buf)
-    font.flavor = orig_flavor
+    font.recalcTimestamp = False
+    try:
+        font.save(buf)
+    finally:
+        font.flavor = orig_flavor
+        font.recalcTimestamp = orig_recalc
     return buf.getvalue()
 
 
@@ -135,7 +145,7 @@ def export_woff2_slices(
     worker_needs_uvs_patch = False
     if isinstance(font_or_bytes, (str, Path)):
         p = Path(font_or_bytes)
-        with TTFont(p, lazy=True) as probe:
+        with TTFont(p, lazy=True, recalcTimestamp=False) as probe:
             is_woff = probe.flavor is not None
         if not is_woff and not meta.patched_uvs_codepoints:
             # Fast path: raw SFNT (.ttf/.otf) on disk with no missing UVS cmap entries
@@ -145,16 +155,18 @@ def export_woff2_slices(
             font_bytes = p.read_bytes()
             worker_needs_uvs_patch = True
         else:
-            with TTFont(p) as tmp_font:
+            with TTFont(p, recalcTimestamp=False) as tmp_font:
                 if config.patch_uvs_only_cmap:
                     patch_uvs_missing_base_cmap(tmp_font)
                 font_bytes = serialize_font_to_bytes(tmp_font)
     elif isinstance(font_or_bytes, TTFont):
-        if config.patch_uvs_only_cmap and not meta.patched_uvs_codepoints:
-            patch_uvs_missing_base_cmap(font_or_bytes)
         font_bytes = serialize_font_to_bytes(font_or_bytes)
+        if config.patch_uvs_only_cmap:
+            worker_needs_uvs_patch = True
     else:
         font_bytes = font_or_bytes
+        if config.patch_uvs_only_cmap and meta.patched_uvs_codepoints:
+            worker_needs_uvs_patch = True
 
     tasks: list[tuple[list[int], str]] = []
     spec_by_path: dict[str, tuple[SliceSpec, str]] = {}
