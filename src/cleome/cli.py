@@ -14,7 +14,7 @@ from cleome.slicer import (
     build_slice_plan,
     extract_font_metadata,
 )
-from cleome.css import slice_fonts
+from cleome.css import slice_fonts, validate_and_compute_variant_suffixes
 
 
 def _parse_freq_tiers(spec_str: str) -> tuple[tuple[int, int], ...]:
@@ -188,24 +188,32 @@ def main(argv: list[str] | None = None) -> int:
                         patch_uvs=config.patch_uvs_only_cmap,
                     )
                 )
-        union_cps = frozenset({*m.codepoints for m in metas})
-        plan = build_slice_plan(union_cps, config=config)
+        try:
+            validate_and_compute_variant_suffixes(metas, family_override=args.family)
+        except ValueError as exc:
+            print(f"Error: {exc}", file=sys.stderr)
+            return 1
+
         first = metas[0]
         print(f"Font Family : {first.family_name} (slug: {first.slug})")
         print(f"Type        : {'Variable' if first.is_variable else 'Static'} ({len(metas)} file(s))")
-        print(f"Weight/Style: weight={first.weight_css}, stretch={first.stretch_css or 'normal'}, style={first.style_css}")
-        print(f"Codepoints  : {len(union_cps):,d} mapped characters -> {len(plan)} slices")
-        by_tier: dict[int, list] = {4: [], 3: [], 2: [], 1: []}
-        for s in plan:
-            by_tier[s.tier].append(s)
-        for tier_num in (4, 3, 2, 1):
-            t_slices = by_tier[tier_num]
-            t_chars = sum(len(s.binary_codepoints) for s in t_slices)
-            t_ur_len = sum(len(s.css_unicode_range) for s in t_slices)
+        for m in metas:
+            plan = build_slice_plan(m.codepoints, config=config)
             print(
-                f"  Tier {tier_num}: {len(t_slices):2d} slices | {t_chars:6,d} chars | "
-                f"unicode-range len: {t_ur_len:6,d} chars ({t_ur_len/1024:.1f} KB)"
+                f"Variant     : weight={m.weight_css}, stretch={m.stretch_css or 'normal'}, "
+                f"style={m.style_css} | {len(m.codepoints):,d} chars -> {len(plan)} slices"
             )
+            by_tier: dict[int, list] = {4: [], 3: [], 2: [], 1: []}
+            for s in plan:
+                by_tier[s.tier].append(s)
+            for tier_num in (4, 3, 2, 1):
+                t_slices = by_tier[tier_num]
+                t_chars = sum(len(s.binary_codepoints) for s in t_slices)
+                t_ur_len = sum(len(s.css_unicode_range) for s in t_slices)
+                print(
+                    f"  Tier {tier_num}: {len(t_slices):2d} slices | {t_chars:6,d} chars | "
+                    f"unicode-range len: {t_ur_len:6,d} chars ({t_ur_len/1024:.1f} KB)"
+                )
         return 0
 
     t0 = time.time()

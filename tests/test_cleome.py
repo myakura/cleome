@@ -380,7 +380,27 @@ class TestCleomeSlicer(unittest.TestCase):
             self.assertTrue(s_res.css_path.exists())
             self.assertIn("font-weight: 400;", s_res.css_text)
             self.assertIn("font-weight: 700;", s_res.css_text)
+            self.assertIn("font-stretch: 75%;", s_res.css_text)
             self.assertEqual(len(s_res.built_files), len(s_res.slice_specs) * 2)
+
+    def test_multi_font_collision_and_family_mismatch_errors(self) -> None:
+        """
+        Verify that passing multiple fonts with different family names (without --family)
+        or duplicate (weight, stretch, style) @font-face descriptors raises ValueError.
+        """
+        sample_cps = [ord("A"), ord("あ"), ord("日")]
+        f1 = _create_synthetic_ttfont(sample_cps, family_name="Family A", weight=400, width_class=5)
+        f2 = _create_synthetic_ttfont(sample_cps, family_name="Family B", weight=700, width_class=5)
+        f3_dup = _create_synthetic_ttfont(sample_cps, family_name="Family A", weight=400, width_class=5)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            # Mismatched family names without family_name override -> ValueError
+            with self.assertRaisesRegex(ValueError, "different detected font-family names"):
+                slice_fonts([f1, f2], out_dir=Path(tmp) / "mismatch", workers=1)
+
+            # Duplicate (weight=400, stretch=None, style='normal') descriptors -> ValueError
+            with self.assertRaisesRegex(ValueError, "Duplicate @font-face descriptors"):
+                slice_fonts([f1, f3_dup], out_dir=Path(tmp) / "dup", workers=1)
 
 
 if __name__ == "__main__":

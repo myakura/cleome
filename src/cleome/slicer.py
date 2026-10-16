@@ -30,6 +30,20 @@ CJK_IDEOGRAPH_REGIONS: tuple[tuple[str, int, int], ...] = (
     ("TIP", 0x30000, 0x323AF),
 )
 
+# OpenType OS/2.usWidthClass (1..9) to CSS font-stretch percentage (5 = 100% normal is omitted)
+OS2_WIDTH_CLASS_TO_CSS: frozendict[int, str] = frozendict(
+    {
+        1: "50%",
+        2: "62.5%",
+        3: "75%",
+        4: "87.5%",
+        6: "112.5%",
+        7: "125%",
+        8: "150%",
+        9: "200%",
+    }
+)
+
 
 @dataclass(frozen=True, slots=True)
 class SliceConfig:
@@ -190,7 +204,7 @@ def extract_font_metadata(
     else:
         weight_css = "400"
 
-    # Stretch (wdth)
+    # Stretch (wdth axis for Variable Fonts, or OS/2.usWidthClass for Static Fonts)
     if stretch_override is not None:
         stretch_css = stretch_override
     elif "wdth" in axes:
@@ -199,6 +213,8 @@ def extract_font_metadata(
             stretch_css = f"{_fmt_num(d_min)}%" if abs(d_min - 100.0) > 1e-4 else None
         else:
             stretch_css = f"{_fmt_num(d_min)}% {_fmt_num(d_max)}%"
+    elif not is_variable and "OS/2" in font:
+        stretch_css = OS2_WIDTH_CLASS_TO_CSS.get(int(font["OS/2"].usWidthClass))
     else:
         stretch_css = None
 

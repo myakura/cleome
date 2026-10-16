@@ -43,6 +43,11 @@ class SliceBundleResult:
         return len(self.css_text.encode("utf-8"))
 
 
+def _escape_css_str(val: str) -> str:
+    """Escape backslashes and single quotes for safe embedding inside single-quoted CSS strings."""
+    return val.replace("\\", "\\\\").replace("'", "\\'")
+
+
 def _resolve_url_prefix(config: SliceConfig) -> str:
     if config.url_prefix is not None:
         prefix = config.url_prefix.rstrip("/")
@@ -79,61 +84,78 @@ def generate_css(
     for meta, built_files in fonts_and_files:
         if len(fonts_and_files) > 1:
             v_label = f" ({meta.variant_suffix})" if meta.variant_suffix else ""
+            stretch_info = f", stretch: {meta.stretch_css}" if meta.stretch_css else ""
             lines.append(
                 f"\n/* === Variant: {meta.family_name}{v_label} "
-                f"[weight: {meta.weight_css}, style: {meta.style_css}] === */"
+                f"[weight: {meta.weight_css}{stretch_info}, style: {meta.style_css}] === */"
             )
+        esc_family = _escape_css_str(meta.family_name)
         for bf in built_files:
             spec = bf.spec
             size_kb = bf.size_bytes / 1024.0
+            esc_url = _escape_css_str(f"{url_prefix}{bf.filename}")
             lines.append(f"/* [{spec.slice_id}] {spec.description} ({size_kb:.1f} KB) */")
             lines.append("@font-face {")
-            lines.append(f"  font-family: '{meta.family_name}';")
+            lines.append(f"  font-family: '{esc_family}';")
             lines.append(f"  font-style: {meta.style_css};")
             lines.append(f"  font-weight: {meta.weight_css};")
             if meta.stretch_css:
                 lines.append(f"  font-stretch: {meta.stretch_css};")
             lines.append(f"  font-display: {config.font_display};")
-            lines.append(f"  src: url('{url_prefix}{bf.filename}') format('woff2');")
+            lines.append(f"  src: url('{esc_url}') format('woff2');")
             lines.append(f"  unicode-range: {spec.css_unicode_range};")
             lines.append("}")
 
     return "\n".join(lines) + "\n"
 
 
-def _compute_variant_suffixes(
+def validate_and_compute_variant_suffixes(
     raw_metas: list[FontMetadata],
+    *,
+    family_override: str | None = None,
 ) -> list[str]:
     """
-    When multiple static fonts (e.g. Regular 400, Bold 700, Italic 400) are passed together,
-    assign clean, collision-free variant suffixes (`400`, `700`, `400-italic`, etc.).
-    For a single font, returns `[""]` so filenames are `<slug>-<slice_id>.woff2`.
+    Validate that multiple input fonts can be safely bundled into a single `@font-face`
+    stylesheet without silent family mismatches or duplicate `(weight, stretch, style)` descriptors,
+    and return collision-free filename suffixes (`400`, `700`, `75-400`, `400-italic`, etc.).
     """
     if len(raw_metas) <= 1:
         return [m.variant_suffix for m in raw_metas]
+
+    distinct_families = sorted({m.family_name for m in raw_metas})
+    if family_override is None and len(distinct_families) > 1:
+        raise ValueError(
+            f"Input fonts have different detected font-family names ({', '.join(repr(f) for f in distinct_families)}). "
+            "Slice each family separately, or pass `--family` / `family_name=...` explicitly if unifying them."
+        )
+
+    seen_descriptors: set[tuple[str, str, str]] = set()
+    for m in raw_metas:
+        desc_key = (m.weight_css, m.stretch_css or "100%", m.style_css)
+        if desc_key in seen_descriptors:
+            raise ValueError(
+                f"Duplicate @font-face descriptors across input fonts: "
+                f"weight={m.weight_css!r}, stretch={m.stretch_css or 'normal'!r}, style={m.style_css!r}. "
+                "Each font in a multi-file bundle must have a unique (weight, stretch, style) combination."
+            )
+        seen_descriptors.add(desc_key)
 
     has_multiple_styles = len({m.style_css for m in raw_metas}) > 1
     has_multiple_stretches = len({m.stretch_css for m in raw_metas}) > 1
 
     suffixes: list[str] = []
-    seen: dict[str, int] = {}
     for m in raw_metas:
         if m.variant_suffix:
             suf = m.variant_suffix
         else:
             parts: list[str] = []
-            if has_multiple_stretches and m.stretch_css:
-                parts.append(
-                    m.stretch_css.replace("%", "").replace(" ", "-").lower()
-                )
+            if has_multiple_stretches:
+                stretch_label = (m.stretch_css or "100%").replace("%", "").replace(".", "_").replace(" ", "-").lower()
+                parts.append(f"w{stretch_label}")
             parts.append(m.weight_css.replace(" ", "-"))
             if has_multiple_styles and m.style_css != "normal":
                 parts.append(m.style_css.replace(" ", "-").lower())
             suf = "-".join(parts)
-        count = seen.get(suf, 0) + 1
-        seen[suf] = count
-        if count > 1:
-            suf = f"{suf}-{count}"
         suffixes.append(suf)
     return suffixes
 
@@ -194,10 +216,13 @@ def slice_fonts(
             )
             raw_metas.append(m)
 
+        variant_suffixes = validate_and_compute_variant_suffixes(
+            raw_metas, family_override=family_name
+        )
+
         # Unify family_name and slug across all variants (using the first font if not overridden)
         unified_family = family_name or raw_metas[0].family_name
         unified_slug = slug or raw_metas[0].slug
-        variant_suffixes = _compute_variant_suffixes(raw_metas)
 
         metas: list[FontMetadata] = [
             FontMetadata(
@@ -293,3 +318,4 @@ def slice_font(
         config=config,
         workers=workers,
     )
+
