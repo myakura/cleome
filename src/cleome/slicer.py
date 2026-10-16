@@ -26,8 +26,8 @@ CJK_IDEOGRAPH_REGIONS: tuple[tuple[str, int, int], ...] = (
     ("Ext-A", 0x3400, 0x4DBF),
     ("BMP", 0x4E00, 0x9FFF),
     ("Compat", 0xF900, 0xFAFF),
-    ("SIP", 0x20000, 0x2FA1F),
-    ("TIP", 0x30000, 0x323AF),
+    ("SIP", 0x20000, 0x2FA1F),  # Ext B..F, Ext I (U+2EBF0..2EE5F), Compat Supplement
+    ("TIP", 0x30000, 0x3347F),  # Ext G, Ext H, Ext J (U+323B0..3347F, Unicode 17.0)
 )
 
 # OpenType OS/2.usWidthClass (1..9) to CSS font-stretch percentage (5 = 100% normal is omitted)
@@ -113,12 +113,18 @@ def slugify_family(name: str) -> str:
     return s or "font"
 
 
+def _uvs_selector_sort_key(item: tuple[int, list[tuple[int, str | None]]]) -> tuple[int, int]:
+    """Prioritize Ideographic Variation Selectors (U+E0100..U+E01EF) in ascending order before VS1..VS16."""
+    sel = item[0]
+    return (0 if 0xE0100 <= sel <= 0xE01EF else 1, sel)
+
+
 def patch_uvs_missing_base_cmap(font: TTFont) -> list[int]:
     """
     Detect characters that exist in cmap Format 14 (UVS) with a concrete variant glyph
     but were accidentally omitted from Format 4/12 (such as U+553E '唾' in Adobe SourceHanSansJP-VF.otf v2.005)
     and patch them into the base cmap tables in-memory.
-    Iterates variation selectors in ascending codepoint order so U+E0100 (standard base form) always wins.
+    Prioritizes IVS selectors (U+E0100..U+E01EF) in ascending order so U+E0100 (standard base form) always wins.
     """
     if "cmap" not in font:
         return []
@@ -126,7 +132,7 @@ def patch_uvs_missing_base_cmap(font: TTFont) -> list[int]:
     uvs_additions: dict[int, str] = {}
     for table in font["cmap"].tables:
         if getattr(table, "format", None) == 14 and hasattr(table, "uvsDict"):
-            for _uvs_selector, records in sorted(table.uvsDict.items()):
+            for _uvs_selector, records in sorted(table.uvsDict.items(), key=_uvs_selector_sort_key):
                 for cp, gname in records:
                     if cp not in best_cmap and cp not in uvs_additions and gname is not None:
                         uvs_additions[cp] = gname
@@ -299,8 +305,8 @@ def is_cjk_ideograph(cp: int) -> bool:
         (0x3400 <= cp <= 0x4DBF)       # CJK Unified Ideographs Extension A
         or (0x4E00 <= cp <= 0x9FFF)    # CJK Unified Ideographs (BMP)
         or (0xF900 <= cp <= 0xFAFF)    # CJK Compatibility Ideographs
-        or (0x20000 <= cp <= 0x2FA1F)  # CJK Unified Ideographs Ext B..F & Compat Supplement (SIP)
-        or (0x30000 <= cp <= 0x323AF)  # CJK Unified Ideographs Ext G..I (TIP)
+        or (0x20000 <= cp <= 0x2FA1F)  # CJK Unified Ideographs Ext B..F, Ext I & Compat Supplement (SIP)
+        or (0x30000 <= cp <= 0x3347F)  # CJK Unified Ideographs Ext G, Ext H & Ext J (TIP, Unicode 17.0)
     )
 
 

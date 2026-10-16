@@ -283,10 +283,10 @@ class TestCleomeSlicer(unittest.TestCase):
 
     def test_sip_and_tip_planes_never_bridge_in_tier4(self) -> None:
         """
-        Verify that Rare Kanji in Plane 2 (SIP, U+20000..2FA1F) and Plane 3 (TIP, U+30000..323AF)
-        are placed in separate Tier 4 slices so no 1-token hex range spans across planes.
+        Verify that Rare Kanji in Plane 2 (SIP, U+20000..2FA1F) and Plane 3 (TIP, U+30000..3347F,
+        including Unicode 17.0 Ext J) are placed in separate Tier 4 slices so no 1-token hex range spans planes.
         """
-        cps = {ord("A"), ord("あ"), 0x20001, 0x2FA1D, 0x30000, 0x31350}
+        cps = {ord("A"), ord("あ"), 0x20001, 0x2FA1D, 0x30000, 0x3347F}
         plan = build_slice_plan(cps)
         self._assert_plan_invariants(plan, frozenset(cps))
         rare_slices = [s for s in plan if s.tier == 4]
@@ -294,22 +294,20 @@ class TestCleomeSlicer(unittest.TestCase):
         for s in rare_slices:
             ur_cps = parse_unicode_range(s.css_unicode_range)
             has_sip = any(0x20000 <= c <= 0x2FA1F for c in ur_cps)
-            has_tip = any(0x30000 <= c <= 0x323AF for c in ur_cps)
+            has_tip = any(0x30000 <= c <= 0x3347F for c in ur_cps)
             self.assertFalse(has_sip and has_tip, f"Slice {s.slice_id} bridged SIP and TIP: {s.css_unicode_range}")
 
     def test_uvs_selector_deterministic_priority(self) -> None:
         """
-        Verify that when multiple UVS selectors exist in Format 14 for an unmapped base character,
-        the lowest selector (U+E0100 standard base form) always takes precedence regardless of dict order.
+        Verify that when multiple UVS selectors exist in Format 14 for an unmapped base character
+        (including standardized VS1 U+FE00 and IVS U+E0102/U+E0100), U+E0100 always takes precedence.
         """
         tt = _create_synthetic_ttfont([ord("A")])
-        # Manually append two glyphs and a Format 14 table with U+E0102 inserted before U+E0100
-        glyph_order = tt.getGlyphOrder() + ["glyph_iv2", "glyph_iv0"]
+        glyph_order = tt.getGlyphOrder() + ["glyph_vs1", "glyph_iv2", "glyph_iv0"]
         tt.setGlyphOrder(glyph_order)
-        tt["glyf"]["glyph_iv2"] = tt["glyf"]["uni0041"]
-        tt["glyf"]["glyph_iv0"] = tt["glyf"]["uni0041"]
-        tt["hmtx"]["glyph_iv2"] = (1000, 100)
-        tt["hmtx"]["glyph_iv0"] = (1000, 100)
+        for g in ("glyph_vs1", "glyph_iv2", "glyph_iv0"):
+            tt["glyf"][g] = tt["glyf"]["uni0041"]
+            tt["hmtx"][g] = (1000, 100)
 
         sub14 = CmapSubtable.newSubtable(14)
         sub14.platformID = 0
@@ -317,6 +315,7 @@ class TestCleomeSlicer(unittest.TestCase):
         sub14.language = 0
         sub14.cmap = {}
         sub14.uvsDict = {
+            0xFE00: [(0x553E, "glyph_vs1")],
             0xE0102: [(0x553E, "glyph_iv2")],
             0xE0100: [(0x553E, "glyph_iv0")],
         }
