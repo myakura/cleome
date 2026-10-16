@@ -9,6 +9,7 @@ Comprehensive self-contained test suite for cleome:
 
 from io import StringIO
 from pathlib import Path
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -431,6 +432,75 @@ class TestCleomeSlicer(unittest.TestCase):
             with redirect_stderr(StringIO()), self.assertRaises(SystemExit) as cm2:
                 cli_main(["--rare-chunk-size", "0", "--dry-run", str(font_path)])
             self.assertEqual(cm2.exception.code, 2)
+
+    def test_subprocess_script_with_and_without_main_guard(self) -> None:
+        """
+        Verify that:
+        1. A top-level script with `if __name__ == "__main__":` and `workers=2` succeeds.
+        2. A top-level script WITHOUT `if __name__ == "__main__":` on a multi-MB font (triggering
+           BrokenPipeError in the parent while sending initargs) exits with our wrapped RuntimeError
+           as the final line of stderr.
+        """
+        from fontTools.ttLib.tables.DefaultTable import DefaultTable
+
+        sample_cps = [ord("A"), ord("あ"), ord("日"), 0x4E00]
+        with tempfile.TemporaryDirectory() as tmp:
+            font_path = Path(tmp) / "SubprocFont.ttf"
+            out_dir = Path(tmp) / "subproc_out"
+            tt = _create_synthetic_ttfont(sample_cps, family_name="Subproc Font")
+            pad = DefaultTable("PAD ")
+            pad.data = b"\x00" * (4 * 1024 * 1024)
+            tt["PAD "] = pad
+            tt.save(font_path, reorderTables=False)
+
+            src_dir = Path(__file__).resolve().parent.parent / "src"
+
+            # 1. With `if __name__ == "__main__":` -> succeeds
+            script_ok = Path(tmp) / "run_slice_ok.py"
+            script_ok.write_text(
+                f"import sys\n"
+                f"sys.path.insert(0, {str(src_dir)!r})\n"
+                f"from pathlib import Path\n"
+                f"from cleome import slice_font\n"
+                f"if __name__ == '__main__':\n"
+                f"    res = slice_font({str(font_path)!r}, out_dir=Path({str(out_dir)!r}), workers=2)\n"
+                f"    assert res.css_path.exists()\n",
+                encoding="utf-8",
+            )
+            proc_ok = subprocess.run(
+                [sys.executable, str(script_ok)],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(proc_ok.returncode, 0, f"Subprocess failed: {proc_ok.stderr}")
+
+            # 2. Without `if __name__ == "__main__":` -> parent catches BrokenPipeError/BrokenProcessPool
+            # and prints wrapped RuntimeError on the final line of stderr
+            script_bad = Path(tmp) / "run_slice_no_guard.py"
+            out_bad = Path(tmp) / "subproc_bad_out"
+            script_bad.write_text(
+                f"import sys\n"
+                f"sys.path.insert(0, {str(src_dir)!r})\n"
+                f"from pathlib import Path\n"
+                f"from cleome import slice_font\n"
+                f"slice_font({str(font_path)!r}, out_dir=Path({str(out_bad)!r}), workers=2)\n",
+                encoding="utf-8",
+            )
+            proc_bad = subprocess.run(
+                [sys.executable, str(script_bad)],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertNotEqual(proc_bad.returncode, 0)
+            stderr_lines = [ln for ln in proc_bad.stderr.strip().splitlines() if ln.strip()]
+            self.assertTrue(stderr_lines, "Expected non-empty stderr from unguarded script")
+            self.assertIn(
+                "RuntimeError: Failed to run parallel WOFF2 worker processes.",
+                stderr_lines[-1],
+                f"Final stderr line did not contain wrapped RuntimeError. Got:\n{proc_bad.stderr}",
+            )
 
     def test_layout_features_passed_to_workers(self) -> None:
         """

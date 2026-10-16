@@ -176,6 +176,10 @@ def slice_fonts(
     """
     Slice one or more input fonts (Variable or Static `.ttf`/`.otf` paths or in-memory `TTFont`s)
     into optimized `unicode-range` `.woff2` slices and generate a unified `@font-face` CSS file.
+
+    Important: When `workers` > 1 (or `None` on multi-core machines), `ProcessPoolExecutor` is used.
+    When calling this function from a script on macOS/Windows/Linux (`spawn`/`forkserver`), guard
+    the script's entry point with `if __name__ == "__main__":` (or pass `workers=1`).
     """
     if not fonts:
         raise ValueError("At least one input font must be provided.")
@@ -305,6 +309,10 @@ def slice_font(
     """
     Convenience Python API to slice a single font (Variable or Static `.ttf`/`.otf` path or `TTFont`)
     into optimized `unicode-range` `.woff2` slices and generate `@font-face` CSS.
+
+    Important: When `workers` > 1 (or `None` on multi-core machines), `ProcessPoolExecutor` is used.
+    When calling this function from a script on macOS/Windows/Linux (`spawn`/`forkserver`), guard
+    the script's entry point with `if __name__ == "__main__":` (or pass `workers=1`).
     """
     return slice_fonts(
         [font],

@@ -7,6 +7,7 @@ Variable Font tables (`fvar`, `gvar`, `CFF2`, `HVAR`, `VVAR`, `MVAR`, `STAT`, `a
 """
 
 from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures.process import BrokenProcessPool
 from dataclasses import dataclass
 import io
 import os
@@ -139,6 +140,11 @@ def export_woff2_slices(
 ) -> list[BuiltSliceFile]:
     """
     Generate `.woff2` slice files in `slices_dir` for all `slice_specs` using parallel workers.
+
+    Note: When `workers` > 1 (or `None` on multi-core systems), `ProcessPoolExecutor` is used.
+    On platforms that use `spawn` or `forkserver` (macOS, Windows, Python 3.14+ Linux),
+    top-level scripts calling this function must guard their entry point with
+    `if __name__ == "__main__":` (or pass `workers=1`).
     """
     if config is None:
         config = SliceConfig()
@@ -208,21 +214,28 @@ def export_woff2_slices(
             _clear_subset_worker()
     else:
         chunksize = max(1, len(tasks) // (max_workers * 2))
-        with ProcessPoolExecutor(
-            max_workers=max_workers,
-            initializer=_init_subset_worker,
-            initargs=(
-                font_bytes,
-                worker_needs_uvs_patch,
-                config.retain_layout_closure,
-                config.layout_features,
-                config.drop_tables,
-            ),
-        ) as pool:
-            for out_str, sz, ng in pool.map(
-                _subset_single_slice_worker, tasks, chunksize=chunksize
-            ):
-                results_map[out_str] = (sz, ng)
+        try:
+            with ProcessPoolExecutor(
+                max_workers=max_workers,
+                initializer=_init_subset_worker,
+                initargs=(
+                    font_bytes,
+                    worker_needs_uvs_patch,
+                    config.retain_layout_closure,
+                    config.layout_features,
+                    config.drop_tables,
+                ),
+            ) as pool:
+                for out_str, sz, ng in pool.map(
+                    _subset_single_slice_worker, tasks, chunksize=chunksize
+                ):
+                    results_map[out_str] = (sz, ng)
+        except (BrokenProcessPool, BrokenPipeError) as exc:
+            raise RuntimeError(
+                "Failed to run parallel WOFF2 worker processes. When calling `slice_font()` "
+                "or `slice_fonts()` from a top-level script on macOS/Windows/Linux (spawn/forkserver), "
+                "wrap the call inside `if __name__ == '__main__':` or pass `workers=1`."
+            ) from exc
 
     built_files: list[BuiltSliceFile] = []
     for _, out_str in tasks:
@@ -239,4 +252,3 @@ def export_woff2_slices(
             )
         )
     return built_files
-

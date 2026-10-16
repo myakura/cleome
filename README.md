@@ -12,16 +12,21 @@ In CSS Fonts Module Level 4, when multiple `@font-face` rules within the same `f
 
 | Tier (CSS Order) | Slice ID Pattern | Target Characters | `unicode-range` Strategy & Rationale |
 | :--- | :--- | :--- | :--- |
-| **1. Tier 4: Rare & Extended Kanji**<br>*(Declared FIRST / Lowest Priority)* | `<slug>-kanji-rare-01..NN.woff2`<br>*(~250 chars/slice, dynamic count)* | JIS Level 2–4, CJK Unified Ideographs Ext A–I, CJK Compatibility Ideographs not in Tier 3 | **1-Token Contiguous Hex Range (`U+XXXX-YYYY`)**: The `.woff2` binary excludes Tier 3 frequent Kanji, while the CSS `unicode-range` spans a single contiguous hex token (`0.2–0.5 KB` total CSS instead of Google Fonts' `55.8 KB` Swiss-cheese ranges). Any frequent Kanji in that hex range is automatically shadowed by Tier 3–1 rules declared below. |
+| **1. Tier 4: Rare & Extended Kanji**<br>*(Declared FIRST / Lowest Priority)* | `<slug>-kanji-rare-01..NN.woff2`<br>*(~250 chars/slice, dynamic count)* | JIS Level 2–4, CJK Unified Ideographs Ext A–J, CJK Compatibility Ideographs not in Tier 3 | **1-Token Contiguous Hex Range (`U+XXXX-YYYY`)**: The `.woff2` binary excludes Tier 3 frequent Kanji, while the CSS `unicode-range` spans a single contiguous hex token (`0.2–0.5 KB` for Tier 4 `unicode-range` declarations vs. Google Fonts' `55.8 KB` Swiss-cheese ranges; total stylesheet is `~44–54 KB` raw / `~6.9–7.5 KB` Brotli vs. Google Fonts' `112.5 KB` raw / `17.6 KB` Brotli). Any frequent Kanji in that hex range is automatically shadowed by Tier 3–1 rules declared below. |
 | **2. Tier 3: Frequent Kanji**<br>*(Declared Low → High Frequency)* | `<slug>-kanji-freq-40..01.woff2`<br>*(Up to 3,169 Kanji)* | 100% of all 2,136 Joyo Kanji (incl. 2010 JIS Level 3 `𠮟塡剝頰`) + all 2,965 JIS Level 1 Kanji + top Web-frequent JIS Level 2/3 & `𠮷` | **Inverted-Pyramid Granularity**:<br>• **Rank 1–400**: `200 chars × 2 slices` (hit with ~100% probability on articles; coarse grouping saves 6 HTTP requests)<br>• **Rank 401–1200**: `80 chars × 10 slices` (medium granularity)<br>• **Rank 1201–3169**: `~70 chars × 28 slices` (fine granularity minimizes collateral download when 1–2 mid-low frequency Kanji appear in long articles) |
 | **3. Tier 2: UI & Extended Symbols**<br>*(Declared `symbols-ext` → `symbols-ui`)* | `<slug>-symbols-ext(-01..NN).woff2`<br>`<slug>-symbols-ui.woff2` | • `symbols-ui`: Arrows (`←↑→↓`), triangles (`▶◀▲▼`), circled digits (`⓪①–⑳`, `❶–❿`), checks (`✓`), stars/notes (`★☆♪♫♡⚠`)<br>• `symbols-ext`: Greek, Cyrillic, box drawing, math, CJK enclosed/units, halfwidth katakana | Separating lightweight `symbols-ui` (~15 KB) ensures common UI markers like `→`, `▶`, `①`, or `✓` never pull in heavy box-drawing or foreign script slices. |
 | **4. Tier 1: Core Kana & Latin**<br>*(Declared LAST / Highest Priority)* | `<slug>-kana-core.woff2`<br>`<slug>-latin.woff2` | • `kana-core`: Complete Hiragana (`U+3040-309F`), Katakana (`U+30A0-30FF`, `U+31F0-31FF`), CJK Punctuation (`U+3000-303F`), Fullwidth ASCII/Symbols (`U+FF01-FF60`, `U+FFE0-FFE6`)<br>• `latin`: ASCII, Latin-1/Extended, Western punctuation & currency (`€`, `™`, `ℓ`) | Guarantees **zero omissions** for modern/historical kana (`む`, `モ`, `ヶ`, `ヵ`, `ゐ`, `ヱ`, `ゔ`) and CJK punctuation (`「」`, `【】`, `・`, `ー`), keeping all Kana + Punctuation kerning/metrics within a single slice. |
 
 ### Automatic Font Metadata & Upstream `cmap` Bug Recovery
 
-- **Variable & Static Auto-Detection**: Automatically extracts `font-family` (`name` ID 16/1), `font-weight` (continuous range from `fvar` `wght` axis or static `OS/2.usWeightClass`), `font-stretch` (`wdth` percentage range if present), and `font-style` (`normal`, `italic`, or `oblique` range).
-- **UVS Format 14 Base `cmap` Auto-Patching**: Detects characters mapped in `cmap` Format 14 (Variation Selector sequences) that were accidentally omitted from Format 4/12 in upstream fonts (such as Joyo/JIS Level 1 Kanji `唾` `U+553E` in Adobe `SourceHanSansJP-VF.otf` v2.005) and restores them before slicing.
-- **OpenType Feature & Variable Table Preservation**: Retains `GSUB`, `GPOS`, `GDEF` layout features and `fvar`, `gvar`, `CFF2`, `HVAR`, `VVAR`, `MVAR`, `STAT`, `avar` tables across every `.woff2` slice.
+- **Variable & Static Auto-Detection**: Automatically extracts `font-family` (`name` ID 16/1), `font-weight` (continuous range from `fvar` `wght` axis or static `OS/2.usWeightClass`), `font-stretch` (`wdth` percentage range or static `OS/2.usWidthClass`), and `font-style` (`normal`, `italic`, or `oblique` range).
+- **UVS Format 14 Base `cmap` Auto-Patching**: Detects characters mapped in `cmap` Format 14 (Variation Selector sequences) that were accidentally omitted from Format 4/12 in upstream fonts (such as Joyo/JIS Level 1 Kanji `唾` `U+553E` in Adobe `SourceHanSansJP-VF.otf` v2.005) and restores them before slicing, prioritizing standard IVS (`U+E0100..U+E01EF`) ahead of `VS1..VS16`.
+- **OpenType Feature, License & Variable Table Preservation**: Retains `GSUB`, `GPOS`, `GDEF` layout features (configurable via `--layout-features`), license metadata (`nameID` 13 & 14), input font `head.modified` timestamps for deterministic builds, and `fvar`, `gvar`, `CFF2`, `HVAR`, `VVAR`, `MVAR`, `STAT`, `avar` tables across every `.woff2` slice.
+
+### Notes & Trade-offs
+
+- **Tier 4 1-Token Hex Range & Unmapped Codepoints**: Because each Tier 4 slice advertises a single contiguous `U+XXXX-YYYY` range in CSS, if a page renders a character inside that hex span that is *not mapped in the font* (e.g., an unimplemented CJK Extension ideograph between two mapped ideographs), the browser will download that single Tier 4 `.woff2` slice (~25 KB) before discovering the glyph is absent and falling back to the next font in `font-family`.
+- **Output Directory Cleanup**: Re-running `cleome` into an existing output directory overwrites `<slug>.css` and matching slice files, but does not delete old `.woff2` files left over from previous runs with different slugs or chunk counts. Clean the output directory when changing slicing parameters.
 
 ---
 
@@ -37,42 +42,46 @@ cleome GenSouSansJP-VF.ttf --dry-run
 # Slice multiple Static Font weights into a single unified @font-face CSS and slices/ directory
 cleome GenSouSansJP-Regular.ttf GenSouSansJP-Bold.ttf -o dist/web-static
 
-# Customize CSS font-family, URL prefix, or chunk sizes
+# Customize CSS font-family, URL prefix, chunk sizes, or retained OpenType layout features
 cleome MyFont-VF.otf -o dist/web \
   --family "My Font JP" \
   --slug "my-font-jp" \
   --url-prefix "/assets/fonts/slices" \
-  --rare-chunk-size 250
+  --rare-chunk-size 250 \
+  --layout-features "kern,palt,vpal,locl"
 ```
 
 ---
 
 ## Python API Usage
 
-`cleome` can be called directly from font build pipelines (accepting either file paths or in-memory `fontTools.ttLib.TTFont` objects):
+`cleome` can be called directly from font build pipelines (accepting either file paths or in-memory `fontTools.ttLib.TTFont` objects without mutating the caller's `TTFont`).
+
+> **Note**: When `workers > 1` (the default), `cleome` uses `ProcessPoolExecutor`. On platforms using `spawn` or `forkserver` (`macOS`, `Windows`, and `Linux` on Python 3.14+), top-level scripts must guard calls with `if __name__ == "__main__":` (or pass `workers=1`).
 
 ```python
 from pathlib import Path
-from cleome import slice_font, slice_fonts, SliceConfig
+from cleome import SliceConfig, slice_font, slice_fonts
 
-# 1. Slice a Variable Font (path or in-memory TTFont)
-result = slice_font(
-    "dist/jp/variable/GenSouSansJP-VF.ttf",
-    out_dir=Path("dist/jp/web"),
-    config=SliceConfig(
-        slices_subdir="slices",
-        rare_kanji_chunk_size=250,
-    ),
-)
-print(f"Generated {result.css_path} and {len(result.built_files)} WOFF2 slices")
+if __name__ == "__main__":
+    # 1. Slice a Variable Font (path or in-memory TTFont)
+    result = slice_font(
+        "dist/jp/variable/GenSouSansJP-VF.ttf",
+        out_dir=Path("dist/jp/web"),
+        config=SliceConfig(
+            slices_subdir="slices",
+            rare_kanji_chunk_size=250,
+        ),
+    )
+    print(f"Generated {result.css_path} and {len(result.built_files)} WOFF2 slices")
 
-# 2. Slice multiple Static Font weights into a unified stylesheet
-static_result = slice_fonts(
-    [
-        "dist/jp/static/ttf/GenSouSansJP-Cond-Regular.ttf",
-        "dist/jp/static/ttf/GenSouSansJP-Cond-Bold.ttf",
-    ],
-    out_dir=Path("dist/jp/web-static"),
-    family_name="GenSou Sans JP Cond",
-)
+    # 2. Slice multiple Static Font weights into a unified stylesheet
+    static_result = slice_fonts(
+        [
+            "dist/jp/static/ttf/GenSouSansJP-Cond-Regular.ttf",
+            "dist/jp/static/ttf/GenSouSansJP-Cond-Bold.ttf",
+        ],
+        out_dir=Path("dist/jp/web-static"),
+        family_name="GenSou Sans JP Cond",
+    )
 ```
