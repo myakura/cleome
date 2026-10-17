@@ -925,6 +925,61 @@ class TestCleomeSlicer(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "Duplicate @font-face descriptors"):
                 slice_fonts([tt_ital_01, tt_ital_conflict], out_dir=Path(tmp) / "conflict", workers=1)
 
+    def test_issue4_ttfont_input_not_mutated_on_success_or_error(self) -> None:
+        """
+        Issue 4 verification: Verify that passing an in-memory or lazy `TTFont` to
+        `slice_font` or `slice_fonts` does not mutate `maxp` (`numGlyphs`, `maxPoints`),
+        `head`, `hhea`, `OS/2`, `cmap`, or any other table on the caller's `TTFont`
+        object on either success or error.
+        """
+        def _structural_snapshot(obj: object) -> object:
+            if isinstance(obj, (int, float, str, bytes, bool, type(None))):
+                return obj
+            if isinstance(obj, (list, tuple)):
+                return type(obj)(_structural_snapshot(x) for x in obj)
+            if isinstance(obj, (set, frozenset)):
+                return type(obj)(_structural_snapshot(x) for x in obj)
+            if isinstance(obj, dict):
+                return {k: _structural_snapshot(v) for k, v in obj.items()}
+            if hasattr(obj, "__dict__"):
+                return (type(obj), _structural_snapshot(vars(obj)))
+            return repr(obj)
+
+        sample_cps = [ord("A"), ord("あ")]
+        tt = _create_synthetic_ttfont(
+            sample_cps,
+            family_name="Immutable Font",
+            uvs_only_cp=(0x553E, 0xE0100),
+        )
+        self.assertEqual(tt["maxp"].numGlyphs, 0)
+        self.assertEqual(tt["maxp"].maxPoints, 0)
+        snapshot_tables = {tag: _structural_snapshot(tt[tag]) for tag in tt.keys() if tag != "GlyphOrder"}
+        snapshot_glyph_order = list(tt.getGlyphOrder())
+        snapshot_flavor = tt.flavor
+        snapshot_recalc = tt.recalcTimestamp
+
+        def _assert_tt_unchanged() -> None:
+            self.assertEqual(tt.flavor, snapshot_flavor)
+            self.assertEqual(tt.recalcTimestamp, snapshot_recalc)
+            self.assertEqual(list(tt.getGlyphOrder()), snapshot_glyph_order)
+            self.assertEqual(tt["maxp"].numGlyphs, 0, "Caller's TTFont maxp.numGlyphs was mutated!")
+            self.assertEqual(tt["maxp"].maxPoints, 0, "Caller's TTFont maxp.maxPoints was mutated!")
+            for tag, orig_snap in snapshot_tables.items():
+                self.assertEqual(
+                    _structural_snapshot(tt[tag]),
+                    orig_snap,
+                    f"Table {tag!r} was mutated on caller's TTFont!",
+                )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            slice_font(tt, out_dir=Path(tmp) / "ok_out", workers=1)
+            _assert_tt_unchanged()
+
+            tt_dup = _create_synthetic_ttfont(sample_cps, family_name="Immutable Font")
+            with self.assertRaises(ValueError):
+                slice_fonts([tt, tt_dup], out_dir=Path(tmp) / "err_out", workers=1)
+            _assert_tt_unchanged()
+
 
 if __name__ == "__main__":
     unittest.main()

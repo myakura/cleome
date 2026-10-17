@@ -8,6 +8,7 @@ Variable Font tables (`fvar`, `gvar`, `CFF2`, `HVAR`, `VVAR`, `MVAR`, `STAT`, `a
 
 from concurrent.futures import ProcessPoolExecutor
 from concurrent.futures.process import BrokenProcessPool
+import copy
 from dataclasses import dataclass
 import io
 import os
@@ -153,17 +154,15 @@ def _subset_single_slice_worker(
 
 
 def serialize_font_to_bytes(font: TTFont) -> bytes:
-    """Serialize an in-memory `TTFont` (as uncommitted SFNT) into bytes for parallel workers."""
+    """Serialize an in-memory `TTFont` (as uncommitted SFNT) into bytes without mutating `font`."""
     buf = io.BytesIO()
-    orig_flavor = font.flavor
-    orig_recalc = font.recalcTimestamp
-    font.flavor = None
-    font.recalcTimestamp = False
+    clone = copy.deepcopy(font)
     try:
-        font.save(buf)
+        clone.flavor = None
+        clone.recalcTimestamp = False
+        clone.save(buf)
     finally:
-        font.flavor = orig_flavor
-        font.recalcTimestamp = orig_recalc
+        clone.close()
     return buf.getvalue()
 
 
