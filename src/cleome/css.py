@@ -90,29 +90,32 @@ def generate_css(
         )
 
     for meta, built_files in fonts_and_files:
+        styles = meta.styles_css or (meta.style_css,)
         if len(fonts_and_files) > 1:
             v_label = f" ({meta.variant_suffix})" if meta.variant_suffix else ""
             stretch_info = f", stretch: {meta.stretch_css}" if meta.stretch_css else ""
+            style_info = " + ".join(styles)
             lines.append(
                 f"\n/* === Variant: {meta.family_name}{v_label} "
-                f"[weight: {meta.weight_css}{stretch_info}, style: {meta.style_css}] === */"
+                f"[weight: {meta.weight_css}{stretch_info}, style: {style_info}] === */"
             )
         esc_family = _escape_css_str(meta.family_name)
-        for bf in built_files:
-            spec = bf.spec
-            size_kb = bf.size_bytes / 1024.0
-            esc_url = _escape_css_str(f"{url_prefix}{bf.filename}")
-            lines.append(f"/* [{spec.slice_id}] {spec.description} ({size_kb:.1f} KB) */")
-            lines.append("@font-face {")
-            lines.append(f"  font-family: '{esc_family}';")
-            lines.append(f"  font-style: {meta.style_css};")
-            lines.append(f"  font-weight: {meta.weight_css};")
-            if meta.stretch_css:
-                lines.append(f"  font-stretch: {meta.stretch_css};")
-            lines.append(f"  font-display: {config.font_display};")
-            lines.append(f"  src: url('{esc_url}') format('woff2');")
-            lines.append(f"  unicode-range: {spec.css_unicode_range};")
-            lines.append("}")
+        for style_val in styles:
+            for bf in built_files:
+                spec = bf.spec
+                size_kb = bf.size_bytes / 1024.0
+                esc_url = _escape_css_str(f"{url_prefix}{bf.filename}")
+                lines.append(f"/* [{spec.slice_id}] {spec.description} ({size_kb:.1f} KB) */")
+                lines.append("@font-face {")
+                lines.append(f"  font-family: '{esc_family}';")
+                lines.append(f"  font-style: {style_val};")
+                lines.append(f"  font-weight: {meta.weight_css};")
+                if meta.stretch_css:
+                    lines.append(f"  font-stretch: {meta.stretch_css};")
+                lines.append(f"  font-display: {config.font_display};")
+                lines.append(f"  src: url('{esc_url}') format('woff2');")
+                lines.append(f"  unicode-range: {spec.css_unicode_range};")
+                lines.append("}")
 
     return "\n".join(lines) + "\n"
 
@@ -139,16 +142,17 @@ def validate_and_compute_variant_suffixes(
 
     seen_descriptors: set[tuple[str, str, str]] = set()
     for m in raw_metas:
-        desc_key = (m.weight_css, m.stretch_css or "100%", m.style_css)
-        if desc_key in seen_descriptors:
-            raise ValueError(
-                f"Duplicate @font-face descriptors across input fonts: "
-                f"weight={m.weight_css!r}, stretch={m.stretch_css or 'normal'!r}, style={m.style_css!r}. "
-                "Each font in a multi-file bundle must have a unique (weight, stretch, style) combination."
-            )
-        seen_descriptors.add(desc_key)
+        for st in (m.styles_css or (m.style_css,)):
+            desc_key = (m.weight_css, m.stretch_css or "100%", st)
+            if desc_key in seen_descriptors:
+                raise ValueError(
+                    f"Duplicate @font-face descriptors across input fonts: "
+                    f"weight={m.weight_css!r}, stretch={m.stretch_css or 'normal'!r}, style={st!r}. "
+                    "Each font in a multi-file bundle must have a unique (weight, stretch, style) combination."
+                )
+            seen_descriptors.add(desc_key)
 
-    has_multiple_styles = len({m.style_css for m in raw_metas}) > 1
+    has_multiple_styles = len({m.styles_css for m in raw_metas}) > 1
     has_multiple_stretches = len({m.stretch_css for m in raw_metas}) > 1
 
     suffixes: list[str] = []
@@ -247,6 +251,7 @@ def slice_fonts(
                 variant_suffix=v_suf,
                 codepoints=m.codepoints,
                 patched_uvs_codepoints=m.patched_uvs_codepoints,
+                styles_css=m.styles_css,
             )
             for m, v_suf in zip(raw_metas, variant_suffixes)
         ]

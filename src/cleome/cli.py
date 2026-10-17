@@ -239,9 +239,10 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Type        : {'Variable' if first.is_variable else 'Static'} ({len(metas)} file(s))")
         for m in metas:
             plan = build_slice_plan(m.codepoints, config=config)
+            style_label = " + ".join(m.styles_css or (m.style_css,))
             print(
                 f"Variant     : weight={m.weight_css}, stretch={m.stretch_css or 'normal'}, "
-                f"style={m.style_css} | {len(m.codepoints):,d} chars -> {len(plan)} slices"
+                f"style={style_label} | {len(m.codepoints):,d} chars -> {len(plan)} slices"
             )
             by_tier: dict[int, list] = {4: [], 3: [], 2: [], 1: []}
             for s in plan:

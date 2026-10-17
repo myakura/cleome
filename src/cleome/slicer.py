@@ -101,6 +101,12 @@ class FontMetadata:
     variant_suffix: str = ""
     codepoints: frozenset[int] = field(default_factory=frozenset)
     patched_uvs_codepoints: tuple[int, ...] = ()
+    styles_css: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        if not self.styles_css:
+            object.__setattr__(self, "styles_css", (self.style_css,))
+
 
 
 @dataclass(frozen=True, slots=True)
@@ -239,19 +245,61 @@ def extract_font_metadata(
         stretch_css = None
 
     # Style (ital / slnt / OS/2 / post)
+    static_italic = (
+        ("OS/2" in font and bool(font["OS/2"].fsSelection & 0x01))
+        or ("post" in font and getattr(font["post"], "italicAngle", 0.0) != 0.0)
+    )
     if style_override is not None:
-        style_css = style_override
-    elif "slnt" in axes:
-        s_min, _, s_max = axes["slnt"]
-        style_css = f"oblique {_fmt_num(-s_max)}deg {_fmt_num(-s_min)}deg"
-    elif "ital" in axes and axes["ital"][2] >= 0.5:
-        style_css = "italic"
-    elif "OS/2" in font and (font["OS/2"].fsSelection & 0x01):
-        style_css = "italic"
-    elif "post" in font and getattr(font["post"], "italicAngle", 0.0) != 0.0:
-        style_css = "italic"
+        styles_css: tuple[str, ...] = (style_override,)
     else:
-        style_css = "normal"
+        has_ital = "ital" in axes
+        has_slnt = "slnt" in axes
+        slnt_oblique: str | None = None
+        slnt_has_zero = True
+        if has_slnt:
+            s_min, _, s_max = axes["slnt"]
+            if abs(s_min - s_max) < 1e-4:
+                if abs(s_min) >= 1e-4:
+                    slnt_oblique = f"oblique {_fmt_num(-s_min)}deg"
+                    slnt_has_zero = False
+                else:
+                    slnt_oblique = None
+                    slnt_has_zero = True
+            else:
+                lo_deg = min(-s_min, -s_max)
+                hi_deg = max(-s_min, -s_max)
+                slnt_oblique = f"oblique {_fmt_num(lo_deg)}deg {_fmt_num(hi_deg)}deg"
+                slnt_has_zero = lo_deg - 1e-4 <= 0.0 <= hi_deg + 1e-4
+
+        if has_ital:
+            i_min, _, i_max = axes["ital"]
+            ital_has_normal = i_min < 0.5
+            ital_has_italic = i_max >= 0.5
+            styles_list: list[str] = []
+            if slnt_oblique is None:
+                if ital_has_normal:
+                    styles_list.append("normal")
+                if ital_has_italic:
+                    styles_list.append("italic")
+                if not styles_list:
+                    styles_list.append("normal")
+            else:
+                if ital_has_italic:
+                    if ital_has_normal and slnt_has_zero:
+                        styles_list.append("normal")
+                    styles_list.append("italic")
+                    styles_list.append(slnt_oblique)
+                else:
+                    styles_list.append(slnt_oblique)
+            styles_css = tuple(styles_list)
+        elif slnt_oblique is not None:
+            styles_css = (slnt_oblique,)
+        elif static_italic:
+            styles_css = ("italic",)
+        else:
+            styles_css = ("normal",)
+
+    style_css = styles_css[0]
 
     cmap = font.getBestCmap() or {}
     codepoints = frozenset(cmap.keys())
@@ -266,6 +314,7 @@ def extract_font_metadata(
         variant_suffix=variant_suffix,
         codepoints=codepoints,
         patched_uvs_codepoints=patched_uvs,
+        styles_css=styles_css,
     )
 
 

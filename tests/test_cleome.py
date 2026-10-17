@@ -792,6 +792,139 @@ class TestCleomeSlicer(unittest.TestCase):
                 shaped_unmapped = _hb_shape_glyphs_and_advances(lu_tt, "A\u0301")
                 self.assertEqual(shaped_unmapped, [(lig_u.LigGlyph, 940)])
 
+    def test_issue3_variable_font_ital_and_slnt_axes_css_generation(self) -> None:
+        """
+        Issue 3 verification: Verify that Variable Fonts with `ital` (0..1, fixed 0..0, fixed 1..1),
+        `slnt` (variable -12..0, variable -12..-5, fixed -12..-12, fixed 0..0), or both `ital` + `slnt`
+        generate the right `style_css` / `styles_css` metadata and `@font-face` declarations without
+        emitting bogus `normal` rules when the font has no upright 0deg form.
+        """
+        from fontTools.ttLib.tables._f_v_a_r import Axis
+
+        sample_cps = [ord("A"), ord("あ"), ord("日")]
+
+        def _make_axis(tag: str, mn: float, df: float, mx: float) -> Axis:
+            ax = Axis()
+            ax.axisTag = tag
+            ax.minValue = mn
+            ax.defaultValue = df
+            ax.maxValue = mx
+            ax.axisNameID = 256
+            return ax
+
+        def _make_vf_with_axes(family: str, *extra_axes: Axis) -> TTFont:
+            f = _create_synthetic_ttfont(sample_cps, family_name=family, is_variable=True)
+            f["fvar"].axes = [f["fvar"].axes[0], *extra_axes]
+            return f
+
+        # 1. ital axis 0..1 -> normal + italic @font-face rules sharing the same WOFF2 files
+        tt_ital_01 = _make_vf_with_axes("Ital VF", _make_axis("ital", 0.0, 0.0, 1.0))
+        meta_01 = extract_font_metadata(tt_ital_01)
+        self.assertEqual(meta_01.style_css, "normal")
+        self.assertEqual(meta_01.styles_css, ("normal", "italic"))
+
+        # 2. Fixed ital axis 1..1 -> italic only; fixed ital axis 0..0 -> normal only
+        tt_ital_11 = _make_vf_with_axes("Ital Fixed 1", _make_axis("ital", 1.0, 1.0, 1.0))
+        meta_11 = extract_font_metadata(tt_ital_11)
+        self.assertEqual(meta_11.style_css, "italic")
+        self.assertEqual(meta_11.styles_css, ("italic",))
+
+        tt_ital_00 = _make_vf_with_axes("Ital Fixed 0", _make_axis("ital", 0.0, 0.0, 0.0))
+        meta_00 = extract_font_metadata(tt_ital_00)
+        self.assertEqual(meta_00.style_css, "normal")
+        self.assertEqual(meta_00.styles_css, ("normal",))
+
+        # 3. Variable slnt (-12..0) vs Fixed slnt (-12..-12 and 0..0)
+        tt_slnt_var = _make_vf_with_axes("Slnt VF", _make_axis("slnt", -12.0, 0.0, 0.0))
+        meta_slnt_var = extract_font_metadata(tt_slnt_var)
+        self.assertEqual(meta_slnt_var.style_css, "oblique 0deg 12deg")
+        self.assertEqual(meta_slnt_var.styles_css, ("oblique 0deg 12deg",))
+
+        tt_slnt_fix = _make_vf_with_axes("Slnt Fixed", _make_axis("slnt", -12.0, -12.0, -12.0))
+        meta_slnt_fix = extract_font_metadata(tt_slnt_fix)
+        self.assertEqual(meta_slnt_fix.style_css, "oblique 12deg")
+        self.assertEqual(meta_slnt_fix.styles_css, ("oblique 12deg",))
+
+        tt_slnt_zero = _make_vf_with_axes("Slnt Zero", _make_axis("slnt", 0.0, 0.0, 0.0))
+        meta_slnt_zero = extract_font_metadata(tt_slnt_zero)
+        self.assertEqual(meta_slnt_zero.style_css, "normal")
+        self.assertEqual(meta_slnt_zero.styles_css, ("normal",))
+
+        # 4. Combined ital + slnt matrix (variable and fixed combinations)
+        tt_both = _make_vf_with_axes(
+            "Both VF",
+            _make_axis("slnt", -12.0, 0.0, 0.0),
+            _make_axis("ital", 0.0, 0.0, 1.0),
+        )
+        meta_both = extract_font_metadata(tt_both)
+        self.assertEqual(meta_both.style_css, "normal")
+        self.assertEqual(meta_both.styles_css, ("normal", "italic", "oblique 0deg 12deg"))
+
+        combo_cases = [
+            # (ital_range, slnt_range, expected_styles_css)
+            ((0.0, 0.0, 0.0), (0.0, 0.0, 0.0), ("normal",)),
+            ((0.0, 0.0, 0.0), (-12.0, -12.0, -12.0), ("oblique 12deg",)),
+            ((0.0, 0.0, 0.0), (-12.0, -8.0, -5.0), ("oblique 5deg 12deg",)),
+            ((0.0, 0.0, 0.0), (-12.0, 0.0, 0.0), ("oblique 0deg 12deg",)),
+            ((1.0, 1.0, 1.0), (0.0, 0.0, 0.0), ("italic",)),
+            ((1.0, 1.0, 1.0), (-12.0, -12.0, -12.0), ("italic", "oblique 12deg")),
+            ((1.0, 1.0, 1.0), (-12.0, 0.0, 0.0), ("italic", "oblique 0deg 12deg")),
+            ((0.0, 0.0, 1.0), (0.0, 0.0, 0.0), ("normal", "italic")),
+            ((0.0, 0.0, 1.0), (-12.0, -12.0, -12.0), ("italic", "oblique 12deg")),
+            ((0.0, 0.0, 1.0), (-12.0, -8.0, -5.0), ("italic", "oblique 5deg 12deg")),
+            ((0.0, 0.0, 1.0), (-12.0, 0.0, 0.0), ("normal", "italic", "oblique 0deg 12deg")),
+        ]
+        for ital_rng, slnt_rng, expected_styles in combo_cases:
+            tt_c = _make_vf_with_axes(
+                "Combo VF",
+                _make_axis("ital", *ital_rng),
+                _make_axis("slnt", *slnt_rng),
+            )
+            meta_c = extract_font_metadata(tt_c)
+            self.assertEqual(
+                meta_c.styles_css,
+                expected_styles,
+                f"Failed for ital={ital_rng}, slnt={slnt_rng}",
+            )
+            self.assertEqual(meta_c.style_css, expected_styles[0])
+
+        with tempfile.TemporaryDirectory() as tmp:
+            res_01 = slice_font(tt_ital_01, out_dir=Path(tmp) / "ital_vf", workers=1)
+            self.assertEqual(len(res_01.built_files), 3)  # Only 1 set of WOFF2 files built
+            self.assertEqual(res_01.css_text.count("font-style: normal;"), 3)
+            self.assertEqual(res_01.css_text.count("font-style: italic;"), 3)
+
+            res_both = slice_font(tt_both, out_dir=Path(tmp) / "both_vf", workers=1)
+            self.assertEqual(len(res_both.built_files), 3)
+            self.assertEqual(res_both.css_text.count("font-style: normal;"), 3)
+            self.assertEqual(res_both.css_text.count("font-style: italic;"), 3)
+            self.assertEqual(res_both.css_text.count("font-style: oblique 0deg 12deg;"), 3)
+
+            # Pairing an upright font (ital=0, slnt=0) with a fixed oblique font (ital=0, slnt=-12)
+            # of the same family and weight must succeed without descriptor collision
+            tt_upright = _make_vf_with_axes(
+                "Paired Family",
+                _make_axis("ital", 0.0, 0.0, 0.0),
+                _make_axis("slnt", 0.0, 0.0, 0.0),
+            )
+            tt_oblique_12 = _make_vf_with_axes(
+                "Paired Family",
+                _make_axis("ital", 0.0, 0.0, 0.0),
+                _make_axis("slnt", -12.0, -12.0, -12.0),
+            )
+            res_paired = slice_fonts(
+                [tt_upright, tt_oblique_12],
+                out_dir=Path(tmp) / "paired_family",
+                workers=1,
+            )
+            self.assertEqual(res_paired.css_text.count("font-style: normal;"), 3)
+            self.assertEqual(res_paired.css_text.count("font-style: oblique 12deg;"), 3)
+
+            # Collision check: bundling ital 0..1 VF with an italic-only VF of same weight must raise ValueError
+            tt_ital_conflict = _make_vf_with_axes("Ital VF", _make_axis("ital", 1.0, 1.0, 1.0))
+            with self.assertRaisesRegex(ValueError, "Duplicate @font-face descriptors"):
+                slice_fonts([tt_ital_01, tt_ital_conflict], out_dir=Path(tmp) / "conflict", workers=1)
+
 
 if __name__ == "__main__":
     unittest.main()
