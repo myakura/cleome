@@ -36,9 +36,10 @@ from cleome.data.kanji_freq import KANJI_FREQ_CODEPOINTS, KANJI_FREQ_RANK
 def _build_synthetic_charset(*, full: bool) -> frozenset[int]:
     """Build a realistic Japanese font codepoint set (either ~8,300 subset or ~16,700 full)."""
     cps: set[int] = set()
-    # Core Latin (`U+0020..007E`, `U+00A0..024F`, `U+2000..206F`, `U+20A0..20CF`, `ℓ`, `™`)
+    # Core Latin (`U+0020..007E`, `U+00A0..024F`, `U+0300..036F`, `U+2000..206F`, `U+20A0..20CF`, `ℓ`, `™`)
     cps.update(range(0x0020, 0x007F))
     cps.update(range(0x00A0, 0x0250))
+    cps.update(range(0x0300, 0x0370))
     cps.update(range(0x2000, 0x2070))
     cps.update(range(0x20A0, 0x20D0))
     cps.update((0x2113, 0x2122))
@@ -238,17 +239,17 @@ class TestCleomeSlicer(unittest.TestCase):
                     f"Tier 4 slice {spec.slice_id} must be a 1-token range, got {spec.css_unicode_range}",
                 )
 
-        # Check Kana Core zero-omission guarantee (`む`, `モ`, `ヶ`, `ヵ`, `ゐ`, `ヱ`, `ゔ`, `「`, `」`, `０`)
+        # Check Kana Core zero-omission guarantee (`む`, `モ`, `ヶ`, `ヵ`, `ゐ`, `ヱ`, `ゔ`, `「`, `」`, `０`, `\u3099`, `\u309A`)
         kana_slice = next((s for s in plan if s.slice_id == "kana-core"), None)
-        for ch in "あむモヶヵゐヱゔ、。「」【】０９ＡＺㇰㇿ":
+        for ch in "あむモヶヵゐヱゔ\u3099\u309A、。「」【】０９ＡＺㇰㇿ":
             cp = ord(ch)
             if cp in codepoints:
                 self.assertIsNotNone(kana_slice)
                 self.assertIn(cp, kana_slice.binary_codepoints, f"'{ch}' missing from kana-core")
 
-        # Check Latin & UI Symbols placement
+        # Check Latin & UI Symbols placement (including Combining Diacritical Marks U+0300..036F)
         latin_slice = next((s for s in plan if s.slice_id == "latin"), None)
-        for ch in "A0€₩™ℓĀāĪīŪūĒēŌō":
+        for ch in "A0€₩™ℓĀāĪīŪūĒēŌō\u0300\u0301\u0302\u0303\u0304\u0308":
             cp = ord(ch)
             if cp in codepoints:
                 self.assertIsNotNone(latin_slice)
@@ -689,6 +690,107 @@ class TestCleomeSlicer(unittest.TestCase):
                     ):
                         self.assertEqual(_hb_shape_advances(orig_uvs, seq), expected_adv)
                         self.assertEqual(_hb_shape_advances(sliced_freq_tt, seq), expected_adv)
+
+    def test_issue2_combining_marks_and_base_chars_retain_gsub_ccmp(self) -> None:
+        """
+        Issue 2 verification: Verify that Latin base characters (e.g. 'A' U+0041) and
+        Combining Diacritical Marks (e.g. U+0301) stay in the `latin` slice so OpenType
+        `ccmp` composition (`A + U+0301 -> Á`) retains its GSUB lookup and all input/output
+        glyphs (both when the precomposed glyph is in `cmap` and when it is unmapped).
+        """
+        import copy
+        import io
+        import uharfbuzz as hb
+        from fontTools.feaLib.builder import addOpenTypeFeaturesFromString
+
+        def _hb_shape_glyphs_and_advances(font_obj: TTFont, text: str) -> list[tuple[str, int]]:
+            buf_io = io.BytesIO()
+            c = copy.deepcopy(font_obj)
+            c.flavor = None
+            c.save(buf_io, reorderTables=False)
+            order = c.getGlyphOrder()
+            face = hb.Face(hb.Blob(buf_io.getvalue()))
+            hb_font = hb.Font(face)
+            hb_buf = hb.Buffer()
+            hb_buf.add_str(text)
+            hb_buf.guess_segment_properties()
+            hb.shape(hb_font, hb_buf)
+            return [
+                (order[info.codepoint], pos.x_advance)
+                for info, pos in zip(hb_buf.glyph_infos, hb_buf.glyph_positions)
+            ]
+
+        # 1. Precomposed glyph in cmap (exact reproduction case)
+        sample_cps = [ord("A"), 0x0301, 0x00C1, ord("あ"), ord("日")]
+        tt = _create_synthetic_ttfont(sample_cps, family_name="Combining Font")
+        tt["hmtx"]["uni00C1"] = (950, 100)
+        fea_code = """
+        languagesystem DFLT dflt;
+        languagesystem latn dflt;
+        feature ccmp {
+            sub uni0041 uni0301 by uni00C1;
+        } ccmp;
+        """
+        addOpenTypeFeaturesFromString(tt, fea_code)
+        self.assertEqual(len(tt["GSUB"].table.LookupList.Lookup), 1)
+        orig_shaped = _hb_shape_glyphs_and_advances(tt, "A\u0301")
+        self.assertEqual(orig_shaped, [("uni00C1", 950)])
+
+        with tempfile.TemporaryDirectory() as tmp:
+            res = slice_font(
+                tt,
+                out_dir=Path(tmp) / "ccmp_out",
+                config=SliceConfig(layout_features=("*",)),
+                workers=1,
+            )
+            latin_bf = next(bf for bf in res.built_files if bf.spec.slice_id == "latin")
+            self.assertIn(ord("A"), latin_bf.spec.binary_codepoints)
+            self.assertIn(0x0301, latin_bf.spec.binary_codepoints)
+            self.assertIn(0x00C1, latin_bf.spec.binary_codepoints)
+
+            with TTFont(latin_bf.path) as latin_tt:
+                cmap = latin_tt.getBestCmap()
+                g_a, g_acute, g_aacute = cmap[ord("A")], cmap[0x0301], cmap[0x00C1]
+                gsub = latin_tt["GSUB"].table
+                tags = [f.FeatureTag for f in gsub.FeatureList.FeatureRecord]
+                self.assertIn("ccmp", tags)
+                self.assertEqual(len(gsub.LookupList.Lookup), 1)
+                subtable = gsub.LookupList.Lookup[0].SubTable[0]
+                ligs = subtable.ligatures.get(g_a, [])
+                self.assertEqual(len(ligs), 1)
+                self.assertEqual(ligs[0].Component, [g_acute])
+                self.assertEqual(ligs[0].LigGlyph, g_aacute)
+                self.assertEqual(latin_tt["hmtx"][g_aacute][0], 950)
+                self.assertEqual(_hb_shape_glyphs_and_advances(latin_tt, "A\u0301"), [(g_aacute, 950)])
+
+            # 2. Unmapped precomposed glyph reachable only via GSUB ccmp closure
+            tt_unmapped = _create_synthetic_ttfont([ord("A"), 0x0301, ord("あ")], family_name="Unmapped Lig Font")
+            tt_unmapped.setGlyphOrder(tt_unmapped.getGlyphOrder() + ["Aacute_lig"])
+            tt_unmapped["glyf"]["Aacute_lig"] = tt_unmapped["glyf"]["uni0041"]
+            tt_unmapped["hmtx"]["Aacute_lig"] = (940, 100)
+            addOpenTypeFeaturesFromString(
+                tt_unmapped,
+                """
+                languagesystem DFLT dflt;
+                languagesystem latn dflt;
+                feature ccmp {
+                    sub uni0041 uni0301 by Aacute_lig;
+                } ccmp;
+                """,
+            )
+            self.assertEqual(_hb_shape_glyphs_and_advances(tt_unmapped, "A\u0301"), [("Aacute_lig", 940)])
+            res_unmapped = slice_font(tt_unmapped, out_dir=Path(tmp) / "ccmp_unmapped", workers=1)
+            latin_unmapped_bf = next(bf for bf in res_unmapped.built_files if bf.spec.slice_id == "latin")
+            with TTFont(latin_unmapped_bf.path) as lu_tt:
+                cmap_u = lu_tt.getBestCmap()
+                gsub_u = lu_tt["GSUB"].table
+                self.assertEqual(len(gsub_u.LookupList.Lookup), 1)
+                lig_u = gsub_u.LookupList.Lookup[0].SubTable[0].ligatures[cmap_u[ord("A")]][0]
+                self.assertEqual(lig_u.Component, [cmap_u[0x0301]])
+                self.assertIn(lig_u.LigGlyph, lu_tt.getGlyphOrder())
+                self.assertEqual(lu_tt["hmtx"][lig_u.LigGlyph][0], 940)
+                shaped_unmapped = _hb_shape_glyphs_and_advances(lu_tt, "A\u0301")
+                self.assertEqual(shaped_unmapped, [(lig_u.LigGlyph, 940)])
 
 
 if __name__ == "__main__":

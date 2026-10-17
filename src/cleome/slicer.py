@@ -326,17 +326,23 @@ def is_cjk_ideograph(cp: int) -> bool:
 
 def is_tier1_latin(cp: int) -> bool:
     """
-    Tier 1 (`latin`): Basic ASCII, Latin-1 Supplement, Latin Extended-A/B,
+    Tier 1 (`latin`): Basic ASCII, Latin-1 Supplement, Latin Extended-A/B (`U+0000-024F`),
+    Combining Diacritical Marks (`U+0300-036F`, `U+1AB0-1AFF`, `U+1DC0-1DFF`, `U+FE20-FE2F`),
     Latin Extended Additional (`U+1E00-1EFF`), General Punctuation (`U+2000-206F`),
     Currency Symbols (`U+20A0-20CF`), Trademark (`U+2122`), Litre (`U+2113`), BOM/Replacement.
     """
     return (
         (0x0000 <= cp <= 0x024F)
+        or (0x0300 <= cp <= 0x036F)
+        or (0x1AB0 <= cp <= 0x1AFF)
+        or (0x1DC0 <= cp <= 0x1DFF)
         or (0x1E00 <= cp <= 0x1EFF)
         or (0x2000 <= cp <= 0x206F)
         or (0x20A0 <= cp <= 0x20CF)
+        or (0xFE20 <= cp <= 0xFE2F)
         or cp in (0x2113, 0x2122, 0xFEFF, 0xFFFD)
     )
+
 
 
 def is_tier1_kana_core(cp: int) -> bool:
