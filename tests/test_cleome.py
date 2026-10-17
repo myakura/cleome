@@ -570,6 +570,126 @@ class TestCleomeSlicer(unittest.TestCase):
                 len(res.variant_slice_specs[0]) + len(res.variant_slice_specs[1]),
             )
 
+    def test_issue1_uvs_format14_preserved_in_woff2_slices(self) -> None:
+        """
+        Issue 1 verification: Verify that Format 14 UVS mappings (both non-default UVS with
+        a variant glyph and default UVS with glyphName=None) for base characters present in
+        base cmap are preserved in the corresponding slice WOFF2 files across Path/TTFont
+        inputs and single/multi-worker runs, without polluting base cmap, and keeping
+        `patch_uvs_missing_base_cmap` distinct from Format 14 sequence retention.
+        """
+        sample_cps = [ord("A"), ord("あ"), ord("日"), 0x4E02, 0xFE00]
+
+        def _make_uvs_font() -> TTFont:
+            f = _create_synthetic_ttfont(sample_cps, family_name="UVS Keep Font")
+            f.setGlyphOrder(f.getGlyphOrder() + ["uni65E5_ivs0", "uni4E02_ivs0", "uni553E_uvs"])
+            for g, adv in (("uni65E5_ivs0", 910), ("uni4E02_ivs0", 820), ("uni553E_uvs", 730)):
+                f["glyf"][g] = f["glyf"]["uni0041"]
+                f["hmtx"][g] = (adv, 100)
+            s14 = CmapSubtable.newSubtable(14)
+            s14.platformID = 0
+            s14.platEncID = 5
+            s14.language = 0
+            s14.cmap = {}
+            s14.uvsDict = {
+                0xE0100: [
+                    (ord("日"), "uni65E5_ivs0"),
+                    (0x4E02, "uni4E02_ivs0"),
+                    (0x553E, "uni553E_uvs"),  # U+553E not in base cmap
+                ],
+                0xE0101: [(ord("日"), None)],
+                0xFE00: [(ord("日"), "uni65E5_ivs0")],  # VS1 selector is also in base cmap (symbols-ext)
+            }
+            f["cmap"].tables.append(s14)
+            return f
+
+        with tempfile.TemporaryDirectory() as tmp:
+            disk_path = Path(tmp) / "uvs_keep.ttf"
+            _make_uvs_font().save(disk_path, reorderTables=False)
+
+            for label, src, w, patch_missing in (
+                ("path_w1", disk_path, 1, True),
+                ("path_w2", disk_path, 2, True),
+                ("ttfont_w1", _make_uvs_font(), 1, True),
+                ("ttfont_w2", _make_uvs_font(), 2, True),
+                ("no_patch_missing", _make_uvs_font(), 1, False),
+            ):
+                out_dir = Path(tmp) / label
+                res = slice_font(
+                    src,
+                    out_dir=out_dir,
+                    config=SliceConfig(patch_uvs_only_cmap=patch_missing),
+                    workers=w,
+                )
+
+                freq_bf = next(bf for bf in res.built_files if bf.spec.category == "kanji-freq")
+                rare_bf = next(bf for bf in res.built_files if bf.spec.category == "kanji-rare")
+                sym_bf = next(bf for bf in res.built_files if bf.spec.category == "symbols-ext")
+
+                with TTFont(freq_bf.path) as freq_tt:
+                    expected_freq_cps = {ord("日"), 0x553E} if patch_missing else {ord("日")}
+                    self.assertEqual(set(freq_tt.getBestCmap().keys()), expected_freq_cps)
+                    self.assertNotIn(0xFE00, freq_tt.getBestCmap(), "VS1 must not leak into kanji-freq base cmap")
+                    f14_tables = [t for t in freq_tt["cmap"].tables if t.format == 14]
+                    self.assertEqual(len(f14_tables), 1, f"{label}: Format 14 missing in kanji-freq")
+                    uvs_dict = f14_tables[0].uvsDict
+                    self.assertEqual(uvs_dict[0xE0101], [(ord("日"), None)])
+                    # Verify non-default UVS glyph for 日 has distinct advance width 910 (not base 1000 or 820)
+                    hi_uvs_entries = dict(uvs_dict[0xE0100])
+                    self.assertIn(ord("日"), hi_uvs_entries)
+                    self.assertNotIn(0x4E02, hi_uvs_entries)
+                    hi_ivs_gname = hi_uvs_entries[ord("日")]
+                    self.assertIsNotNone(hi_ivs_gname)
+                    self.assertNotEqual(hi_ivs_gname, freq_tt.getBestCmap()[ord("日")])
+                    self.assertEqual(freq_tt["hmtx"][hi_ivs_gname][0], 910)
+                    self.assertEqual(uvs_dict[0xFE00], [(ord("日"), hi_ivs_gname)])
+
+                with TTFont(rare_bf.path) as rare_tt:
+                    self.assertEqual(set(rare_tt.getBestCmap().keys()), {0x4E02})
+                    f14_tables = [t for t in rare_tt["cmap"].tables if t.format == 14]
+                    self.assertEqual(len(f14_tables), 1, f"{label}: Format 14 missing in kanji-rare")
+                    uvs_dict = f14_tables[0].uvsDict
+                    self.assertEqual(set(uvs_dict.keys()), {0xE0100})
+                    self.assertEqual(len(uvs_dict[0xE0100]), 1)
+                    cp_rare, rare_ivs_gname = uvs_dict[0xE0100][0]
+                    self.assertEqual(cp_rare, 0x4E02)
+                    self.assertIsNotNone(rare_ivs_gname)
+                    self.assertEqual(rare_tt["hmtx"][rare_ivs_gname][0], 820)
+
+                with TTFont(sym_bf.path) as sym_tt:
+                    self.assertEqual(set(sym_tt.getBestCmap().keys()), {0xFE00})
+                    f14_tables = [t for t in sym_tt["cmap"].tables if t.format == 14]
+                    self.assertEqual(len(f14_tables), 0, "symbols-ext has no Format 14 base chars")
+
+                # Verify HarfBuzz shaping before and after slicing for IVS/UVS sequences
+                import copy
+                import io
+                import uharfbuzz as hb
+
+                def _hb_shape_advances(font_obj: TTFont, text: str) -> list[int]:
+                    buf_io = io.BytesIO()
+                    c = copy.deepcopy(font_obj)
+                    c.flavor = None
+                    c.save(buf_io, reorderTables=False)
+                    face = hb.Face(hb.Blob(buf_io.getvalue()))
+                    hb_font = hb.Font(face)
+                    hb_buf = hb.Buffer()
+                    hb_buf.add_str(text)
+                    hb_buf.guess_segment_properties()
+                    hb.shape(hb_font, hb_buf)
+                    return [pos.x_advance for pos in hb_buf.glyph_positions]
+
+                orig_uvs = _make_uvs_font()
+                with TTFont(freq_bf.path) as sliced_freq_tt:
+                    for seq, expected_adv in (
+                        ("日", [1000]),
+                        ("日\U000E0100", [910]),
+                        ("日\U000E0101", [1000]),
+                        ("日\uFE00", [910]),
+                    ):
+                        self.assertEqual(_hb_shape_advances(orig_uvs, seq), expected_adv)
+                        self.assertEqual(_hb_shape_advances(sliced_freq_tt, seq), expected_adv)
+
 
 if __name__ == "__main__":
     unittest.main()

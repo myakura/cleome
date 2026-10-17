@@ -91,6 +91,40 @@ def _clear_subset_worker() -> None:
     _WORKER_OPTIONS = None
 
 
+def _prepare_uvs_for_slice(font: TTFont, codepoints: list[int]) -> list[int]:
+    """
+    Filter `cmap` Format 14 (`uvsDict`) to base characters present in `codepoints`
+    and return `codepoints` extended with the active Variation Selector codepoints so
+    `fontTools.subset` retains both default UVS (`glyphName=None`) and non-default UVS
+    mappings and their variant glyphs without adding standalone VS codepoints to Format 4/12.
+    """
+    if "cmap" not in font:
+        return codepoints
+
+    cp_set = set(codepoints)
+    uvs_selectors: set[int] = set()
+    for table in font["cmap"].tables:
+        if getattr(table, "format", None) == 14 and hasattr(table, "uvsDict"):
+            filtered_uvs: dict[int, list[tuple[int, str | None]]] = {}
+            for sel, records in table.uvsDict.items():
+                kept = [(u, g) for u, g in records if u in cp_set]
+                if kept:
+                    filtered_uvs[sel] = kept
+                    uvs_selectors.add(sel)
+            table.uvsDict = filtered_uvs
+
+    extra_selectors = uvs_selectors - cp_set
+    if not extra_selectors:
+        return codepoints
+
+    for table in font["cmap"].tables:
+        if getattr(table, "format", None) != 14 and hasattr(table, "cmap"):
+            for sel in extra_selectors:
+                table.cmap.pop(sel, None)
+
+    return [*codepoints, *sorted(extra_selectors)]
+
+
 def _subset_single_slice_worker(
     task: tuple[list[int], str],
 ) -> tuple[str, int, int]:
@@ -103,8 +137,9 @@ def _subset_single_slice_worker(
         if _WORKER_PATCH_UVS:
             patch_uvs_missing_base_cmap(font)
 
+        populate_unicodes = _prepare_uvs_for_slice(font, codepoints)
         subsetter = Subsetter(options=_WORKER_OPTIONS)
-        subsetter.populate(unicodes=codepoints)
+        subsetter.populate(unicodes=populate_unicodes)
         subsetter.subset(font)
 
         font.flavor = "woff2"
@@ -156,10 +191,10 @@ def export_woff2_slices(
         p = Path(font_or_bytes)
         with TTFont(p, lazy=True, recalcTimestamp=False) as probe:
             is_woff = probe.flavor is not None
-        if not is_woff and not meta.patched_uvs_codepoints:
+        if not is_woff and not (config.patch_uvs_only_cmap and meta.patched_uvs_codepoints):
             # Fast path: raw SFNT (.ttf/.otf) on disk with no missing UVS cmap entries
             font_bytes = p.read_bytes()
-        elif not is_woff and meta.patched_uvs_codepoints:
+        elif not is_woff and config.patch_uvs_only_cmap and meta.patched_uvs_codepoints:
             # Fast path: read raw SFNT bytes once and let workers apply lightweight cmap dict patch
             font_bytes = p.read_bytes()
             worker_needs_uvs_patch = True

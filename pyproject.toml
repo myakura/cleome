@@ -14,6 +14,19 @@ dependencies = [
     "brotli>=1.1.0",
 ]
 
+[project.optional-dependencies]
+test = [
+    "uharfbuzz>=0.40.0",
+]
+
+[dependency-groups]
+dev = [
+    "uharfbuzz>=0.40.0",
+]
+test = [
+    "uharfbuzz>=0.40.0",
+]
+
 [project.scripts]
 cleome = "cleome.cli:main"
 
