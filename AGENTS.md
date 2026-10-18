@@ -1,6 +1,6 @@
 # AGENTS.md
 
-`cleome` is a Python (>= 3.15) CLI tool and library that dynamically inspects Japanese Variable and Static fonts (`.ttf` / `.otf`) and generates 4-tier `unicode-range` `.woff2` slices and `@font-face` CSS using CSS Cascade Shadowing and Inverted-Pyramid Kanji frequency granularity.
+`cleome` is a Python (>= 3.15) CLI tool and library that dynamically inspects Japanese, Korean, and Chinese (`jp` / `kr` / `sc` / `tc` / `hk`) Variable and Static fonts (`.ttf` / `.otf`) and generates 4-tier `unicode-range` `.woff2` slices and `@font-face` CSS using CSS Cascade Shadowing and Inverted-Pyramid frequency granularity.
 
 
 ## Commands
@@ -23,5 +23,6 @@
 ## Domain References
 
 * [Architecture & Rationale](docs/architecture-and-rationale.md)
+* [Chinese & Korean (`KR` / `SC` / `TC` / `HK`) Slicing Analysis](docs/cjk-slicing-analysis.md)
 * [WOFF2 Subsetting, OpenType Shaping & Slicing Tiers](.agents/docs/subsetting-and-shaping.md)
 * [`@font-face` CSS Generation, Variable Axes & Variant Bundling](.agents/docs/css-and-metadata.md)

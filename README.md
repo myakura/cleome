@@ -1,8 +1,8 @@
 # cleome
 
-**`cleome`** is a Python CLI tool and library that takes any Japanese font (`.ttf` / `.otf`, both **Variable Fonts** and **Static Fonts**) and generates Web-optimized `unicode-range` `.woff2` slices and `@font-face` CSS.
+**`cleome`** is a Python CLI tool and library that takes Japanese, Korean, or Chinese (`JP` / `KR` / `SC` / `TC` / `HK`) fonts (`.ttf` / `.otf`, both **Variable Fonts** and **Static Fonts**) and generates Web-optimized `unicode-range` `.woff2` slices and `@font-face` CSS.
 
-`cleome` dynamically inspects the input font's character set to strike a more efficient balance between stylesheet size and font slice downloads than Google Fonts' static slicing templates, while preserving OpenType layout features, UVS/IVS variation sequences, and Variable Font axes.
+`cleome` dynamically inspects the input font's character set (auto-detecting the target CJK profile or accepting `--locale jp|kr|sc|tc|hk`) to strike a more efficient balance between stylesheet size and font slice downloads than Google Fonts' static slicing templates, while preserving OpenType layout features, UVS/IVS variation sequences, and Variable Font axes.
 
 ---
 
@@ -10,11 +10,15 @@
 ## CLI Usage
 
 ```bash
-# Slice a Variable Font (outputs <out-dir>/<slug>.css and <out-dir>/slices/<slug>-*.woff2)
+# Slice a Variable Font (auto-detects CJK profile; outputs <out-dir>/<slug>.css and <out-dir>/slices/<slug>-*.woff2)
 cleome SourceHanSansJP-VF.otf -o dist/web
 
 # Preview the dynamic 4-tier slice plan without writing files
 cleome SourceHanSansJP-VF.otf --dry-run
+
+# Explicitly select a CJK slicing profile (auto, jp, kr, sc, tc, hk)
+cleome SourceHanSansJP-VF.otf --locale jp -o dist/web-jp
+cleome NotoSansKR-VF.ttf --locale kr -o dist/web-kr
 
 # Slice multiple Static Font weights into a single unified @font-face CSS and slices/ directory
 cleome MyFontJP-Regular.ttf MyFontJP-Bold.ttf -o dist/web-static
@@ -23,6 +27,7 @@ cleome MyFontJP-Regular.ttf MyFontJP-Bold.ttf -o dist/web-static
 # Note: --layout-features replaces the entire feature list (default is '*' for all features),
 # so include vertical writing (vert,vrt2,vpal,vhal,vkrn) and composition (ccmp,locl) tags if needed.
 cleome MyFont-VF.otf -o dist/web \
+  --locale jp \
   --family "My Font JP" \
   --slug "my-font-jp" \
   --url-prefix "/assets/fonts/slices" \
@@ -44,11 +49,12 @@ from pathlib import Path
 from cleome import SliceConfig, slice_font, slice_fonts
 
 if __name__ == "__main__":
-    # 1. Slice a Variable Font (path or in-memory TTFont)
+    # 1. Slice a Variable Font (path or in-memory TTFont; locale="auto" by default)
     result = slice_font(
         "SourceHanSansJP-VF.otf",
         out_dir=Path("dist/web"),
         config=SliceConfig(
+            locale="auto",  # "auto", "jp", "kr", "sc", "tc", or "hk"
             slices_subdir="slices",
             rare_kanji_chunk_size=250,
         ),
@@ -83,6 +89,7 @@ uv pip install -e ".[test]"
 ## Documentation
 
 * **[Architecture & Rationale](docs/architecture-and-rationale.md)**: Background, Google Fonts (`Noto Sans JP` and static fonts) `unicode-range` analysis, 4-tier cascade shadowing, inverted-pyramid Kanji granularity simulations, and OpenType subsetting details.
+* **[Chinese & Korean (`KR` / `SC` / `TC` / `HK`) Slicing Analysis](docs/cjk-slicing-analysis.md)**: Analysis of Google Fonts' Korean and Chinese (`SC`, `TC`, `HK`) slicing templates, ghost `unicode-range`s, punctuation/Jamo/Bopomofo fragmentation, and 4-tier simulation comparisons.
 
 ---
 

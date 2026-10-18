@@ -22,7 +22,7 @@ Domain rules for the 4-tier slicing planner and WOFF2 subsetting pipeline.
 ## Intra-Slice OpenType Shaping
 
 * `fontTools.subset` prunes multi-glyph `GSUB`/`GPOS` lookups (`ccmp`, `mark`, `mkmk`, `liga`, `kern`) whenever any participating glyph is absent from the slice.
-* Keep base characters and their combining marks in the same tier and slice (Latin combining marks with `latin`, voiced Kana marks with `kana-core`) so composition lookups survive subsetting.
+* Keep base characters and their combining marks or paired brackets in the same tier and slice (Latin combining marks with `latin`, voiced Kana marks with `kana-core`, Conjoining and Compatibility Hangul Jamo with `hangul-core`, and Bopomofo letters + tone marks `U+02C7`, `U+02C9-02CB`, `U+02D9` with `cjk-core`) so composition and contextual positioning lookups survive subsetting.
 * Verify changes to character partitioning or subsetting options with HarfBuzz (`uharfbuzz`) shaping assertions before and after slicing.
 
 
