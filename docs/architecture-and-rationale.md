@@ -25,7 +25,7 @@ To understand how production CJK font slicing behaves across both Variable and S
 
 ### How Does Google Fonts' Shared 120-Slice Template Work?
 
-The 120-slice numbered partitioning (`.0` to `.119`) is not specific to Variable Fonts; it is a universal static template (`gfsubsets` / `nam-files`) introduced when `Noto Sans JP` was still served as static fonts and applied identically across every Japanese family on Google Fonts. Whether a font is Variable or Static, or contains 16,600 characters or 7,000 characters, every emitted numbered slice `.N` uses the exact same `unicode-range` string (100% identical across all inspected families), ordered in CSS from lowest priority at the top to highest priority at the bottom:
+The 120-slice numbered partitioning (`.0` to `.119`) is not specific to Variable Fonts; it is a universal static template ([`googlefonts/nam-files`](https://github.com/googlefonts/nam-files) / `gfsubsets`) introduced when Google Fonts [launched Japanese support in September 2018](https://developers.googleblog.com/2018/09/google-fonts-launches-japanese-support.html) (`Noto Sans JP` was still served as static fonts) and applied identically across every Japanese family on Google Fonts. Whether a font is Variable or Static, or contains 16,600 characters or 7,000 characters, every emitted numbered slice `.N` uses the exact same `unicode-range` string (100% identical across all inspected families), ordered in CSS from lowest priority at the top to highest priority at the bottom:
 
 * **Codepoint-ordered rare slices (`.0` to `.59`, up to 60 slices)**: The 13,381 codepoints not in the frequency tiers, sorted by Unicode codepoint and split mechanically into chunks of 223 characters (`.59` has 224 characters). In `Noto Sans JP`, these 60 slices total 4,031.3 KB for the Variable Font (averaging 67.2 KB/slice) and 1,675.2 KB for Static Regular 400 (averaging 27.9 KB/slice).
 * **Frequency-ranked Kanji and symbols (`.60` to `.117`, 58 slices)**: Strictly 50 codepoints per slice (2,900 characters total), ordered by web corpus frequency from `.117` (highest) down to `.60` (mid-low). Covers 82.5% of JIS Level 1 Kanji (2,445 of 2,965), 168 frequent JIS Level 2 Kanji, fullwidth alphanumerics, circled numbers, and halfwidth katakana. Averages 20.1 KB/slice in `Noto Sans JP` VF and 5.0 to 8.7 KB/slice across Static 400 fonts (`M PLUS 1p` 5.0 KB, `IBM Plex Sans JP` 5.6 KB, `Noto Sans JP` Static 5.6 KB, `BIZ UDPGothic` 5.9 KB, `Zen Kaku Gothic New` 6.0 KB, `Kosugi Maru` 8.6 KB).
@@ -87,7 +87,7 @@ In a 4,500-character technical article (553 unique characters), the 50-character
 
 ### 1. CSS Cascade Shadowing for 1-Token Rare Kanji Ranges (Tier 4)
 
-Under CSS Fonts Module Level 4, when multiple `@font-face` rules within the same `font-family` and style descriptors have overlapping `unicode-range` values, the rule declared later in the stylesheet takes precedence.
+Under [CSS Fonts Module Level 4](https://www.w3.org/TR/css-fonts-4/#unicode-range-desc), when multiple `@font-face` rules within the same `font-family` and style descriptors have overlapping `unicode-range` values, the rule declared later in the stylesheet takes precedence.
 
 `cleome` places **Tier 4 (`kanji-rare-01..NN`)** at the very top of the stylesheet (lowest priority) and **Tier 3 to Tier 1** below it (higher priority):
 
@@ -200,3 +200,27 @@ While evaluating character coverage against upstream Adobe `SourceHanSansJP-VF.o
 * **Automatic axis and style descriptor extraction**: `extract_font_metadata` inspects `fvar` in Variable Fonts to emit continuous CSS ranges (`font-weight: 250 900`, `font-stretch: 70% 100%`), and inspects `OS/2` (`usWeightClass`, `usWidthClass`, `fsSelection`) and `post` (`italicAngle`) in Static Fonts. When a Variable Font includes an `ital` axis spanning upright (`< 0.5`) and italic (`>= 0.5`) or a `slnt` axis, `cleome` emits `@font-face` rules for each supported style (`normal`, `italic`, `oblique <min>deg <max>deg`) pointing to the same `.woff2` slice files, omitting `normal` if the font's axis ranges do not include an upright form.
 * **Per-variant `cmap` plans and fail-fast bundling**: When bundling multiple static font files into a single stylesheet, `cleome` validates that all inputs share the same `font-family` (unless overridden) and have unique `(font-weight, font-stretch, font-style)` descriptors, and computes each variant's slices from its own mapped codepoints (`variant_slice_specs`) so a subsetted italic or condensed weight never emits ghost `unicode-range` rules for glyphs only present in the regular weight.
 * **Non-destructive, deterministic builds & output directory behavior**: Public Python APIs (`slice_font`, `slice_fonts`, `export_woff2_slices`) serialize in-memory `TTFont` inputs without mutating the caller's object, preserve `head.modified` (`recalcTimestamp=False`) so repeated builds produce byte-identical `.woff2` files, and retain license records (`nameID` 0, 13, 14) in every slice. Re-running `cleome` into an existing output directory overwrites `<slug>.css` and matching slice files without deleting unrelated `.woff2` files from previous runs with different slugs or chunk counts.
+
+
+---
+
+
+## References
+
+
+### Google Fonts CJK Subsetting & Slicing
+
+* Google Fonts Team, "[Google Fonts launches Japanese support](https://developers.googleblog.com/2018/09/google-fonts-launches-japanese-support.html)", _Google Developers Blog_, September 28, 2018. Explains how Google Fonts analyzed character frequency across millions of Japanese web pages, observed the high-frequency head vs. long tail of rare characters, and adopted the two-stage `unicode-range` + WOFF2 + HTTP/2 slicing strategy (segmenting the top ~3,000 characters by frequency into fine-grained slices and sorting the remaining characters by Unicode codepoint into equally sized slices), while noting that OpenType layout features break across slice boundaries.
+* Google Fonts Team, "[Google Fonts launches Korean support](https://developers.googleblog.com/2018/04/google-fonts-launches-korean-support.html)", _Google Developers Blog_, April 4, 2018. Introduces Google Fonts' CJK `unicode-range` subsetting pipeline, corpus-driven character clustering, and cross-site slice caching.
+* Quan Wang and Yiran Mao (Google Inc.), "[Learning Better Font Slicing Strategies from Data](https://www.tdcommons.org/dpubs_series/906/)", _Technical Disclosure Commons_, Defensive Publications Series 906, December 2017 ([project page](https://google.github.io/speaker-id/publications/MLFont/)). Details Google's data-driven CJK font slicing research using topic models and genetic algorithms, applied to `Noto Sans CJK` (`Noto Sans SC Sliced` on Google Fonts Early Access).
+* Rod Sheeter, "[Smaller Fonts with WOFF 2.0 and unicode-range](https://developers.googleblog.com/2015/02/smaller-fonts-with-woff-20-and-unicode.html)", _Google Developers Blog_, February 18, 2015. Covers Google Fonts' deployment of `unicode-range` subsetting with `fontTools` and WOFF 2.0.
+* [`googlefonts/nam-files`](https://github.com/googlefonts/nam-files) (`gfsubsets`): Repository containing the static codepoint subset definitions (`.nam` files) used by Google Fonts to slice fonts for its CSS API.
+
+
+### Specifications & Font Tooling
+
+* W3C, "[CSS Fonts Module Level 4 - Character range: the `unicode-range` descriptor](https://www.w3.org/TR/css-fonts-4/#unicode-range-desc)" and "[Font Matching Algorithm](https://www.w3.org/TR/css-fonts-4/#font-matching-algorithm)". Defines `@font-face` rule ordering and composite font cascade precedence when multiple faces share style descriptors and overlap in `unicode-range`.
+* W3C, "[WOFF File Format 2.0](https://www.w3.org/TR/WOFF2/)".
+* Microsoft / ISO/IEC 14496-22, "[OpenType Specification - `cmap` Format 14: Unicode Variation Sequences](https://learn.microsoft.com/en-us/typography/opentype/spec/cmap#format-14-unicode-variation-sequences)", "[`GSUB` - Glyph Substitution Table](https://learn.microsoft.com/en-us/typography/opentype/spec/gsub)", and "[`fvar` - Font Variations Table](https://learn.microsoft.com/en-us/typography/opentype/spec/fvar)".
+* [`fonttools/fonttools`](https://github.com/fonttools/fonttools) (`fontTools.subset`) and [`harfbuzz/uharfbuzz`](https://github.com/harfbuzz/uharfbuzz).
+* [`notofonts/noto-cjk`](https://github.com/notofonts/noto-cjk) / [`adobe-fonts/source-han-sans`](https://github.com/adobe-fonts/source-han-sans): Upstream `Noto Sans CJK` / `Source Han Sans` pan-CJK and region-specific OpenType/CFF2 fonts.
