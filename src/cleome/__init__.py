@@ -7,10 +7,12 @@ Progressive (Inverted-Pyramid) Kanji frequency granularity.
 """
 
 from cleome.slicer import (
+    SUPPORTED_LOCALES,
     FontMetadata,
     SliceConfig,
     SliceSpec,
     build_slice_plan,
+    detect_font_locale,
     extract_font_metadata,
     format_unicode_range,
     parse_unicode_range,
@@ -33,10 +35,12 @@ __version__ = "0.1.0"
 __all__ = [
     "BuiltSliceFile",
     "FontMetadata",
+    "SUPPORTED_LOCALES",
     "SliceBundleResult",
     "SliceConfig",
     "SliceSpec",
     "build_slice_plan",
+    "detect_font_locale",
     "export_woff2_slices",
     "extract_font_metadata",
     "format_unicode_range",

@@ -11,8 +11,10 @@ import time
 from fontTools.ttLib import TTFont
 
 from cleome.slicer import (
+    SUPPORTED_LOCALES,
     SliceConfig,
     build_slice_plan,
+    detect_font_locale,
     extract_font_metadata,
 )
 from cleome.css import slice_fonts, validate_and_compute_variant_suffixes
@@ -68,9 +70,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="cleome",
         description=(
-            "Slice Japanese Variable or Static fonts (.ttf / .otf) into Web-optimized "
-            "unicode-range WOFF2 chunks and @font-face CSS using CSS Cascade Shadowing "
-            "and Progressive (Inverted-Pyramid) Kanji frequency granularity."
+            "Slice Japanese, Korean, or Chinese Variable and Static fonts (.ttf / .otf) into "
+            "Web-optimized unicode-range WOFF2 chunks and @font-face CSS using CSS Cascade Shadowing "
+            "and Progressive (Inverted-Pyramid) frequency granularity."
         ),
     )
     parser.add_argument(
@@ -85,6 +87,12 @@ def build_parser() -> argparse.ArgumentParser:
         type=Path,
         default=Path("dist"),
         help="Output directory for generated CSS and slices (default: ./dist)",
+    )
+    parser.add_argument(
+        "--locale",
+        choices=SUPPORTED_LOCALES,
+        default="auto",
+        help="Target CJK slicing profile: 'auto' (detect from family & cmap), 'jp', 'kr', 'sc', 'tc', or 'hk' (default: 'auto')",
     )
     parser.add_argument(
         "--slices-dir",
@@ -135,19 +143,19 @@ def build_parser() -> argparse.ArgumentParser:
         "--freq-tiers",
         type=_parse_freq_tiers,
         default=((200, 2), (80, 10)),
-        help="Progressive Tier 3 Kanji chunk spec from highest frequency downward (default: '200x2,80x10')",
+        help="Progressive Tier 3 chunk spec from highest frequency downward (default: '200x2,80x10')",
     )
     parser.add_argument(
         "--freq-tail-chunk-size",
         type=_positive_int,
         default=70,
-        help="Target characters per slice for remaining Tier 3 Kanji (default: 70)",
+        help="Target characters per slice for remaining Tier 3 characters (default: 70)",
     )
     parser.add_argument(
         "--rare-chunk-size",
         type=_positive_int,
         default=250,
-        help="Target characters per slice for Tier 4 rare/extended Kanji (default: 250)",
+        help="Target characters per slice for Tier 4 rare/extended characters (default: 250)",
     )
     parser.add_argument(
         "--symbols-chunk-size",
@@ -201,6 +209,7 @@ def main(argv: list[str] | None = None) -> int:
             return 1
 
     config = SliceConfig(
+        locale=args.locale,
         freq_tiers=args.freq_tiers,
         freq_tail_chunk_size=args.freq_tail_chunk_size,
         rare_kanji_chunk_size=args.rare_chunk_size,
@@ -235,10 +244,16 @@ def main(argv: list[str] | None = None) -> int:
             return 1
 
         first = metas[0]
+        resolved_loc = (
+            detect_font_locale(first.codepoints, family_name=first.family_name)
+            if config.locale == "auto"
+            else config.locale
+        )
         print(f"Font Family : {first.family_name} (slug: {first.slug})")
+        print(f"Locale      : {resolved_loc} (config: {config.locale})")
         print(f"Type        : {'Variable' if first.is_variable else 'Static'} ({len(metas)} file(s))")
         for m in metas:
-            plan = build_slice_plan(m.codepoints, config=config)
+            plan = build_slice_plan(m.codepoints, config=config, family_name=m.family_name)
             style_label = " + ".join(m.styles_css or (m.style_css,))
             print(
                 f"Variant     : weight={m.weight_css}, stretch={m.stretch_css or 'normal'}, "

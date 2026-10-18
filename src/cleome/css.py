@@ -263,12 +263,14 @@ def slice_fonts(
         plan_cache: dict[frozenset[int], list[SliceSpec]] = {}
         for m in metas:
             if m.codepoints not in plan_cache:
-                plan_cache[m.codepoints] = build_slice_plan(m.codepoints, config=config)
+                plan_cache[m.codepoints] = build_slice_plan(
+                    m.codepoints, config=config, family_name=unified_family
+                )
 
         variant_plans = [plan_cache[m.codepoints] for m in metas]
         union_codepoints = frozenset({*m.codepoints for m in metas})
         slice_specs = plan_cache.get(union_codepoints) or build_slice_plan(
-            union_codepoints, config=config
+            union_codepoints, config=config, family_name=unified_family
         )
 
         # 3. Export WOFF2 slices across all input fonts in a single batch
