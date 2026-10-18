@@ -1,3 +1,12 @@
+---
+type: Reference
+title: "@font-face CSS Generation, Variable Axes & Variant Bundling"
+description: Domain rules for extracting Variable and Static font descriptors and bundling multi-file @font-face stylesheets.
+status: stable
+updated: 2026-10-18
+stale_after: 2027-10-18T00:00:00+09:00
+---
+
 # `@font-face` CSS Generation, Variable Axes & Variant Bundling
 
 Domain rules for extracting font metadata and generating `@font-face` stylesheets across Variable and Static fonts.

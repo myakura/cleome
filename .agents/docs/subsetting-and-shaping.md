@@ -1,3 +1,12 @@
+---
+type: Reference
+title: WOFF2 Subsetting, OpenType Shaping & Slicing Tiers
+description: Domain rules for 4-tier CSS cascade shadowing, intra-slice OpenType shaping, and cmap Format 14 UVS/IVS subsetting.
+status: stable
+updated: 2026-10-18
+stale_after: 2027-10-18T00:00:00+09:00
+---
+
 # WOFF2 Subsetting, OpenType Shaping & Slicing Tiers
 
 Domain rules for the 4-tier slicing planner and WOFF2 subsetting pipeline.
