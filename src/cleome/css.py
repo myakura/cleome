@@ -4,6 +4,7 @@ CSS `@font-face` stylesheet generator and high-level Python API (`slice_font` / 
 
 from dataclasses import dataclass, field
 import io
+import os
 from pathlib import Path
 from fontTools.ttLib import TTFont
 
@@ -284,11 +285,18 @@ def slice_fonts(
             fonts_and_files.append((m, built))
             all_built_files.extend(built)
 
-        # 4. Generate CSS file
+        # 4. Generate CSS file atomically
         css_text = generate_css(fonts_and_files, config=config)
         resolved_css_name = css_filename or f"{unified_slug}.css"
         css_path = out_path / resolved_css_name
-        css_path.write_text(css_text, encoding="utf-8")
+        tmp_css = css_path.with_name(f".{css_path.name}.{os.getpid()}.tmp")
+        try:
+            tmp_css.write_text(css_text, encoding="utf-8")
+            os.replace(tmp_css, css_path)
+        except BaseException:
+            if tmp_css.exists():
+                tmp_css.unlink(missing_ok=True)
+            raise
 
         return SliceBundleResult(
             family_name=unified_family,

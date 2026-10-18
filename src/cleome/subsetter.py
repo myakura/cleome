@@ -134,21 +134,28 @@ def _subset_single_slice_worker(
     """Worker function: subset cached font bytes to `codepoints` and write WOFF2 to `out_path_str`."""
     codepoints, out_path_str = task
     assert _WORKER_FONT_BYTES is not None and _WORKER_OPTIONS is not None
-    with TTFont(
-        io.BytesIO(_WORKER_FONT_BYTES), lazy=True, recalcTimestamp=False
-    ) as font:
-        if _WORKER_PATCH_UVS:
-            patch_uvs_missing_base_cmap(font)
+    out_path = Path(out_path_str)
+    tmp_path = out_path.with_name(f".{out_path.stem}.{os.getpid()}.tmp.woff2")
+    try:
+        with TTFont(
+            io.BytesIO(_WORKER_FONT_BYTES), lazy=True, recalcTimestamp=False
+        ) as font:
+            if _WORKER_PATCH_UVS:
+                patch_uvs_missing_base_cmap(font)
 
-        populate_unicodes = _prepare_uvs_for_slice(font, codepoints)
-        subsetter = Subsetter(options=_WORKER_OPTIONS)
-        subsetter.populate(unicodes=populate_unicodes)
-        subsetter.subset(font)
+            populate_unicodes = _prepare_uvs_for_slice(font, codepoints)
+            subsetter = Subsetter(options=_WORKER_OPTIONS)
+            subsetter.populate(unicodes=populate_unicodes)
+            subsetter.subset(font)
 
-        font.flavor = "woff2"
-        out_path = Path(out_path_str)
-        font.save(out_path)
-        num_glyphs = len(font.getGlyphOrder())
+            font.flavor = "woff2"
+            font.save(tmp_path)
+            num_glyphs = len(font.getGlyphOrder())
+        os.replace(tmp_path, out_path)
+    except BaseException:
+        if tmp_path.exists():
+            tmp_path.unlink(missing_ok=True)
+        raise
     size_bytes = out_path.stat().st_size
     return out_path_str, size_bytes, num_glyphs
 
@@ -223,6 +230,8 @@ def export_woff2_slices(
         fname = spec.filename(meta.slug, meta.variant_suffix)
         out_path = slices_dir / fname
         out_str = str(out_path)
+        if out_str in spec_by_path:
+            raise ValueError(f"Duplicate slice output path: {out_str}")
         tasks.append((cps, out_str))
         spec_by_path[out_str] = (spec, fname)
 
