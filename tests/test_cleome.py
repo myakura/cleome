@@ -980,6 +980,94 @@ class TestCleomeSlicer(unittest.TestCase):
                 slice_fonts([tt, tt_dup], out_dir=Path(tmp) / "err_out", workers=1)
             _assert_tt_unchanged()
 
+    def test_worker_cache_batch_scheduling_and_byte_identity(self) -> None:
+        """
+        Verify that per-worker table caching (`cmap`, `hmtx`, `glyphOrder`, `_reverseGlyphOrderDict`),
+        heavy-first task scheduling, and multi-font batch export:
+        1. Produce byte-identical `.woff2` and `.css` outputs across `workers=1` and `workers=2`
+           for fonts with `post` Format 3.0, Format 12 non-BMP cmaps, and Format 14 UVS.
+        2. Preserve strict Tier 4 -> Tier 1 cascade order in `built_files` and CSS even when
+           Tier 1 slices have more codepoints than Tier 3/4 slices.
+        3. Reject duplicate output paths in `_export_woff2_slices_batch` with `ValueError`.
+        """
+        from cleome.subsetter import _export_woff2_slices_batch
+
+        # Make Tier 1 (latin) larger than Tier 3/4 so heavy-first scheduling runs Tier 1 first
+        cps = sorted(
+            {
+                *range(0x0021, 0x007F),  # 94 Latin chars (heaviest slice)
+                ord("あ"),
+                ord("い"),
+                ord("う"),
+                ord("日"),
+                0x4E02,
+                0x20B9F,  # non-BMP in kanji-freq (Format 12)
+                0x20BB7,
+            }
+        )
+
+        def _make_post3_font(weight: int) -> TTFont:
+            f = _create_synthetic_ttfont(
+                cps,
+                family_name="Post3 Cache Font",
+                weight=weight,
+                uvs_only_cp=(0x553E, 0xE0100),
+            )
+            f["post"].formatType = 3.0
+            return f
+
+        with tempfile.TemporaryDirectory() as tmp:
+            p400 = Path(tmp) / "Post3-Regular.ttf"
+            p700 = Path(tmp) / "Post3-Bold.ttf"
+            _make_post3_font(400).save(p400, reorderTables=False)
+            _make_post3_font(700).save(p700, reorderTables=False)
+
+            out_w1 = Path(tmp) / "out_w1"
+            out_w2 = Path(tmp) / "out_w2"
+            res_w1 = slice_fonts([p400, p700], out_dir=out_w1, workers=1)
+            res_w2 = slice_fonts([p400, p700], out_dir=out_w2, workers=2)
+
+            self.assertEqual(res_w1.css_text, res_w2.css_text)
+            self.assertEqual(
+                [bf.filename for bf in res_w1.built_files],
+                [bf.filename for bf in res_w2.built_files],
+            )
+            for bf1, bf2 in zip(res_w1.built_files, res_w2.built_files):
+                self.assertEqual(
+                    bf1.path.read_bytes(),
+                    bf2.path.read_bytes(),
+                    f"WOFF2 bytes differed between workers=1 and workers=2 for {bf1.filename}",
+                )
+                with TTFont(bf2.path) as woff2_tt:
+                    self.assertEqual(
+                        set(woff2_tt.getBestCmap().keys()),
+                        set(bf2.spec.binary_codepoints),
+                        f"Unexpected cmap keys in {bf2.filename}",
+                    )
+
+            # Verify cascade order per variant: kanji-rare -> kanji-freq -> kana-core -> latin
+            per_variant_len = len(res_w2.built_files) // 2
+            for variant_files in (
+                res_w2.built_files[:per_variant_len],
+                res_w2.built_files[per_variant_len:],
+            ):
+                categories = [bf.spec.category for bf in variant_files]
+                self.assertEqual(
+                    categories,
+                    ["kanji-rare", "kanji-freq", "kana-core", "latin"],
+                )
+
+            # Duplicate output path across variants in _export_woff2_slices_batch -> ValueError
+            dup_meta = res_w1.fonts_metadata[0]
+            dup_specs = res_w1.variant_slice_specs[0]
+            with self.assertRaisesRegex(ValueError, "Duplicate slice output path"):
+                _export_woff2_slices_batch(
+                    [(p400, dup_meta, dup_specs), (p700, dup_meta, dup_specs)],
+                    slices_dir=Path(tmp) / "dup_slices",
+                    workers=1,
+                )
+
 
 if __name__ == "__main__":
     unittest.main()
+

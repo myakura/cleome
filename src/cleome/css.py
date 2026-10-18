@@ -18,6 +18,7 @@ from cleome.slicer import (
 from cleome.subsetter import (
     BuiltSliceFile,
     export_woff2_slices,
+    _export_woff2_slices_batch,
     serialize_font_to_bytes,
 )
 
@@ -205,23 +206,23 @@ def slice_fonts(
     subdir = config.slices_subdir.strip().strip("/")
     slices_dir = out_path if (not subdir or subdir == ".") else (out_path / subdir)
 
-    # Tuple of (probe_tt, source_for_export, should_close)
-    loaded_fonts: list[tuple[TTFont, Path | bytes, bool]] = []
+    # Tuple of (probe_tt, source_for_export, is_woff_hint, should_close)
+    loaded_fonts: list[tuple[TTFont, Path | bytes, bool | None, bool]] = []
     try:
         for f in fonts:
             if isinstance(f, TTFont):
                 # Serialize once without mutating caller's TTFont instance
                 raw_bytes = serialize_font_to_bytes(f)
                 probe_tt = TTFont(io.BytesIO(raw_bytes), lazy=True, recalcTimestamp=False)
-                loaded_fonts.append((probe_tt, raw_bytes, True))
+                loaded_fonts.append((probe_tt, raw_bytes, False, True))
             else:
                 p = Path(f)
                 probe_tt = TTFont(p, lazy=True, recalcTimestamp=False)
-                loaded_fonts.append((probe_tt, p, True))
+                loaded_fonts.append((probe_tt, p, probe_tt.flavor is not None, True))
 
         # 1. Extract metadata from each font
         raw_metas: list[FontMetadata] = []
-        for tt, _, _ in loaded_fonts:
+        for tt, _, _, _ in loaded_fonts:
             m = extract_font_metadata(
                 tt,
                 family_override=family_name,
@@ -270,18 +271,23 @@ def slice_fonts(
             union_codepoints, config=config
         )
 
-        # 3. Export WOFF2 slices for each input font
+        # 3. Export WOFF2 slices across all input fonts in a single batch
+        batch_variants: list[tuple[TTFont | bytes | Path | str, FontMetadata, list[SliceSpec]]] = [
+            (export_src, m, variant_specs)
+            for (_, export_src, _, _), m, variant_specs in zip(loaded_fonts, metas, variant_plans)
+        ]
+        woff_hints = [is_woff for _, _, is_woff, _ in loaded_fonts]
+        variant_built_lists = _export_woff2_slices_batch(
+            batch_variants,
+            slices_dir=slices_dir,
+            config=config,
+            workers=workers,
+            is_woff_hints=woff_hints,
+        )
+
         fonts_and_files: list[tuple[FontMetadata, list[BuiltSliceFile]]] = []
         all_built_files: list[BuiltSliceFile] = []
-        for (_, export_src, _), m, variant_specs in zip(loaded_fonts, metas, variant_plans):
-            built = export_woff2_slices(
-                export_src,
-                meta=m,
-                slice_specs=variant_specs,
-                slices_dir=slices_dir,
-                config=config,
-                workers=workers,
-            )
+        for m, built in zip(metas, variant_built_lists):
             fonts_and_files.append((m, built))
             all_built_files.extend(built)
 
@@ -310,7 +316,7 @@ def slice_fonts(
             variant_slice_specs=variant_plans,
         )
     finally:
-        for tt, _, should_close in loaded_fonts:
+        for tt, _, _, should_close in loaded_fonts:
             if should_close:
                 tt.close()
 
