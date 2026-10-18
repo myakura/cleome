@@ -82,7 +82,14 @@ In a 4,500-character technical article (553 unique characters), the 50-character
 
 ## How Does `cleome` Solve These Issues?
 
-`cleome` replaces static templates with a dynamic 4-tier slicing planner ([`cleome/slicer.py`](../src/cleome/slicer.py)) that inspects each input font's actual `cmap` and combines three mechanisms.
+`cleome` replaces static templates with a dynamic 4-tier slicing planner ([`cleome/slicer.py`](../src/cleome/slicer.py)) that inspects each input font's actual `cmap`, ordering `@font-face` rules from lowest priority (**Tier 4**, at the top of the stylesheet) to highest priority (**Tier 1**, at the bottom of the stylesheet):
+
+| Tier (CSS Order) | Slice ID Pattern | Target Characters | `unicode-range` Strategy & Rationale |
+| :--- | :--- | :--- | :--- |
+| **1. Tier 4: Rare & Extended Kanji**<br>_(Declared FIRST / Lowest Priority)_ | `<slug>-kanji-rare-01..NN.woff2`<br>_(~250 chars/slice, dynamic count)_ | JIS Level 2-4, CJK Unified Ideographs Ext A-J, CJK Compatibility Ideographs not in Tier 3 | **1-Token Contiguous Hex Range (`U+XXXX-YYYY`)**: The `.woff2` binary excludes Tier 3 frequent Kanji, while the CSS `unicode-range` spans a single contiguous hex token (`0.2 to 0.5 KB` for Tier 4 `unicode-range` values vs. `55.8 KB` across Google Fonts' 60 rare-Kanji slices `.0` to `.59`). Any frequent Kanji in that hex range is automatically shadowed by Tier 3-1 rules declared below. |
+| **2. Tier 3: Frequent Kanji**<br>_(Declared Low -> High Frequency)_ | `<slug>-kanji-freq-40..01.woff2`<br>_(Up to 3,169 Kanji)_ | 100% of all 2,136 Joyo Kanji (incl. 2010 JIS Level 3 `𠮟塡剝頰`) + all 2,965 JIS Level 1 Kanji + top Web-frequent JIS Level 2/3 & `𠮷` | **Inverted-Pyramid Granularity**:<br>- **Rank 1-400**: `200 chars x 2 slices` (hit with ~100% probability on articles; coarse grouping saves 6 HTTP requests)<br>- **Rank 401-1,200**: `80 chars x 10 slices` (medium granularity)<br>- **Rank 1,201-3,169**: `~70 chars x 28 slices` (fine granularity minimizes collateral download when 1-2 mid-low frequency Kanji appear in long articles) |
+| **3. Tier 2: UI & Extended Symbols**<br>_(Declared `symbols-ext` -> `symbols-ui`)_ | `<slug>-symbols-ext(-01..NN).woff2`<br>`<slug>-symbols-ui.woff2` | `symbols-ui`: Arrows (`←↑→↓`), triangles (`▶◀▲▼`), circled digits (`⓪①-⑳`, `❶-❿`), checks (`✓`), stars/notes (`★☆♪♫♡⚠`)<br>`symbols-ext`: Greek, Cyrillic, box drawing, math, CJK enclosed/units, halfwidth katakana | Separating lightweight `symbols-ui` (~15 KB VF / ~6-8 KB Static) ensures common UI markers like `→`, `▶`, `①`, or `✓` never pull in heavy box-drawing or foreign script slices. |
+| **4. Tier 1: Core Kana & Latin**<br>_(Declared LAST / Highest Priority)_ | `<slug>-kana-core.woff2`<br>`<slug>-latin.woff2` | `kana-core`: Complete Hiragana (`U+3040-309F`, incl. combining voiced marks `U+3099-309A`), Katakana (`U+30A0-30FF`, `U+31F0-31FF`), CJK Punctuation (`U+3000-303F`), Fullwidth ASCII/Symbols (`U+FF01-FF60`, `U+FFE0-FFE6`)<br>`latin`: ASCII, Latin-1/Extended (`U+0000-024F`, `U+1E00-1EFF`), Combining Diacritical Marks (`U+0300-036F`, `U+1AB0-1AFF`, `U+1DC0-1DFF`, `U+FE20-FE2F`), Western punctuation & currency (`€`, `™`, `ℓ`) | Guarantees **zero omissions** for modern/historical kana (`む`, `モ`, `ヶ`, `ヵ`, `ゐ`, `ヱ`, `ゔ`) and CJK punctuation (`「」`, `【】`, `・`, `ー`), keeping Kana + Punctuation + Combining Marks (`U+3099-309A`) in `kana-core` and Latin base letters + Combining Diacritical Marks (`U+0300-036F`) in `latin`. |
 
 
 ### 1. CSS Cascade Shadowing for 1-Token Rare Kanji Ranges (Tier 4)
@@ -125,44 +132,16 @@ To determine how Kanji should be grouped, we simulated four realistic Japanese t
 
 ### Simulation Comparison (Variable Font Baseline)
 
-#### Google Fonts Current (124 slices, 50-char fixed)
+Combining 1-token Tier 4 cascade shadowing with Tier 3 inverted-pyramid Kanji granularity (`Model C`) cuts the raw CSS size by more than half compared to Google Fonts while reducing both HTTP request counts and total `.woff2` transfer bytes across short UI strings and long articles alike.
 
-* Total slices (`@font-face` rules): 124
-* Raw CSS size (`unicode-range` text): 112.5 KB (77.3 KB)
-* Scenario 1 - Kana & punctuation (`こんにちは、むかし「モモタロウ」が…`): 4 files / 130.1 KB (`.119` + `.117` + `.116` + `.115`)
-* Scenario 2 - Short UI label (`ログイン・新規会員登録 (2026年10月14日)`): 7 files / 184.0 KB
-* Scenario 3 - Blog intro (~200 chars / 121 unique): 18 files / 388.5 KB
-* Scenario 4 - Full technical article (~4,500 chars / 553 unique): 46 files / 1,026.3 KB
-
-
-#### Model A: Pure Unicode Blocks (24 slices, no frequency ranking)
-
-* Total slices (`@font-face` rules): 24
-* Raw CSS size (`unicode-range` text): 5.4 KB (0.5 KB)
-* Scenario 1 - Kana & punctuation: 1 file / 104.4 KB (`kana-core` only)
-* Scenario 2 - Short UI label: 9 files / 1,940.6 KB (basic Kanji scattered across blocks)
-* Scenario 3 - Blog intro (~200 chars / 121 unique): 14 files / 3,092.3 KB
-* Scenario 4 - Full technical article (~4,500 chars / 553 unique): 19 files / 4,196.9 KB
-
-
-#### Model B: Fixed Coarse Frequency Granularity (30 slices, 250 chars x 10 + cascade shadowing)
-
-* Total slices (`@font-face` rules): 30
-* Raw CSS size (`unicode-range` text): 25.9 KB (19.7 KB)
-* Scenario 1 - Kana & punctuation: 1 file / 104.4 KB
-* Scenario 2 - Short UI label: 3 files / 232.4 KB
-* Scenario 3 - Blog intro (~200 chars / 121 unique): 8 files / 622.4 KB
-* Scenario 4 - Full technical article (~4,500 chars / 553 unique): 17 files / 2,059.4 KB (inflated by collateral downloads in mid-low frequency chunks)
-
-
-#### Model C (`cleome` default: 91 slices, Inverted-Pyramid + cascade shadowing)
-
-* Total slices (`@font-face` rules): 91 (automatically scales down to 61 for ~8,300-char JIS Level 1+2 fonts)
-* Raw CSS size (`unicode-range` text): ~34-54 KB (25.4 KB; ~6.0-7.5 KB Brotli)
-* Scenario 1 - Kana & punctuation: 1 file / 104.4 KB (`kana-core` only, zero Kanji chunks pulled in)
-* Scenario 2 - Short UI label: 3 files / 203.9 KB
-* Scenario 3 - Blog intro (~200 chars / 121 unique): 10 files / 453.5 KB
-* Scenario 4 - Full technical article (~4,500 chars / 553 unique): 28 files / 973.4 KB (fewer requests and smaller transfer than Google Fonts' 46 files / 1,026.3 KB)
+| Metric / Scenario | Google Fonts Current<br>_(124 slices, 50-char fixed)_ | Model A: Pure Unicode Blocks<br>_(24 slices, no frequency)_ | Model B: Coarse Frequency<br>_(30 slices, 250 chars x 10)_ | Model C: `cleome` Default<br>_(91 slices, Inverted-Pyramid)_ |
+| :--- | :--- | :--- | :--- | :--- |
+| **Total slices (`@font-face` rules)** | 124 | 24 | 30 | **91** _(scales down to 61 for ~8,300-char JIS Level 1+2 fonts)_ |
+| **Raw CSS size (`unicode-range` text)** | 112.5 KB (77.3 KB) | 5.4 KB (0.5 KB) | 25.9 KB (19.7 KB) | **~34-54 KB (25.4 KB; ~6.0-7.5 KB Brotli)** |
+| **Scenario 1: Kana & punctuation**<br>(`こんにちは、むかし「モモタロウ」が…`) | 4 files / 130.1 KB<br>(`.119` + `.117` + `.116` + `.115`) | 1 file / 104.4 KB<br>(`kana-core` only) | 1 file / 104.4 KB | **1 file / 104.4 KB**<br>(`kana-core` only, zero Kanji chunks pulled in) |
+| **Scenario 2: Short UI label**<br>(`ログイン・新規会員登録 (2026年10月14日)`) | 7 files / 184.0 KB | 9 files / 1,940.6 KB<br>_(basic Kanji scattered across blocks)_ | 3 files / 232.4 KB | **3 files / 203.9 KB** |
+| **Scenario 3: Blog intro**<br>(~200 chars / 121 unique) | 18 files / 388.5 KB | 14 files / 3,092.3 KB | 8 files / 622.4 KB | **10 files / 453.5 KB** |
+| **Scenario 4: Full technical article**<br>(~4,500 chars / 553 unique) | 46 files / 1,026.3 KB | 19 files / 4,196.9 KB | 17 files / 2,059.4 KB<br>_(inflated by collateral downloads)_ | **28 files / 973.4 KB**<br>_(fewer requests & smaller transfer than Google Fonts)_ |
 
 
 ---
