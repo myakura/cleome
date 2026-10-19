@@ -1273,7 +1273,11 @@ class TestCleomeSlicer(unittest.TestCase):
         import uharfbuzz as hb
         from fontTools.feaLib.builder import addOpenTypeFeaturesFromString
         from cleome.data.sc_freq import SC_HANZI_FREQ_CODEPOINTS
-        from cleome.data.tc_freq import HK_HANZI_FREQ_CODEPOINTS, TC_HANZI_FREQ_CODEPOINTS
+        from cleome.data.tc_freq import (
+            HK_COLOCATED_CANTONESE_CHARS,
+            HK_HANZI_FREQ_CODEPOINTS,
+            TC_HANZI_FREQ_CODEPOINTS,
+        )
 
         base_cjk_cps: set[int] = set(range(0x0020, 0x0250))  # ASCII + Latin-Ext surrounding tone marks
         base_cjk_cps.update(range(0x0300, 0x0330))  # Combining diacritics in latin
@@ -1285,7 +1289,7 @@ class TestCleomeSlicer(unittest.TestCase):
 
         for loc, freq_Sample in (
             ("sc", SC_HANZI_FREQ_CODEPOINTS[:600]),
-            ("tc", TC_HANZI_FREQ_CODEPOINTS[:600]),
+            ("tc", TC_HANZI_FREQ_CODEPOINTS),
             ("hk", HK_HANZI_FREQ_CODEPOINTS),
         ):
             cps = frozenset(base_cjk_cps | set(freq_Sample))
@@ -1303,10 +1307,21 @@ class TestCleomeSlicer(unittest.TestCase):
                     f"latin css_unicode_range must not shadow {ch!r} in cjk-core ({loc})",
                 )
 
+            if loc in ("tc", "hk"):
+                s1 = next(s for s in plan if s.slice_id == "hanzi-freq-01")
+                self.assertIn(ord("點"), s1.binary_codepoints)
+                self.assertNotIn(ord("点"), s1.binary_codepoints)
+                tail_tier3 = {
+                    *next(s for s in plan if s.slice_id == f"hanzi-freq-{n:02d}").binary_codepoints
+                    for n in (45, 46, 47, 48)
+                }
+                for simp_ch in "点会简欢国时来":
+                    self.assertIn(ord(simp_ch), tail_tier3, f"Simplified {simp_ch!r} should be in TC/HK Tier 3 tail")
+
             if loc == "hk":
-                tier3_hk = {*s.binary_codepoints for s in plan if s.tier == 3}
-                for ch in "嘅啲咗唔係咁冇睇𨋢":
-                    self.assertIn(ord(ch), tier3_hk, f"Cantonese {ch!r} must be in HK Tier 3 hanzi-freq")
+                s13 = next(s for s in plan if s.slice_id == "hanzi-freq-13")
+                for ch in HK_COLOCATED_CANTONESE_CHARS:
+                    self.assertIn(ord(ch), s13.binary_codepoints, f"Cantonese {ch!r} must be co-located in HK hanzi-freq-13")
 
         # Verify Bopomofo + tone mark (ㄅ + ˇ U+02C7) shaping in cjk-core WOFF2 slice
         bopo_cps = [ord("A"), 0x024F, 0x0300, ord("ㄅ"), 0x02C7, ord("『"), ord("』"), ord("語")]
