@@ -1126,15 +1126,37 @@ class TestCleomeSlicer(unittest.TestCase):
         self.assertEqual(detect_font_locale({ord("A")}, "Chiron Hei HK"), "hk")
         self.assertEqual(detect_font_locale({ord("A")}, "GenSou Sans JP"), "jp")
 
-        # 2. Charset-based detection (when family_name is empty or generic)
+        # 2. Charset-based detection (when family_name is empty or generic, including GB2312/Big5/KSX1001 Kana)
+        kana_block = set(range(0x3041, 0x3094)) | set(range(0x30A1, 0x30F7))
         kr_cps = set(KR_HANGUL_FREQ_CODEPOINTS[:1500]) | set(range(0x0020, 0x007F))
         self.assertEqual(detect_font_locale(kr_cps, "Custom Display"), "kr")
+        self.assertEqual(
+            detect_font_locale(set(KR_HANGUL_FREQ_CODEPOINTS[:500]) | kana_block, "Custom Display"),
+            "kr",
+        )
 
         sc_cps = set(SC_HANZI_FREQ_CODEPOINTS) | set(range(0x0020, 0x007F))
         self.assertEqual(detect_font_locale(sc_cps, "Custom Sans"), "sc")
+        self.assertEqual(
+            detect_font_locale(set(SC_HANZI_FREQ_CODEPOINTS[:2000]) | kana_block, "Custom Sans"),
+            "sc",
+        )
+        self.assertEqual(
+            detect_font_locale(
+                set(SC_HANZI_FREQ_CODEPOINTS[:-20])
+                | set(TC_HANZI_FREQ_CODEPOINTS[:400])
+                | kana_block,
+                "Custom Sans",
+            ),
+            "sc",
+        )
 
         tc_cps = set(TC_HANZI_FREQ_CODEPOINTS) | set(range(0x3105, 0x312A))
         self.assertEqual(detect_font_locale(tc_cps, "Custom Serif"), "tc")
+        self.assertEqual(
+            detect_font_locale(set(TC_HANZI_FREQ_CODEPOINTS[:2000]) | kana_block, "Custom Serif"),
+            "tc",
+        )
 
         hk_cps = (
             set(HK_HANZI_FREQ_CODEPOINTS)
@@ -1142,9 +1164,14 @@ class TestCleomeSlicer(unittest.TestCase):
             | set(range(0x20000, 0x20400))
         )
         self.assertEqual(detect_font_locale(hk_cps, "Custom Hei"), "hk")
+        self.assertEqual(detect_font_locale(hk_cps | kana_block, "Custom Hei"), "hk")
 
         jp_cps = _build_synthetic_charset(full=False)
         self.assertEqual(detect_font_locale(jp_cps, "Custom Gothic"), "jp")
+        self.assertEqual(
+            detect_font_locale(_build_synthetic_charset(full=True), "Custom Gothic"),
+            "jp",
+        )
 
     def test_korean_profile_cascade_shadowing_and_jamo_colocation(self) -> None:
         """

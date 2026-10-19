@@ -570,7 +570,7 @@ def detect_font_locale(codepoints: CodepointSet, family_name: str = "") -> str:
     if hangul_syl_count >= 1000 or (
         (hangul_syl_count + hangul_jamo_count) > 0
         and hangul_syl_count >= cjk_count
-        and kana_count == 0
+        and hangul_syl_count > kana_count
     ):
         return "kr"
 
@@ -579,21 +579,19 @@ def detect_font_locale(codepoints: CodepointSet, family_name: str = "") -> str:
     jp_only_hits = len(cps & _JP_ONLY_FREQ)
     hk_extra_hits = len(cps & _HK_EXTRA_CPS)
 
-    if sc_only_hits >= 800 or tc_only_hits >= 400 or jp_only_hits >= 400:
-        if sc_only_hits < 600 and jp_only_hits >= 400 and jp_only_hits >= tc_only_hits:
+    sc_ratio = sc_only_hits / len(_SC_ONLY_FREQ)
+    tc_ratio = tc_only_hits / len(_TC_ONLY_FREQ)
+    jp_ratio = jp_only_hits / len(_JP_ONLY_FREQ)
+
+    if sc_only_hits >= 30 or tc_only_hits >= 30 or jp_only_hits >= 30:
+        if jp_ratio >= sc_ratio and jp_ratio >= tc_ratio and jp_only_hits >= 30:
             return "jp"
-        if tc_only_hits >= 400 and sc_only_hits < 800 and tc_only_hits > jp_only_hits * 1.5:
+        if sc_ratio > tc_ratio * 1.2 and sc_ratio > jp_ratio * 1.2:
+            return "sc"
+        if tc_ratio >= sc_ratio and tc_ratio > jp_ratio * 1.2:
             return "hk" if (hk_extra_hits >= 6 or sip_count >= 800) else "tc"
-        if sc_only_hits >= 800:
-            if tc_only_hits < 300 or (
-                sc_only_hits >= len(_SC_ONLY_FREQ) - 5
-                and hk_extra_hits <= 5
-                and sip_count < 500
-            ):
-                return "sc"
-            if hk_extra_hits >= 10 or sip_count >= 800:
-                return "hk"
-            return "tc"
+        if sc_ratio > tc_ratio and sc_ratio > jp_ratio:
+            return "sc"
 
     if hk_extra_hits > 0 and hk_extra_hits >= jp_only_hits and kana_count == 0:
         return "hk"
