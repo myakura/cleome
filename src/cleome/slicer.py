@@ -415,7 +415,8 @@ def is_tier1_latin(cp: int) -> bool:
     Tier 1 (`latin`): Basic ASCII, Latin-1 Supplement, Latin Extended-A/B (`U+0000-024F`),
     Combining Diacritical Marks (`U+0300-036F`, `U+1AB0-1AFF`, `U+1DC0-1DFF`, `U+FE20-FE2F`),
     Latin Extended Additional (`U+1E00-1EFF`), General Punctuation (`U+2000-206F`),
-    Currency Symbols (`U+20A0-20CF`), Trademark (`U+2122`), Litre (`U+2113`), BOM/Replacement.
+    Currency Symbols (`U+20A0-20CF`), Pe̍h-ōe-jī superscripts (`U+1D3A` `ᴺ`, `U+207F` `ⁿ`),
+    Trademark (`U+2122`), Litre (`U+2113`), BOM/Replacement.
     """
     return (
         (0x0000 <= cp <= 0x024F)
@@ -426,7 +427,7 @@ def is_tier1_latin(cp: int) -> bool:
         or (0x2000 <= cp <= 0x206F)
         or (0x20A0 <= cp <= 0x20CF)
         or (0xFE20 <= cp <= 0xFE2F)
-        or cp in (0x2113, 0x2122, 0xFEFF, 0xFFFD)
+        or cp in (0x1D3A, 0x207F, 0x2113, 0x2122, 0xFEFF, 0xFFFD)
     )
 
 
@@ -494,14 +495,20 @@ def is_tier1_cjk_core(cp: int) -> bool:
 def is_tier2_symbols_ui(cp: int) -> bool:
     """
     Tier 2 (`symbols-ui`): High-frequency UI & article symbols:
+    - `U+2103`: Degree Celsius (`℃`)
+    - `U+2160-216B`: Uppercase Roman Numerals (`Ⅰ-Ⅻ`)
     - `U+2190-21FF`: Arrows (`←`, `↑`, `→`, `↓`, `↔`, `⇒`, etc.)
+    - `U+221E`, `U+2252`, `U+2260`, `U+2266-2267`: Common CJK Math/Comparison (`∞`, `≒`, `≠`, `≦`, `≧`)
     - `U+2460-2473`, `U+24EA`: Circled Numbers `①-⑳`, `⓪`
-    - `U+25A0-266F`, `U+26A0`: Geometric Shapes (`■□▲△▶▷▼▽◀◁◆◇○◎●`), Stars (`★☆`),
+    - `U+25A0-266F`, `U+26A0`: Geometric Shapes (`■□▲△▶▷▼▽◀◁◆◇◈○◎●`), Stars (`★☆`),
       Weather (`☀☁☂☃`), Hearts/Suits (`♠♡♢♣♤♥♦♧`), Musical Notes (`♩♪♫♬`), Warning (`⚠`)
     - `U+2713-2716`, `U+2776-2793`: Check/Cross marks (`✓✔✕✖`), Negative Circled Numbers (`❶-❿`)
     """
     return (
-        (0x2190 <= cp <= 0x21FF)
+        cp == 0x2103
+        or (0x2160 <= cp <= 0x216B)
+        or (0x2190 <= cp <= 0x21FF)
+        or cp in (0x221E, 0x2252, 0x2260, 0x2266, 0x2267)
         or (0x2460 <= cp <= 0x2473)
         or cp == 0x24EA
         or (0x25A0 <= cp <= 0x266F)

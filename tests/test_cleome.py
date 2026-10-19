@@ -1281,7 +1281,9 @@ class TestCleomeSlicer(unittest.TestCase):
 
         base_cjk_cps: set[int] = set(range(0x0020, 0x0250))  # ASCII + Latin-Ext surrounding tone marks
         base_cjk_cps.update(range(0x0300, 0x0330))  # Combining diacritics in latin
+        base_cjk_cps.update((0x1D3A, 0x207F))  # Pe̍h-ōe-jī superscripts ᴺ, ⁿ
         base_cjk_cps.update((0x02C7, 0x02C9, 0x02CA, 0x02CB, 0x02D9))  # Bopomofo tone marks ˇ ˉ ˊ ˋ ˙
+        base_cjk_cps.update((0x2103, 0x2160, 0x216B, 0x221E, 0x2252, 0x2260, 0x2266, 0x2267))  # ℃, Ⅰ, Ⅻ, ∞, ≒, ≠, ≦, ≧
         base_cjk_cps.update(range(0x3000, 0x3040))  # 〈〉, 『』, 「」, 《》
         base_cjk_cps.update(range(0x3105, 0x312A))  # Bopomofo ㄅ..ㄩ
         base_cjk_cps.update(range(0x4E00, 0x5300))  # BMP Hanzi (mix of freq & rare)
@@ -1298,6 +1300,11 @@ class TestCleomeSlicer(unittest.TestCase):
 
             cjk_core = next(s for s in plan if s.slice_id == "cjk-core")
             latin_slice = next(s for s in plan if s.slice_id == "latin")
+            sym_ui_slice = next(s for s in plan if s.slice_id == "symbols-ui")
+            for ch in "ᴺⁿ":
+                self.assertIn(ord(ch), latin_slice.binary_codepoints, f"POJ {ch!r} missing from latin")
+            for ch in "℃ⅠⅫ∞≒≠≦≧":
+                self.assertIn(ord(ch), sym_ui_slice.binary_codepoints, f"UI symbol {ch!r} missing from symbols-ui")
             for ch in "〈〉『』「」《》ㄅㄆㄇㄈˇˉˊˋ˙":
                 self.assertIn(ord(ch), cjk_core.binary_codepoints, f"{ch!r} missing from cjk-core ({loc})")
                 self.assertNotIn(ord(ch), latin_slice.binary_codepoints)
