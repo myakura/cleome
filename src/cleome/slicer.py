@@ -699,6 +699,35 @@ def _build_rare_ideograph_slices(
     return slices
 
 
+def _build_freq_slices(
+    freq_chunks: list[tuple[int, int, frozenset[int]]],
+    *,
+    category: str,
+    label: str,
+) -> list[SliceSpec]:
+    """Build Tier 3 frequency-ranked slices in reverse rank order (lowest frequency first in CSS)."""
+    slices: list[SliceSpec] = []
+    total_freq = len(freq_chunks)
+    for idx in range(total_freq - 1, -1, -1):
+        rank_start, rank_end, chunk_cps = freq_chunks[idx]
+        chunk_num = idx + 1
+        slices.append(
+            SliceSpec(
+                slice_id=f"{category}-{chunk_num:02d}",
+                tier=3,
+                category=category,
+                description=(
+                    f"Tier 3: {label} {chunk_num:02d}/{total_freq} "
+                    f"(Rank {rank_start}..{rank_end}, {len(chunk_cps)} chars)"
+                ),
+                binary_codepoints=chunk_cps,
+                css_unicode_range=format_unicode_range(chunk_cps),
+                uses_cascade_shadowing=False,
+            )
+        )
+    return slices
+
+
 def build_slice_plan(
     codepoints: CodepointSet,
     config: SliceConfig | None = None,
@@ -733,73 +762,92 @@ def build_slice_plan(
 
     if resolved_locale == "kr":
         return _build_kr_slice_plan(all_cps, config)
-    if resolved_locale in ("sc", "tc", "hk"):
-        return _build_chinese_slice_plan(all_cps, config, resolved_locale)
-    return _build_jp_slice_plan(all_cps, config)
+    return _build_ideograph_slice_plan(all_cps, config, resolved_locale)
 
 
-def _build_jp_slice_plan(all_cps: set[int], config: SliceConfig) -> list[SliceSpec]:
-    """4-tier slice planner for Japanese (`jp` profile)."""
-    kanji_cps = {cp for cp in all_cps if is_cjk_ideograph(cp)}
-    non_kanji_cps = all_cps - kanji_cps
+def _build_ideograph_slice_plan(
+    all_cps: set[int],
+    config: SliceConfig,
+    locale: str,
+) -> list[SliceSpec]:
+    """
+    4-tier slice planner for Japanese (`jp`) and Chinese (`sc`, `tc`, `hk`) profiles:
+    - Tier 4: `kanji-rare-XX` / `hanzi-rare-XX` (1-token hex ranges per Unicode ideograph region).
+    - Tier 3: `kanji-freq-XX` / `hanzi-freq-XX` (Inverted-Pyramid frequency granularity).
+    - Tier 2: `symbols-ext` & `symbols-ui`.
+    - Tier 1: `kana-core` (`jp`) or `cjk-core` (`sc`/`tc`/`hk`), followed by `latin`.
+    """
+    is_jp = locale == "jp"
+    ideograph_cps = {cp for cp in all_cps if is_cjk_ideograph(cp)}
+    non_ideograph_cps = all_cps - ideograph_cps
 
     latin_cps: set[int] = set()
-    kana_cps: set[int] = set()
+    core_cps: set[int] = set()
     sym_ui_cps: set[int] = set()
     sym_ext_cps: set[int] = set()
-    for cp in non_kanji_cps:
-        if is_tier1_latin(cp):
+    for cp in non_ideograph_cps:
+        # Check `is_tier1_cjk_core` before `is_tier1_latin` for Chinese profiles so Bopomofo tone marks
+        # (`U+02C7`, `U+02C9..02CB`, `U+02D9`) co-locate with Bopomofo letters in `cjk-core`.
+        if not is_jp and is_tier1_cjk_core(cp):
+            core_cps.add(cp)
+        elif is_tier1_latin(cp):
             latin_cps.add(cp)
-        elif is_tier1_kana_core(cp):
-            kana_cps.add(cp)
+        elif is_jp and is_tier1_kana_core(cp):
+            core_cps.add(cp)
         elif is_tier2_symbols_ui(cp):
             sym_ui_cps.add(cp)
         else:
             sym_ext_cps.add(cp)
 
-    available_freq_kanji = sorted(
-        kanji_cps & KANJI_FREQ_RANK.keys(), key=KANJI_FREQ_RANK.__getitem__
+    if is_jp:
+        freq_rank_map = KANJI_FREQ_RANK
+        rare_cat, rare_label = "kanji-rare", "Rare/Extended Kanji"
+        freq_cat, freq_label = "kanji-freq", "Frequent Kanji"
+        sym_ext_label = "Extended Symbols & Non-Kanji"
+        core_id = "kana-core"
+        core_desc = f"Tier 1: Core Hiragana, Katakana, CJK Punctuation & Fullwidth ASCII ({len(core_cps)} chars)"
+    else:
+        freq_rank_map = (
+            SC_HANZI_FREQ_RANK
+            if locale == "sc"
+            else (HK_HANZI_FREQ_RANK if locale == "hk" else TC_HANZI_FREQ_RANK)
+        )
+        rare_cat, rare_label = "hanzi-rare", "Rare/Extended Hanzi"
+        freq_cat, freq_label = "hanzi-freq", "Frequent Hanzi"
+        sym_ext_label = "Extended Symbols & Non-Hanzi"
+        core_id = "cjk-core"
+        core_desc = f"Tier 1: Core CJK Punctuation, Bopomofo & Fullwidth ASCII ({len(core_cps)} chars)"
+
+    available_freq = sorted(
+        ideograph_cps & freq_rank_map.keys(), key=freq_rank_map.__getitem__
     )
-    freq_chunks = _build_progressive_freq_chunks(available_freq_kanji, config)
-    tier3_kanji_set = frozenset({*c[2] for c in freq_chunks})
-    rare_kanji_sorted = sorted(kanji_cps - tier3_kanji_set)
+    freq_chunks = _build_progressive_freq_chunks(available_freq, config)
+    tier3_set = frozenset({*c[2] for c in freq_chunks})
+    rare_sorted = sorted(ideograph_cps - tier3_set)
 
     slices: list[SliceSpec] = _build_rare_ideograph_slices(
-        rare_kanji_sorted,
+        rare_sorted,
         config,
-        category="kanji-rare",
-        label="Rare/Extended Kanji",
+        category=rare_cat,
+        label=rare_label,
     )
-
-    total_freq = len(freq_chunks)
-    for idx in range(total_freq - 1, -1, -1):
-        rank_start, rank_end, chunk_cps = freq_chunks[idx]
-        chunk_num = idx + 1
-        slices.append(
-            SliceSpec(
-                slice_id=f"kanji-freq-{chunk_num:02d}",
-                tier=3,
-                category="kanji-freq",
-                description=(
-                    f"Tier 3: Frequent Kanji {chunk_num:02d}/{total_freq} "
-                    f"(Rank {rank_start}..{rank_end}, {len(chunk_cps)} chars)"
-                ),
-                binary_codepoints=chunk_cps,
-                css_unicode_range=format_unicode_range(chunk_cps),
-                uses_cascade_shadowing=False,
-            )
+    slices.extend(
+        _build_freq_slices(
+            freq_chunks,
+            category=freq_cat,
+            label=freq_label,
         )
-
+    )
     _append_tier2_and_tier1_slices(
         slices,
         config=config,
-        earlier_cps=kanji_cps,
+        earlier_cps=ideograph_cps,
         sym_ext_cps=sym_ext_cps,
-        sym_ext_label="Extended Symbols & Non-Kanji",
+        sym_ext_label=sym_ext_label,
         sym_ui_cps=sym_ui_cps,
-        core_cps=kana_cps,
-        core_id="kana-core",
-        core_desc=f"Tier 1: Core Hiragana, Katakana, CJK Punctuation & Fullwidth ASCII ({len(kana_cps)} chars)",
+        core_cps=core_cps,
+        core_id=core_id,
+        core_desc=core_desc,
         latin_cps=latin_cps,
     )
     return slices
@@ -870,26 +918,13 @@ def _build_kr_slice_plan(all_cps: set[int], config: SliceConfig) -> list[SliceSp
             )
         )
 
-    # Tier 3: Frequent Hangul Syllables (Progressive Granularity)
-    total_freq = len(freq_chunks)
-    for idx in range(total_freq - 1, -1, -1):
-        rank_start, rank_end, chunk_cps = freq_chunks[idx]
-        chunk_num = idx + 1
-        slices.append(
-            SliceSpec(
-                slice_id=f"hangul-freq-{chunk_num:02d}",
-                tier=3,
-                category="hangul-freq",
-                description=(
-                    f"Tier 3: Frequent Hangul Syllables {chunk_num:02d}/{total_freq} "
-                    f"(Rank {rank_start}..{rank_end}, {len(chunk_cps)} chars)"
-                ),
-                binary_codepoints=chunk_cps,
-                css_unicode_range=format_unicode_range(chunk_cps),
-                uses_cascade_shadowing=False,
-            )
+    slices.extend(
+        _build_freq_slices(
+            freq_chunks,
+            category="hangul-freq",
+            label="Frequent Hangul Syllables",
         )
-
+    )
     _append_tier2_and_tier1_slices(
         slices,
         config=config,
@@ -902,95 +937,6 @@ def _build_kr_slice_plan(all_cps: set[int], config: SliceConfig) -> list[SliceSp
         core_desc=(
             f"Tier 1: Core Hangul Jamo, CJK Punctuation & Fullwidth ASCII "
             f"({len(hangul_core_cps)} chars)"
-        ),
-        latin_cps=latin_cps,
-    )
-    return slices
-
-
-def _build_chinese_slice_plan(
-    all_cps: set[int],
-    config: SliceConfig,
-    locale: str,
-) -> list[SliceSpec]:
-    """
-    4-tier slice planner for Simplified Chinese (`sc`), Traditional Chinese (`tc`), and Hong Kong Chinese (`hk`):
-    - Tier 4: `hanzi-rare-XX` (rare/extended Hanzi across Ext-A, BMP, Compat, SIP HKSCS, TIP), 1-token hex ranges.
-    - Tier 3: `hanzi-freq-XX` (frequent Hanzi, Inverted-Pyramid granularity).
-    - Tier 2: `symbols-ext` & `symbols-ui`.
-    - Tier 1: `cjk-core` (CJK punctuation, Bopomofo + tone marks, Fullwidth ASCII) & `latin`.
-    """
-    hanzi_cps = {cp for cp in all_cps if is_cjk_ideograph(cp)}
-    non_hanzi_cps = all_cps - hanzi_cps
-
-    latin_cps: set[int] = set()
-    cjk_core_cps: set[int] = set()
-    sym_ui_cps: set[int] = set()
-    sym_ext_cps: set[int] = set()
-    for cp in non_hanzi_cps:
-        # Check `is_tier1_cjk_core` first so Bopomofo tone marks (U+02C7, U+02C9..02CB, U+02D9)
-        # co-locate with Bopomofo letters in `cjk-core` rather than `latin`.
-        if is_tier1_cjk_core(cp):
-            cjk_core_cps.add(cp)
-        elif is_tier1_latin(cp):
-            latin_cps.add(cp)
-        elif is_tier2_symbols_ui(cp):
-            sym_ui_cps.add(cp)
-        else:
-            sym_ext_cps.add(cp)
-
-    if locale == "sc":
-        freq_rank_map = SC_HANZI_FREQ_RANK
-    elif locale == "hk":
-        freq_rank_map = HK_HANZI_FREQ_RANK
-    else:
-        freq_rank_map = TC_HANZI_FREQ_RANK
-
-    available_freq_hanzi = sorted(
-        hanzi_cps & freq_rank_map.keys(), key=freq_rank_map.__getitem__
-    )
-    freq_chunks = _build_progressive_freq_chunks(available_freq_hanzi, config)
-    tier3_hanzi_set = frozenset({*c[2] for c in freq_chunks})
-    rare_hanzi_sorted = sorted(hanzi_cps - tier3_hanzi_set)
-
-    slices: list[SliceSpec] = _build_rare_ideograph_slices(
-        rare_hanzi_sorted,
-        config,
-        category="hanzi-rare",
-        label="Rare/Extended Hanzi",
-    )
-
-    total_freq = len(freq_chunks)
-    for idx in range(total_freq - 1, -1, -1):
-        rank_start, rank_end, chunk_cps = freq_chunks[idx]
-        chunk_num = idx + 1
-        slices.append(
-            SliceSpec(
-                slice_id=f"hanzi-freq-{chunk_num:02d}",
-                tier=3,
-                category="hanzi-freq",
-                description=(
-                    f"Tier 3: Frequent Hanzi {chunk_num:02d}/{total_freq} "
-                    f"(Rank {rank_start}..{rank_end}, {len(chunk_cps)} chars)"
-                ),
-                binary_codepoints=chunk_cps,
-                css_unicode_range=format_unicode_range(chunk_cps),
-                uses_cascade_shadowing=False,
-            )
-        )
-
-    _append_tier2_and_tier1_slices(
-        slices,
-        config=config,
-        earlier_cps=hanzi_cps,
-        sym_ext_cps=sym_ext_cps,
-        sym_ext_label="Extended Symbols & Non-Hanzi",
-        sym_ui_cps=sym_ui_cps,
-        core_cps=cjk_core_cps,
-        core_id="cjk-core",
-        core_desc=(
-            f"Tier 1: Core CJK Punctuation, Bopomofo & Fullwidth ASCII "
-            f"({len(cjk_core_cps)} chars)"
         ),
         latin_cps=latin_cps,
     )

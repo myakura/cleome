@@ -242,6 +242,27 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+_CONFIG_KEY_TO_FIELD: dict[str, str] = {
+    "locale": "locale",
+    "preset": "locale",
+    "freq_tiers": "freq_tiers",
+    "freq_tail_chunk_size": "freq_tail_chunk_size",
+    "rare_kanji_chunk_size": "rare_kanji_chunk_size",
+    "rare_chunk_size": "rare_kanji_chunk_size",
+    "symbols_ext_chunk_size": "symbols_ext_chunk_size",
+    "symbols_chunk_size": "symbols_ext_chunk_size",
+    "retain_layout_closure": "retain_layout_closure",
+    "patch_uvs_only_cmap": "patch_uvs_only_cmap",
+    "layout_features": "layout_features",
+    "drop_tables": "drop_tables",
+    "slices_subdir": "slices_subdir",
+    "slices_dir": "slices_subdir",
+    "url_prefix": "url_prefix",
+    "font_display": "font_display",
+    "display": "font_display",
+}
+
+
 def _coerce_config_int(val: Any, key: str) -> int:
     if isinstance(val, bool) or not isinstance(val, (int, str)):
         raise ValueError(f"Invalid integer for {key!r} in config: {val!r}")
@@ -251,299 +272,206 @@ def _coerce_config_int(val: Any, key: str) -> int:
         raise ValueError(f"Invalid integer for {key!r} in config: {val!r}") from exc
 
 
-_ALLOWED_CONFIG_KEYS: frozenset[str] = frozenset(
-    {
-        "locale",
-        "preset",
-        "freq_tiers",
-        "freq_tail_chunk_size",
-        "rare_kanji_chunk_size",
-        "rare_chunk_size",
-        "symbols_ext_chunk_size",
-        "symbols_chunk_size",
-        "retain_layout_closure",
-        "patch_uvs_only_cmap",
-        "layout_features",
-        "drop_tables",
-        "slices_subdir",
-        "slices_dir",
-        "url_prefix",
-        "font_display",
-        "display",
-    }
-)
-
-
 def _load_config_file(config_path: Path) -> SliceConfig:
     if not config_path.exists():
         raise ValueError(f"Config file not found: {config_path}")
     text = config_path.read_text(encoding="utf-8")
-    if config_path.suffix.lower() == ".toml":
-        raw = tomllib.loads(text)
-    else:
-        raw = json.loads(text)
+    raw = tomllib.loads(text) if config_path.suffix.lower() == ".toml" else json.loads(text)
     if not isinstance(raw, dict):
         raise ValueError(f"Config file must contain a JSON/TOML object, got {type(raw).__name__}")
-
-    # Allow nesting under `[cleome]` in TOML (e.g. pyproject.toml style)
     if "cleome" in raw and isinstance(raw["cleome"], dict):
         raw = raw["cleome"]
 
-    unknown_keys = sorted(set(raw.keys()) - _ALLOWED_CONFIG_KEYS)
+    unknown_keys = sorted(set(raw.keys()) - _CONFIG_KEY_TO_FIELD.keys())
     if unknown_keys:
         raise ValueError(
             f"Unsupported key(s) in config file: {', '.join(repr(k) for k in unknown_keys)}"
         )
 
     kwargs: dict[str, Any] = {}
-    if "locale" in raw or "preset" in raw:
-        loc_val = raw.get("locale") if "locale" in raw else raw.get("preset")
-        if not isinstance(loc_val, str) or not loc_val.strip():
-            raise ValueError(f"Invalid locale/preset in config: {loc_val!r}")
-        kwargs["locale"] = loc_val
-    if "freq_tiers" in raw:
-        val = raw["freq_tiers"]
-        if isinstance(val, str):
-            try:
-                kwargs["freq_tiers"] = _parse_freq_tiers(val)
-            except argparse.ArgumentTypeError as exc:
-                raise ValueError(str(exc)) from exc
-        elif isinstance(val, list):
-            if not val:
-                raise ValueError("freq_tiers in config cannot be empty")
-            parsed_tiers: list[tuple[int, int]] = []
-            for item in val:
-                if isinstance(item, dict):
-                    sz_raw = item.get("chunk_size", item.get("size"))
-                    cnt_raw = item.get("num_chunks", item.get("count"))
-                    sz = _coerce_config_int(sz_raw, "freq_tiers.chunk_size")
-                    cnt = _coerce_config_int(cnt_raw, "freq_tiers.num_chunks")
-                    parsed_tiers.append((sz, cnt))
-                elif isinstance(item, (list, tuple)) and len(item) == 2:
-                    sz = _coerce_config_int(item[0], "freq_tiers[0]")
-                    cnt = _coerce_config_int(item[1], "freq_tiers[1]")
-                    parsed_tiers.append((sz, cnt))
-                else:
-                    raise ValueError(f"Invalid freq_tiers entry in config: {item!r}")
-            kwargs["freq_tiers"] = tuple(parsed_tiers)
-        else:
-            raise ValueError(f"Invalid freq_tiers in config: {val!r}")
-    for int_key, cfg_field in (
-        ("freq_tail_chunk_size", "freq_tail_chunk_size"),
-        ("rare_kanji_chunk_size", "rare_kanji_chunk_size"),
-        ("rare_chunk_size", "rare_kanji_chunk_size"),
-        ("symbols_ext_chunk_size", "symbols_ext_chunk_size"),
-        ("symbols_chunk_size", "symbols_ext_chunk_size"),
-    ):
-        if int_key in raw:
-            kwargs[cfg_field] = _coerce_config_int(raw[int_key], int_key)
-    for bool_key in ("retain_layout_closure", "patch_uvs_only_cmap"):
-        if bool_key in raw:
-            if not isinstance(raw[bool_key], bool):
-                raise ValueError(f"Invalid boolean for {bool_key!r} in config: {raw[bool_key]!r}")
-            kwargs[bool_key] = raw[bool_key]
-    for seq_key in ("layout_features", "drop_tables"):
-        if seq_key in raw:
-            val = raw[seq_key]
+    for key, val in raw.items():
+        field = _CONFIG_KEY_TO_FIELD[key]
+        if key != field and field in raw:
+            continue
+        if field == "locale":
+            if not isinstance(val, str) or not val.strip():
+                raise ValueError(f"Invalid locale/preset in config: {val!r}")
+            kwargs[field] = val
+        elif field == "freq_tiers":
             if isinstance(val, str):
-                kwargs[seq_key] = _parse_tag_list(val)
+                try:
+                    kwargs[field] = _parse_freq_tiers(val)
+                except argparse.ArgumentTypeError as exc:
+                    raise ValueError(str(exc)) from exc
+            elif isinstance(val, list) and val:
+                tiers: list[tuple[int, int]] = []
+                for item in val:
+                    if isinstance(item, dict):
+                        sz = _coerce_config_int(item.get("chunk_size", item.get("size")), "freq_tiers.chunk_size")
+                        cnt = _coerce_config_int(item.get("num_chunks", item.get("count")), "freq_tiers.num_chunks")
+                        tiers.append((sz, cnt))
+                    elif isinstance(item, (list, tuple)) and len(item) == 2:
+                        tiers.append((_coerce_config_int(item[0], "freq_tiers[0]"), _coerce_config_int(item[1], "freq_tiers[1]")))
+                    else:
+                        raise ValueError(f"Invalid freq_tiers entry in config: {item!r}")
+                kwargs[field] = tuple(tiers)
+            else:
+                raise ValueError(f"Invalid freq_tiers in config: {val!r}")
+        elif field in ("freq_tail_chunk_size", "rare_kanji_chunk_size", "symbols_ext_chunk_size"):
+            kwargs[field] = _coerce_config_int(val, key)
+        elif field in ("retain_layout_closure", "patch_uvs_only_cmap"):
+            if not isinstance(val, bool):
+                raise ValueError(f"Invalid boolean for {key!r} in config: {val!r}")
+            kwargs[field] = val
+        elif field in ("layout_features", "drop_tables"):
+            if isinstance(val, str):
+                kwargs[field] = _parse_tag_list(val)
             elif isinstance(val, list) and all(isinstance(x, str) for x in val):
-                kwargs[seq_key] = tuple(val)
+                kwargs[field] = tuple(val)
             else:
-                raise ValueError(f"Invalid {seq_key} in config: {val!r}")
-    for str_key, cfg_field in (
-        ("slices_subdir", "slices_subdir"),
-        ("slices_dir", "slices_subdir"),
-        ("url_prefix", "url_prefix"),
-        ("font_display", "font_display"),
-        ("display", "font_display"),
-    ):
-        if str_key in raw:
-            s_val = raw[str_key]
-            if s_val is not None and not isinstance(s_val, str):
-                raise ValueError(f"Invalid string for {str_key!r} in config: {s_val!r}")
-            if s_val is not None or cfg_field == "url_prefix":
-                kwargs[cfg_field] = s_val
-            else:
-                raise ValueError(f"Invalid string for {str_key!r} in config: {s_val!r}")
+                raise ValueError(f"Invalid {key} in config: {val!r}")
+        elif field in ("slices_subdir", "url_prefix", "font_display"):
+            if val is not None and not isinstance(val, str):
+                raise ValueError(f"Invalid string for {key!r} in config: {val!r}")
+            if val is None and field != "url_prefix":
+                raise ValueError(f"Invalid string for {key!r} in config: {val!r}")
+            kwargs[field] = val
 
     return SliceConfig(**kwargs)
 
 
 def _resolve_slice_config(args: argparse.Namespace) -> SliceConfig:
     cfg = _load_config_file(args.config) if args.config is not None else SliceConfig()
-
-    overrides: dict[str, Any] = {}
-    chosen_locale = args.locale if args.locale is not None else args.preset
-    if chosen_locale is not None:
-        overrides["locale"] = chosen_locale
-    if args.freq_tiers is not None:
-        overrides["freq_tiers"] = args.freq_tiers
-    if args.freq_tail_chunk_size is not None:
-        overrides["freq_tail_chunk_size"] = args.freq_tail_chunk_size
-    if args.rare_chunk_size is not None:
-        overrides["rare_kanji_chunk_size"] = args.rare_chunk_size
-    if args.symbols_chunk_size is not None:
-        overrides["symbols_ext_chunk_size"] = args.symbols_chunk_size
+    overrides: dict[str, Any] = {
+        field: val
+        for field, val in (
+            ("locale", args.locale if args.locale is not None else args.preset),
+            ("freq_tiers", args.freq_tiers),
+            ("freq_tail_chunk_size", args.freq_tail_chunk_size),
+            ("rare_kanji_chunk_size", args.rare_chunk_size),
+            ("symbols_ext_chunk_size", args.symbols_chunk_size),
+            ("layout_features", tuple(args.layout_features) if args.layout_features is not None else None),
+            ("drop_tables", tuple(args.drop_tables) if args.drop_tables is not None else None),
+            ("slices_subdir", args.slices_dir),
+            ("url_prefix", args.url_prefix),
+            ("font_display", args.display),
+        )
+        if val is not None
+    }
     if args.no_layout_closure:
         overrides["retain_layout_closure"] = False
-    if args.layout_features is not None:
-        overrides["layout_features"] = tuple(args.layout_features)
-    if args.drop_tables is not None:
-        overrides["drop_tables"] = tuple(args.drop_tables)
-    if args.slices_dir is not None:
-        overrides["slices_subdir"] = args.slices_dir
-    if args.url_prefix is not None:
-        overrides["url_prefix"] = args.url_prefix
-    if args.display is not None:
-        overrides["font_display"] = args.display
-
     return replace(cfg, **overrides) if overrides else cfg
 
 
-def _format_plan_json(
-    metas: list[FontMetadata],
-    suffixes: list[str],
-    plans: list[list[SliceSpec]],
-    *,
-    resolved_locale: str,
-    config: SliceConfig,
-) -> dict[str, Any]:
-    first = metas[0]
-    variants_payload: list[dict[str, Any]] = []
-    for meta, suf, plan in zip(metas, suffixes, plans):
-        by_tier: dict[int, list[SliceSpec]] = {4: [], 3: [], 2: [], 1: []}
-        for s in plan:
-            by_tier[s.tier].append(s)
-
-        tiers_summary: dict[str, dict[str, int]] = {}
-        for tier_num in (4, 3, 2, 1):
-            t_slices = by_tier[tier_num]
-            t_chars = sum(len(s.binary_codepoints) for s in t_slices)
-            t_ur_len = sum(len(s.css_unicode_range) for s in t_slices)
-            tiers_summary[str(tier_num)] = {
-                "slices": len(t_slices),
-                "codepoints": t_chars,
-                "unicode_range_chars": t_ur_len,
-            }
-
-        variants_payload.append(
-            {
-                "weight": meta.weight_css,
-                "stretch": meta.stretch_css or "normal",
-                "styles": list(meta.styles_css or (meta.style_css,)),
-                "variant_suffix": suf,
-                "codepoints": len(meta.codepoints),
-                "total_slices": len(plan),
-                "tiers": tiers_summary,
-                "slices": [
-                    {
-                        "slice_id": s.slice_id,
-                        "tier": s.tier,
-                        "category": s.category,
-                        "filename": s.filename(meta.slug, suf),
-                        "codepoints": len(s.binary_codepoints),
-                        "unicode_range_chars": len(s.css_unicode_range),
-                        "uses_cascade_shadowing": s.uses_cascade_shadowing,
-                    }
-                    for s in plan
-                ],
-            }
-        )
-
+def _summarize_plan_tiers(plan: list[SliceSpec]) -> dict[int, tuple[int, int, int]]:
+    """Return `{tier_num: (slice_count, total_codepoints, total_unicode_range_chars)}` for Tiers 4..1."""
+    by_tier: dict[int, list[SliceSpec]] = {4: [], 3: [], 2: [], 1: []}
+    for s in plan:
+        by_tier[s.tier].append(s)
     return {
-        "ok": True,
-        "command": "plan",
-        "family_name": first.family_name,
-        "slug": first.slug,
-        "locale": resolved_locale,
-        "configured_locale": config.locale,
-        "is_variable": first.is_variable,
-        "file_count": len(metas),
-        "variants": variants_payload,
+        tier_num: (
+            len(t_slices),
+            sum(len(s.binary_codepoints) for s in t_slices),
+            sum(len(s.css_unicode_range) for s in t_slices),
+        )
+        for tier_num, t_slices in by_tier.items()
     }
 
 
-def main(argv: list[str] | None = None) -> int:
-    parser = build_parser()
-    args = parser.parse_args(argv)
-
+def _run_plan(args: argparse.Namespace, config: SliceConfig) -> int:
+    metas: list[FontMetadata] = []
     for p in args.inputs:
-        if not p.exists():
-            print(f"Error: Input font not found: {p}", file=sys.stderr)
-            return 1
-
+        with TTFont(p, lazy=True, recalcTimestamp=False) as tt:
+            metas.append(
+                extract_font_metadata(
+                    tt,
+                    family_override=args.family,
+                    slug_override=args.slug,
+                    weight_override=args.weight,
+                    stretch_override=args.stretch,
+                    style_override=args.style,
+                    patch_uvs=config.patch_uvs_only_cmap,
+                )
+            )
     try:
-        config = _resolve_slice_config(args)
-    except (ValueError, TypeError, OSError, json.JSONDecodeError, tomllib.TOMLDecodeError) as exc:
+        suffixes = validate_and_compute_variant_suffixes(metas, family_override=args.family)
+    except ValueError as exc:
         print(f"Error: {exc}", file=sys.stderr)
         return 1
 
-    if args.subcommand == "plan":
-        metas: list[FontMetadata] = []
-        for p in args.inputs:
-            with TTFont(p, lazy=True, recalcTimestamp=False) as tt:
-                metas.append(
-                    extract_font_metadata(
-                        tt,
-                        family_override=args.family,
-                        slug_override=args.slug,
-                        weight_override=args.weight,
-                        stretch_override=args.stretch,
-                        style_override=args.style,
-                        patch_uvs=config.patch_uvs_only_cmap,
-                    )
-                )
-        try:
-            suffixes = validate_and_compute_variant_suffixes(metas, family_override=args.family)
-        except ValueError as exc:
-            print(f"Error: {exc}", file=sys.stderr)
-            return 1
+    first = metas[0]
+    resolved_loc = (
+        detect_font_locale(first.codepoints, family_name=first.family_name)
+        if config.locale == "auto"
+        else config.locale
+    )
+    plans = [
+        build_slice_plan(m.codepoints, config=config, family_name=m.family_name)
+        for m in metas
+    ]
 
-        first = metas[0]
-        resolved_loc = (
-            detect_font_locale(first.codepoints, family_name=first.family_name)
-            if config.locale == "auto"
-            else config.locale
-        )
-        plans = [
-            build_slice_plan(m.codepoints, config=config, family_name=m.family_name)
-            for m in metas
-        ]
-
-        if args.json_output:
-            payload = _format_plan_json(
-                metas,
-                suffixes,
-                plans,
-                resolved_locale=resolved_loc,
-                config=config,
+    if args.json_output:
+        variants_payload = []
+        for meta, suf, plan in zip(metas, suffixes, plans):
+            tier_stats = _summarize_plan_tiers(plan)
+            variants_payload.append(
+                {
+                    "weight": meta.weight_css,
+                    "stretch": meta.stretch_css or "normal",
+                    "styles": list(meta.styles_css or (meta.style_css,)),
+                    "variant_suffix": suf,
+                    "codepoints": len(meta.codepoints),
+                    "total_slices": len(plan),
+                    "tiers": {
+                        str(t): {"slices": sc, "codepoints": cp_c, "unicode_range_chars": ur_c}
+                        for t, (sc, cp_c, ur_c) in tier_stats.items()
+                    },
+                    "slices": [
+                        {
+                            "slice_id": s.slice_id,
+                            "tier": s.tier,
+                            "category": s.category,
+                            "filename": s.filename(meta.slug, suf),
+                            "codepoints": len(s.binary_codepoints),
+                            "unicode_range_chars": len(s.css_unicode_range),
+                            "uses_cascade_shadowing": s.uses_cascade_shadowing,
+                        }
+                        for s in plan
+                    ],
+                }
             )
-            print(json.dumps(payload, ensure_ascii=False))
-            return 0
-
-        print(f"Font Family : {first.family_name} (slug: {first.slug})")
-        print(f"Locale      : {resolved_loc} (config: {config.locale})")
-        print(f"Type        : {'Variable' if first.is_variable else 'Static'} ({len(metas)} file(s))")
-        for m, plan in zip(metas, plans):
-            style_label = " + ".join(m.styles_css or (m.style_css,))
-            print(
-                f"Variant     : weight={m.weight_css}, stretch={m.stretch_css or 'normal'}, "
-                f"style={style_label} | {len(m.codepoints):,d} chars -> {len(plan)} slices"
-            )
-            by_tier: dict[int, list[SliceSpec]] = {4: [], 3: [], 2: [], 1: []}
-            for s in plan:
-                by_tier[s.tier].append(s)
-            for tier_num in (4, 3, 2, 1):
-                t_slices = by_tier[tier_num]
-                t_chars = sum(len(s.binary_codepoints) for s in t_slices)
-                t_ur_len = sum(len(s.css_unicode_range) for s in t_slices)
-                print(
-                    f"  Tier {tier_num}: {len(t_slices):2d} slices | {t_chars:6,d} chars | "
-                    f"unicode-range len: {t_ur_len:6,d} chars ({t_ur_len/1024:.1f} KB)"
-                )
+        payload = {
+            "ok": True,
+            "command": "plan",
+            "family_name": first.family_name,
+            "slug": first.slug,
+            "locale": resolved_loc,
+            "configured_locale": config.locale,
+            "is_variable": first.is_variable,
+            "file_count": len(metas),
+            "variants": variants_payload,
+        }
+        print(json.dumps(payload, ensure_ascii=False))
         return 0
 
+    print(f"Font Family : {first.family_name} (slug: {first.slug})")
+    print(f"Locale      : {resolved_loc} (config: {config.locale})")
+    print(f"Type        : {'Variable' if first.is_variable else 'Static'} ({len(metas)} file(s))")
+    for m, plan in zip(metas, plans):
+        style_label = " + ".join(m.styles_css or (m.style_css,))
+        print(
+            f"Variant     : weight={m.weight_css}, stretch={m.stretch_css or 'normal'}, "
+            f"style={style_label} | {len(m.codepoints):,d} chars -> {len(plan)} slices"
+        )
+        for tier_num, (sc, t_chars, t_ur_len) in _summarize_plan_tiers(plan).items():
+            print(
+                f"  Tier {tier_num}: {sc:2d} slices | {t_chars:6,d} chars | "
+                f"unicode-range len: {t_ur_len:6,d} chars ({t_ur_len/1024:.1f} KB)"
+            )
+    return 0
+
+
+def _run_build(args: argparse.Namespace, config: SliceConfig) -> int:
     t0 = time.time()
     try:
         result = slice_fonts(
@@ -563,7 +491,6 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     elapsed = time.time() - t0
-
     if args.json_output:
         first_meta = result.fonts_metadata[0]
         resolved_loc = (
@@ -595,6 +522,25 @@ def main(argv: list[str] | None = None) -> int:
     print(f"         CSS   : {result.css_path}")
     print(f"         Slices: {result.slices_dir}/")
     return 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = build_parser().parse_args(argv)
+
+    for p in args.inputs:
+        if not p.exists():
+            print(f"Error: Input font not found: {p}", file=sys.stderr)
+            return 1
+
+    try:
+        config = _resolve_slice_config(args)
+    except (ValueError, TypeError, OSError, json.JSONDecodeError, tomllib.TOMLDecodeError) as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 1
+
+    if args.subcommand == "plan":
+        return _run_plan(args, config)
+    return _run_build(args, config)
 
 
 if __name__ == "__main__":
