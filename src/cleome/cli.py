@@ -14,14 +14,18 @@ import tomllib
 from typing import Any
 from fontTools.ttLib import TTFont
 
-from cleome.slicer import (
+from cleome.locale import (
     SUPPORTED_LOCALES,
+    detect_font_locale,
+)
+from cleome.metadata import (
     FontMetadata,
+    extract_font_metadata,
+)
+from cleome.slicer import (
     SliceConfig,
     SliceSpec,
     build_slice_plan,
-    detect_font_locale,
-    extract_font_metadata,
 )
 from cleome.css import slice_fonts, validate_and_compute_variant_suffixes
 

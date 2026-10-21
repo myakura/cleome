@@ -16,11 +16,13 @@ from pathlib import Path
 from fontTools.ttLib import TTFont
 from fontTools.subset import Subsetter, Options
 
-from cleome.slicer import (
+from cleome.metadata import (
     FontMetadata,
+    patch_uvs_missing_base_cmap,
+)
+from cleome.slicer import (
     SliceConfig,
     SliceSpec,
-    patch_uvs_missing_base_cmap,
 )
 
 

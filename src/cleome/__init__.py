@@ -6,18 +6,22 @@ Uses CSS Cascade Shadowing (1-token hex ranges for rare Kanji) and
 Progressive (Inverted-Pyramid) Kanji frequency granularity.
 """
 
-from cleome.slicer import (
+from cleome.locale import (
     SUPPORTED_LOCALES,
+    detect_font_locale,
+)
+from cleome.metadata import (
     FontMetadata,
+    extract_font_metadata,
+    patch_uvs_missing_base_cmap,
+    slugify_family,
+)
+from cleome.slicer import (
     SliceConfig,
     SliceSpec,
     build_slice_plan,
-    detect_font_locale,
-    extract_font_metadata,
     format_unicode_range,
     parse_unicode_range,
-    patch_uvs_missing_base_cmap,
-    slugify_family,
 )
 from cleome.subsetter import (
     BuiltSliceFile,

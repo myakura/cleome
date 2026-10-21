@@ -8,12 +8,14 @@ import os
 from pathlib import Path
 from fontTools.ttLib import TTFont
 
-from cleome.slicer import (
+from cleome.metadata import (
     FontMetadata,
+    extract_font_metadata,
+)
+from cleome.slicer import (
     SliceConfig,
     SliceSpec,
     build_slice_plan,
-    extract_font_metadata,
 )
 from cleome.subsetter import (
     BuiltSliceFile,
