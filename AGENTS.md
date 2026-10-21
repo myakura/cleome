@@ -8,10 +8,12 @@
 * Package manager: `uv` (requires Python `>= 3.15`)
 * Install with test dependencies (`uharfbuzz`):
   `uv venv && uv pip install -e ".[test]"`
-* Run test suite (`unittest` + HarfBuzz shaping verification):
-  `.venv/bin/python -m unittest discover -s tests -v`
-* Preview a 4-tier slice plan without writing files:
-  `.venv/bin/cleome <font.ttf> --dry-run`
+* Run test suite (`unittest` + HarfBuzz shaping verification, fail-fast):
+  `.venv/bin/python -m unittest discover -s tests -v -f`
+* Preview a 4-tier slice plan without writing files (read-only):
+  `.venv/bin/cleome plan <font.ttf> [--json]`
+* Build `.woff2` slices and `@font-face` CSS:
+  `.venv/bin/cleome build <font.ttf> -o dist/`
 
 
 ## Core Rules

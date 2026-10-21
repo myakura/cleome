@@ -10,23 +10,24 @@
 ## CLI Usage
 
 ```bash
-# Slice a Variable Font (auto-detects CJK profile; outputs <out-dir>/<slug>.css and <out-dir>/slices/<slug>-*.woff2)
-cleome SourceHanSansJP-VF.otf -o dist/web
+# Preview the dynamic 4-tier slice plan without writing files (read-only)
+cleome plan SourceHanSansJP-VF.otf
+cleome plan SourceHanSansJP-VF.otf --json
 
-# Preview the dynamic 4-tier slice plan without writing files
-cleome SourceHanSansJP-VF.otf --dry-run
+# Slice a Variable Font (auto-detects CJK profile; outputs <out-dir>/<slug>.css and <out-dir>/slices/<slug>-*.woff2)
+cleome build SourceHanSansJP-VF.otf -o dist/web
 
 # Explicitly select a CJK slicing profile (auto, jp, kr, sc, tc, hk)
-cleome SourceHanSansJP-VF.otf --locale jp -o dist/web-jp
-cleome NotoSansKR-VF.ttf --locale kr -o dist/web-kr
+cleome build SourceHanSansJP-VF.otf --locale jp -o dist/web-jp
+cleome build NotoSansKR-VF.ttf --locale kr -o dist/web-kr
 
 # Slice multiple Static Font weights into a single unified @font-face CSS and slices/ directory
-cleome MyFontJP-Regular.ttf MyFontJP-Bold.ttf -o dist/web-static
+cleome build MyFontJP-Regular.ttf MyFontJP-Bold.ttf -o dist/web-static
 
 # Customize CSS font-family, URL prefix, chunk sizes, or retained OpenType layout features
 # Note: --layout-features replaces the entire feature list (default is '*' for all features),
 # so include vertical writing (vert,vrt2,vpal,vhal,vkrn) and composition (ccmp,locl) tags if needed.
-cleome MyFont-VF.otf -o dist/web \
+cleome build MyFont-VF.otf -o dist/web \
   --locale jp \
   --family "My Font JP" \
   --slug "my-font-jp" \
@@ -80,7 +81,7 @@ if __name__ == "__main__":
 ```bash
 uv venv
 uv pip install -e ".[test]"
-.venv/bin/python -m unittest discover -s tests -v
+.venv/bin/python -m unittest discover -s tests -v -f
 ```
 
 ---
