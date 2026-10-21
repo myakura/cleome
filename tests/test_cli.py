@@ -1,5 +1,5 @@
 """
-Tests for the `cleome` CLI (`plan` and `build` subcommands, JSON output, config files, and multiprocessing guards).
+Tests for the `cleome` CLI (`plan` and `build` subcommands, JSON output, and multiprocessing guards).
 """
 
 from contextlib import redirect_stderr, redirect_stdout
@@ -54,11 +54,11 @@ class TestCleomeCLI(unittest.TestCase):
     def test_cli_plan_and_build_subcommands(self) -> None:
         """
         Verify agent-first CLI subcommands:
-        1. `cleome plan <inputs...> [-c CONFIG] [--preset PRESET] [--json]` is strictly read-only
+        1. `cleome plan <inputs...> [--locale/--preset PRESET] [--json]` is strictly read-only
            and never creates `./dist`.
         2. `cleome plan --json` returns a structured JSON envelope with Tier 1-4 slice counts,
            codepoint counts, `unicode-range` character lengths, and detected locale.
-        3. `cleome build <inputs...> -o <dir> [-c CONFIG] [--preset PRESET] [--json]` writes
+        3. `cleome build <inputs...> -o <dir> [--locale/--preset PRESET] [--json]` writes
            the CSS and `.woff2` slices and supports `--json`.
         """
         sample_cps = [ord("A"), ord("あ"), ord("日"), 0x4E02]
@@ -80,16 +80,11 @@ class TestCleomeCLI(unittest.TestCase):
                 self.assertIn("4 chars -> 4 slices", buf_plan.getvalue())
                 self.assertFalse((tmp_path / "dist").exists(), "`cleome plan` must not create ./dist")
 
-                # 2. `cleome plan --json --preset kr -c config.json`
-                cfg_file = tmp_path / "slice_config.json"
-                cfg_file.write_text(
-                    json.dumps({"rare_chunk_size": 120, "freq_tiers": "100x2,50x4"}),
-                    encoding="utf-8",
-                )
+                # 2. `cleome plan --json --preset kr`
                 buf_plan_json = StringIO()
                 with redirect_stdout(buf_plan_json):
                     rc_plan_json = cli_main(
-                        ["plan", str(font_path), "-c", str(cfg_file), "--preset", "kr", "--json"]
+                        ["plan", str(font_path), "--preset", "kr", "--rare-chunk-size", "120", "--json"]
                     )
                 self.assertEqual(rc_plan_json, 0)
                 plan_data = json.loads(buf_plan_json.getvalue())
@@ -100,7 +95,6 @@ class TestCleomeCLI(unittest.TestCase):
                 self.assertEqual(plan_data["file_count"], 1)
                 variant_info = plan_data["variants"][0]
                 self.assertEqual(variant_info["codepoints"], 4)
-                self.assertIn("tiers", variant_info)
                 for tier_key in ("1", "2", "3", "4"):
                     self.assertIn(tier_key, variant_info["tiers"])
                     self.assertIn("slices", variant_info["tiers"][tier_key])
@@ -113,7 +107,7 @@ class TestCleomeCLI(unittest.TestCase):
                 buf_build_json = StringIO()
                 with redirect_stdout(buf_build_json):
                     rc_build = cli_main(
-                        ["build", str(font_path), "-o", str(build_out), "-c", str(cfg_file), "--preset", "jp", "-j", "1", "--json"]
+                        ["build", str(font_path), "-o", str(build_out), "--locale", "jp", "-j", "1", "--json"]
                     )
                 self.assertEqual(rc_build, 0)
                 build_data = json.loads(buf_build_json.getvalue())
@@ -124,29 +118,7 @@ class TestCleomeCLI(unittest.TestCase):
                 self.assertTrue((build_out / "subcmd-test.css").exists())
                 self.assertEqual(len(list((build_out / "slices").glob("*.woff2"))), 4)
 
-                # 4. Missing config file or malformed config types return exit code 1 with error on stderr
-                err_buf = StringIO()
-                with redirect_stderr(err_buf):
-                    rc_missing_cfg = cli_main(["plan", str(font_path), "-c", str(tmp_path / "no_such.json")])
-                self.assertEqual(rc_missing_cfg, 1)
-                self.assertIn("Config file not found", err_buf.getvalue())
-
-                bad_cfg = tmp_path / "bad_config.json"
-                bad_cfg.write_text(json.dumps({"rare_chunk_size": ["not-an-int"]}), encoding="utf-8")
-                err_bad_buf = StringIO()
-                with redirect_stderr(err_bad_buf):
-                    rc_bad_cfg = cli_main(["plan", str(font_path), "-c", str(bad_cfg)])
-                self.assertEqual(rc_bad_cfg, 1)
-                self.assertIn("Invalid integer for 'rare_chunk_size'", err_bad_buf.getvalue())
-
-                typo_cfg = tmp_path / "typo_config.json"
-                typo_cfg.write_text(json.dumps({"rare_kanji_chunk_szie": 120}), encoding="utf-8")
-                err_typo_buf = StringIO()
-                with redirect_stderr(err_typo_buf):
-                    rc_typo_cfg = cli_main(["plan", str(font_path), "-c", str(typo_cfg)])
-                self.assertEqual(rc_typo_cfg, 1)
-                self.assertIn("Unsupported key(s) in config file: 'rare_kanji_chunk_szie'", err_typo_buf.getvalue())
-
+                # 4. Empty string validation on --display returns exit code 1 with error on stderr
                 empty_display_buf = StringIO()
                 with redirect_stderr(empty_display_buf):
                     rc_empty_disp = cli_main(["plan", str(font_path), "--display", "   "])

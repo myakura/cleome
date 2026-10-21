@@ -1,33 +1,20 @@
 """
-Command-line interface (`cleome`) for slicing Japanese Variable and Static fonts
+Command-line interface (`cleome`) for slicing Japanese, Korean, and Chinese Variable and Static fonts
 into Web-optimized `unicode-range` WOFF2 chunks and `@font-face` CSS.
 """
 
 import argparse
-from dataclasses import replace
 import json
 from pathlib import Path
 import re
 import sys
 import time
-import tomllib
-from typing import Any
 from fontTools.ttLib import TTFont
 
-from cleome.locale import (
-    SUPPORTED_LOCALES,
-    detect_font_locale,
-)
-from cleome.metadata import (
-    FontMetadata,
-    extract_font_metadata,
-)
-from cleome.slicer import (
-    SliceConfig,
-    SliceSpec,
-    build_slice_plan,
-)
 from cleome.css import slice_fonts, validate_and_compute_variant_suffixes
+from cleome.locale import SUPPORTED_LOCALES, detect_font_locale
+from cleome.metadata import FontMetadata, extract_font_metadata
+from cleome.slicer import SliceConfig, SliceSpec, build_slice_plan
 
 
 def _positive_int(val_str: str) -> int:
@@ -41,9 +28,7 @@ def _positive_int(val_str: str) -> int:
 
 
 def _parse_freq_tiers(spec_str: str) -> tuple[tuple[int, int], ...]:
-    """
-    Parse a progressive tier spec string like `"200x2,80x10"` into `((200, 2), (80, 10))`.
-    """
+    """Parse a progressive tier spec string like `"200x2,80x10"` into `((200, 2), (80, 10))`."""
     tiers: list[tuple[int, int]] = []
     for item in spec_str.split(","):
         item = item.strip()
@@ -72,8 +57,7 @@ def _parse_freq_tiers(spec_str: str) -> tuple[tuple[int, int], ...]:
 
 def _parse_tag_list(spec_str: str) -> tuple[str, ...]:
     """Parse a comma- or whitespace-separated list of OpenType table or feature tags."""
-    tags = [t.strip() for t in re.split(r"[,\s]+", spec_str.strip()) if t.strip()]
-    return tuple(tags)
+    return tuple(t.strip() for t in re.split(r"[,\s]+", spec_str.strip()) if t.strip())
 
 
 def _add_shared_arguments(parser: argparse.ArgumentParser, *, is_build: bool) -> None:
@@ -92,27 +76,16 @@ def _add_shared_arguments(parser: argparse.ArgumentParser, *, is_build: bool) ->
             help="Output directory for generated CSS and slices (default: ./dist)",
         )
     parser.add_argument(
-        "-c",
-        "--config",
-        type=Path,
-        default=None,
-        help="Optional path to a JSON or TOML SliceConfig override file",
-    )
-    parser.add_argument(
-        "--preset",
-        choices=SUPPORTED_LOCALES,
-        default=None,
-        help="Alias for --locale: target CJK slicing profile ('auto', 'jp', 'kr', 'sc', 'tc', or 'hk')",
-    )
-    parser.add_argument(
         "--locale",
+        "--preset",
+        dest="locale",
         choices=SUPPORTED_LOCALES,
-        default=None,
+        default="auto",
         help="Target CJK slicing profile: 'auto' (detect from family & cmap), 'jp', 'kr', 'sc', 'tc', or 'hk' (default: 'auto')",
     )
     parser.add_argument(
         "--slices-dir",
-        default=None,
+        default="slices",
         help="Subdirectory name under --out-dir for .woff2 files (default: 'slices'; use '.' for flat output)",
     )
     parser.add_argument(
@@ -152,53 +125,48 @@ def _add_shared_arguments(parser: argparse.ArgumentParser, *, is_build: bool) ->
     )
     parser.add_argument(
         "--display",
-        default=None,
+        default="swap",
         help="CSS `font-display` descriptor value (default: 'swap')",
     )
     parser.add_argument(
         "--freq-tiers",
         type=_parse_freq_tiers,
-        default=None,
+        default=((200, 2), (80, 10)),
         help="Progressive Tier 3 chunk spec from highest frequency downward (default: '200x2,80x10')",
     )
     parser.add_argument(
         "--freq-tail-chunk-size",
         type=_positive_int,
-        default=None,
+        default=70,
         help="Target characters per slice for remaining Tier 3 characters (default: 70)",
     )
     parser.add_argument(
         "--rare-chunk-size",
         type=_positive_int,
-        default=None,
+        default=250,
         help="Target characters per slice for Tier 4 rare/extended characters (default: 250)",
     )
     parser.add_argument(
         "--symbols-chunk-size",
         type=_positive_int,
-        default=None,
+        default=350,
         help="Target characters per slice for Tier 2 extended symbols (default: 350)",
     )
     parser.add_argument(
         "--layout-features",
         type=_parse_tag_list,
-        default=None,
-        help=(
-            "Comma-separated OpenType layout feature tags to retain "
-            "(default: '*' keeps all features; specifying tags replaces the default list, "
-            "so include vertical/composition tags like 'ccmp,locl,kern,mark,mkmk,liga,palt,halt,vpal,vhal,vkrn,vert,vrt2,ruby')"
-        ),
+        default=("*",),
+        help="Comma-separated OpenType layout feature tags to retain (default: '*' keeps all features)",
     )
     parser.add_argument(
         "--no-layout-closure",
         action="store_true",
-        default=False,
         help="Do not expand glyph closure over GSUB substitution tables",
     )
     parser.add_argument(
         "--drop-tables",
         type=_parse_tag_list,
-        default=None,
+        default=(),
         help="Comma-separated OpenType table tags to drop during subsetting (e.g. 'GPOS,GSUB,vhea,vmtx')",
     )
     if is_build:
@@ -213,8 +181,7 @@ def _add_shared_arguments(parser: argparse.ArgumentParser, *, is_build: bool) ->
         "--json",
         dest="json_output",
         action="store_true",
-        default=False,
-        help="Emit structured JSON output to stdout",
+        help="Emit structured JSON summary to stdout",
     )
 
 
@@ -223,8 +190,7 @@ def build_parser() -> argparse.ArgumentParser:
         prog="cleome",
         description=(
             "Slice Japanese, Korean, or Chinese Variable and Static fonts (.ttf / .otf) into "
-            "Web-optimized unicode-range WOFF2 chunks and @font-face CSS using CSS Cascade Shadowing "
-            "and Progressive (Inverted-Pyramid) frequency granularity."
+            "Web-optimized unicode-range WOFF2 chunks and @font-face CSS."
         ),
     )
     subparsers = parser.add_subparsers(dest="subcommand", required=True)
@@ -232,139 +198,16 @@ def build_parser() -> argparse.ArgumentParser:
     plan_parser = subparsers.add_parser(
         "plan",
         help="Read-only inspection: compute and output the 4-tier unicode-range slice plan without writing files",
-        description="Read-only inspection: compute and output the 4-tier unicode-range slice plan without writing files.",
     )
     _add_shared_arguments(plan_parser, is_build=False)
 
     build_subparser = subparsers.add_parser(
         "build",
         help="Write mode: slice input fonts into WOFF2 chunks and generate @font-face CSS",
-        description="Write mode: slice input fonts into WOFF2 chunks and generate @font-face CSS.",
     )
     _add_shared_arguments(build_subparser, is_build=True)
 
     return parser
-
-
-_CONFIG_KEY_TO_FIELD: dict[str, str] = {
-    "locale": "locale",
-    "preset": "locale",
-    "freq_tiers": "freq_tiers",
-    "freq_tail_chunk_size": "freq_tail_chunk_size",
-    "rare_kanji_chunk_size": "rare_kanji_chunk_size",
-    "rare_chunk_size": "rare_kanji_chunk_size",
-    "symbols_ext_chunk_size": "symbols_ext_chunk_size",
-    "symbols_chunk_size": "symbols_ext_chunk_size",
-    "retain_layout_closure": "retain_layout_closure",
-    "patch_uvs_only_cmap": "patch_uvs_only_cmap",
-    "layout_features": "layout_features",
-    "drop_tables": "drop_tables",
-    "slices_subdir": "slices_subdir",
-    "slices_dir": "slices_subdir",
-    "url_prefix": "url_prefix",
-    "font_display": "font_display",
-    "display": "font_display",
-}
-
-
-def _coerce_config_int(val: Any, key: str) -> int:
-    if isinstance(val, bool) or not isinstance(val, (int, str)):
-        raise ValueError(f"Invalid integer for {key!r} in config: {val!r}")
-    try:
-        return int(val)
-    except ValueError as exc:
-        raise ValueError(f"Invalid integer for {key!r} in config: {val!r}") from exc
-
-
-def _load_config_file(config_path: Path) -> SliceConfig:
-    if not config_path.exists():
-        raise ValueError(f"Config file not found: {config_path}")
-    text = config_path.read_text(encoding="utf-8")
-    raw = tomllib.loads(text) if config_path.suffix.lower() == ".toml" else json.loads(text)
-    if not isinstance(raw, dict):
-        raise ValueError(f"Config file must contain a JSON/TOML object, got {type(raw).__name__}")
-    if "cleome" in raw and isinstance(raw["cleome"], dict):
-        raw = raw["cleome"]
-
-    unknown_keys = sorted(set(raw.keys()) - _CONFIG_KEY_TO_FIELD.keys())
-    if unknown_keys:
-        raise ValueError(
-            f"Unsupported key(s) in config file: {', '.join(repr(k) for k in unknown_keys)}"
-        )
-
-    kwargs: dict[str, Any] = {}
-    for key, val in raw.items():
-        field = _CONFIG_KEY_TO_FIELD[key]
-        if key != field and field in raw:
-            continue
-        if field == "locale":
-            if not isinstance(val, str) or not val.strip():
-                raise ValueError(f"Invalid locale/preset in config: {val!r}")
-            kwargs[field] = val
-        elif field == "freq_tiers":
-            if isinstance(val, str):
-                try:
-                    kwargs[field] = _parse_freq_tiers(val)
-                except argparse.ArgumentTypeError as exc:
-                    raise ValueError(str(exc)) from exc
-            elif isinstance(val, list) and val:
-                tiers: list[tuple[int, int]] = []
-                for item in val:
-                    if isinstance(item, dict):
-                        sz = _coerce_config_int(item.get("chunk_size", item.get("size")), "freq_tiers.chunk_size")
-                        cnt = _coerce_config_int(item.get("num_chunks", item.get("count")), "freq_tiers.num_chunks")
-                        tiers.append((sz, cnt))
-                    elif isinstance(item, (list, tuple)) and len(item) == 2:
-                        tiers.append((_coerce_config_int(item[0], "freq_tiers[0]"), _coerce_config_int(item[1], "freq_tiers[1]")))
-                    else:
-                        raise ValueError(f"Invalid freq_tiers entry in config: {item!r}")
-                kwargs[field] = tuple(tiers)
-            else:
-                raise ValueError(f"Invalid freq_tiers in config: {val!r}")
-        elif field in ("freq_tail_chunk_size", "rare_kanji_chunk_size", "symbols_ext_chunk_size"):
-            kwargs[field] = _coerce_config_int(val, key)
-        elif field in ("retain_layout_closure", "patch_uvs_only_cmap"):
-            if not isinstance(val, bool):
-                raise ValueError(f"Invalid boolean for {key!r} in config: {val!r}")
-            kwargs[field] = val
-        elif field in ("layout_features", "drop_tables"):
-            if isinstance(val, str):
-                kwargs[field] = _parse_tag_list(val)
-            elif isinstance(val, list) and all(isinstance(x, str) for x in val):
-                kwargs[field] = tuple(val)
-            else:
-                raise ValueError(f"Invalid {key} in config: {val!r}")
-        elif field in ("slices_subdir", "url_prefix", "font_display"):
-            if val is not None and not isinstance(val, str):
-                raise ValueError(f"Invalid string for {key!r} in config: {val!r}")
-            if val is None and field != "url_prefix":
-                raise ValueError(f"Invalid string for {key!r} in config: {val!r}")
-            kwargs[field] = val
-
-    return SliceConfig(**kwargs)
-
-
-def _resolve_slice_config(args: argparse.Namespace) -> SliceConfig:
-    cfg = _load_config_file(args.config) if args.config is not None else SliceConfig()
-    overrides: dict[str, Any] = {
-        field: val
-        for field, val in (
-            ("locale", args.locale if args.locale is not None else args.preset),
-            ("freq_tiers", args.freq_tiers),
-            ("freq_tail_chunk_size", args.freq_tail_chunk_size),
-            ("rare_kanji_chunk_size", args.rare_chunk_size),
-            ("symbols_ext_chunk_size", args.symbols_chunk_size),
-            ("layout_features", tuple(args.layout_features) if args.layout_features is not None else None),
-            ("drop_tables", tuple(args.drop_tables) if args.drop_tables is not None else None),
-            ("slices_subdir", args.slices_dir),
-            ("url_prefix", args.url_prefix),
-            ("font_display", args.display),
-        )
-        if val is not None
-    }
-    if args.no_layout_closure:
-        overrides["retain_layout_closure"] = False
-    return replace(cfg, **overrides) if overrides else cfg
 
 
 def _summarize_plan_tiers(plan: list[SliceSpec]) -> dict[int, tuple[int, int, int]]:
@@ -409,41 +252,9 @@ def _run_plan(args: argparse.Namespace, config: SliceConfig) -> int:
         if config.locale == "auto"
         else config.locale
     )
-    plans = [
-        build_slice_plan(m.codepoints, config=config, family_name=m.family_name)
-        for m in metas
-    ]
+    plans = [build_slice_plan(m.codepoints, config=config, family_name=m.family_name) for m in metas]
 
     if args.json_output:
-        variants_payload = []
-        for meta, suf, plan in zip(metas, suffixes, plans):
-            tier_stats = _summarize_plan_tiers(plan)
-            variants_payload.append(
-                {
-                    "weight": meta.weight_css,
-                    "stretch": meta.stretch_css or "normal",
-                    "styles": list(meta.styles_css or (meta.style_css,)),
-                    "variant_suffix": suf,
-                    "codepoints": len(meta.codepoints),
-                    "total_slices": len(plan),
-                    "tiers": {
-                        str(t): {"slices": sc, "codepoints": cp_c, "unicode_range_chars": ur_c}
-                        for t, (sc, cp_c, ur_c) in tier_stats.items()
-                    },
-                    "slices": [
-                        {
-                            "slice_id": s.slice_id,
-                            "tier": s.tier,
-                            "category": s.category,
-                            "filename": s.filename(meta.slug, suf),
-                            "codepoints": len(s.binary_codepoints),
-                            "unicode_range_chars": len(s.css_unicode_range),
-                            "uses_cascade_shadowing": s.uses_cascade_shadowing,
-                        }
-                        for s in plan
-                    ],
-                }
-            )
         payload = {
             "ok": True,
             "command": "plan",
@@ -453,7 +264,21 @@ def _run_plan(args: argparse.Namespace, config: SliceConfig) -> int:
             "configured_locale": config.locale,
             "is_variable": first.is_variable,
             "file_count": len(metas),
-            "variants": variants_payload,
+            "variants": [
+                {
+                    "weight": meta.weight_css,
+                    "stretch": meta.stretch_css or "normal",
+                    "styles": list(meta.styles_css or (meta.style_css,)),
+                    "variant_suffix": suf,
+                    "codepoints": len(meta.codepoints),
+                    "total_slices": len(plan),
+                    "tiers": {
+                        str(t): {"slices": sc, "codepoints": cp_c, "unicode_range_chars": ur_c}
+                        for t, (sc, cp_c, ur_c) in _summarize_plan_tiers(plan).items()
+                    },
+                }
+                for meta, suf, plan in zip(metas, suffixes, plans)
+            ],
         }
         print(json.dumps(payload, ensure_ascii=False))
         return 0
@@ -537,8 +362,20 @@ def main(argv: list[str] | None = None) -> int:
             return 1
 
     try:
-        config = _resolve_slice_config(args)
-    except (ValueError, TypeError, OSError, json.JSONDecodeError, tomllib.TOMLDecodeError) as exc:
+        config = SliceConfig(
+            locale=args.locale,
+            freq_tiers=args.freq_tiers,
+            freq_tail_chunk_size=args.freq_tail_chunk_size,
+            rare_kanji_chunk_size=args.rare_chunk_size,
+            symbols_ext_chunk_size=args.symbols_chunk_size,
+            retain_layout_closure=not args.no_layout_closure,
+            layout_features=tuple(args.layout_features),
+            drop_tables=tuple(args.drop_tables),
+            slices_subdir=args.slices_dir,
+            url_prefix=args.url_prefix,
+            font_display=args.display,
+        )
+    except ValueError as exc:
         print(f"Error: {exc}", file=sys.stderr)
         return 1
 
@@ -549,4 +386,3 @@ def main(argv: list[str] | None = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

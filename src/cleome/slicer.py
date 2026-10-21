@@ -37,13 +37,6 @@ from cleome.locale import (
     is_tier1_latin,
     is_tier2_symbols_ui,
 )
-from cleome.metadata import (
-    OS2_WIDTH_CLASS_TO_CSS,
-    FontMetadata,
-    extract_font_metadata,
-    patch_uvs_missing_base_cmap,
-    slugify_family,
-)
 
 
 @dataclass(frozen=True, slots=True)
@@ -613,31 +606,3 @@ def _compact_range_with_shadowing(
         f"U+{s:X}" if s == e else f"U+{s:X}-{e:X}" for s, e in ranges
     )
 
-
-__all__ = [
-    "CJK_IDEOGRAPH_REGIONS",
-    "FontMetadata",
-    "HK_HANZI_FREQ_CODEPOINTS",
-    "KANJI_FREQ_CODEPOINTS",
-    "KR_HANGUL_FREQ_CODEPOINTS",
-    "OS2_WIDTH_CLASS_TO_CSS",
-    "SC_HANZI_FREQ_CODEPOINTS",
-    "SUPPORTED_LOCALES",
-    "SliceConfig",
-    "SliceSpec",
-    "TC_HANZI_FREQ_CODEPOINTS",
-    "build_slice_plan",
-    "detect_font_locale",
-    "extract_font_metadata",
-    "format_unicode_range",
-    "is_cjk_ideograph",
-    "is_hangul_syllable",
-    "is_tier1_cjk_core",
-    "is_tier1_hangul_core",
-    "is_tier1_kana_core",
-    "is_tier1_latin",
-    "is_tier2_symbols_ui",
-    "parse_unicode_range",
-    "patch_uvs_missing_base_cmap",
-    "slugify_family",
-]
