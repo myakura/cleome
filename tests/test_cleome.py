@@ -407,10 +407,10 @@ class TestCleomeSlicer(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "Duplicate @font-face descriptors"):
                 slice_fonts([f1, f3_dup], out_dir=Path(tmp) / "dup", workers=1)
 
-    def test_cli_validation_and_dry_run(self) -> None:
+    def test_cli_validation_and_plan(self) -> None:
         """
-        Verify CLI argument parsing for --drop-tables, --layout-features, --dry-run,
-        and validation errors for non-positive --freq-tiers / --rare-chunk-size.
+        Verify CLI argument parsing for `cleome plan`, --drop-tables, --layout-features,
+        and validation errors for non-positive --freq-tiers / --rare-chunk-size or missing subcommand.
         """
         from contextlib import redirect_stderr
 
@@ -422,18 +422,125 @@ class TestCleomeSlicer(unittest.TestCase):
             # 1. --drop-tables before positional input must not swallow positional input
             buf = StringIO()
             with redirect_stdout(buf):
-                rc = cli_main(["--drop-tables", "DSIG,GPOS", "--layout-features", "kern,palt", "--dry-run", str(font_path)])
+                rc = cli_main(["plan", "--drop-tables", "DSIG,GPOS", "--layout-features", "kern,palt", str(font_path)])
             self.assertEqual(rc, 0)
             self.assertIn("3 chars -> 3 slices", buf.getvalue())
 
             # 2. Invalid --freq-tiers (0 or negative) must fail with SystemExit(2)
             with redirect_stderr(StringIO()), self.assertRaises(SystemExit) as cm:
-                cli_main(["--freq-tiers", "200x0", "--dry-run", str(font_path)])
+                cli_main(["plan", "--freq-tiers", "200x0", str(font_path)])
             self.assertEqual(cm.exception.code, 2)
 
             with redirect_stderr(StringIO()), self.assertRaises(SystemExit) as cm2:
-                cli_main(["--rare-chunk-size", "0", "--dry-run", str(font_path)])
+                cli_main(["plan", "--rare-chunk-size", "0", str(font_path)])
             self.assertEqual(cm2.exception.code, 2)
+
+            # 3. Invoking without a subcommand (`plan` or `build`) fails with SystemExit(2)
+            with redirect_stderr(StringIO()), self.assertRaises(SystemExit) as cm3:
+                cli_main([str(font_path)])
+            self.assertEqual(cm3.exception.code, 2)
+
+    def test_cli_plan_and_build_subcommands(self) -> None:
+        """
+        Verify agent-first CLI subcommands:
+        1. `cleome plan <inputs...> [-c CONFIG] [--preset PRESET] [--json]` is strictly read-only
+           and never creates `./dist`.
+        2. `cleome plan --json` returns a structured JSON envelope with Tier 1-4 slice counts,
+           codepoint counts, `unicode-range` character lengths, and detected locale.
+        3. `cleome build <inputs...> -o <dir> [-c CONFIG] [--preset PRESET] [--json]` writes
+           the CSS and `.woff2` slices and supports `--json`.
+        """
+        from contextlib import redirect_stderr
+        import json
+        import os
+
+        sample_cps = [ord("A"), ord("あ"), ord("日"), 0x4E02]
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            font_path = tmp_path / "SubcmdTest.ttf"
+            _create_synthetic_ttfont(sample_cps, family_name="Subcmd Test").save(font_path, reorderTables=False)
+
+            orig_cwd = Path.cwd()
+            try:
+                os.chdir(tmp_path)
+
+                # 1. `cleome plan` must NOT create ./dist
+                buf_plan = StringIO()
+                with redirect_stdout(buf_plan):
+                    rc_plan = cli_main(["plan", str(font_path)])
+                self.assertEqual(rc_plan, 0)
+                self.assertIn("Font Family : Subcmd Test (slug: subcmd-test)", buf_plan.getvalue())
+                self.assertIn("4 chars -> 4 slices", buf_plan.getvalue())
+                self.assertFalse((tmp_path / "dist").exists(), "`cleome plan` must not create ./dist")
+
+                # 2. `cleome plan --json --preset kr -c config.json`
+                cfg_file = tmp_path / "slice_config.json"
+                cfg_file.write_text(
+                    json.dumps({"rare_chunk_size": 120, "freq_tiers": "100x2,50x4"}),
+                    encoding="utf-8",
+                )
+                buf_plan_json = StringIO()
+                with redirect_stdout(buf_plan_json):
+                    rc_plan_json = cli_main(
+                        ["plan", str(font_path), "-c", str(cfg_file), "--preset", "kr", "--json"]
+                    )
+                self.assertEqual(rc_plan_json, 0)
+                plan_data = json.loads(buf_plan_json.getvalue())
+                self.assertTrue(plan_data["ok"])
+                self.assertEqual(plan_data["command"], "plan")
+                self.assertEqual(plan_data["locale"], "kr")
+                self.assertEqual(plan_data["configured_locale"], "kr")
+                self.assertEqual(plan_data["file_count"], 1)
+                variant_info = plan_data["variants"][0]
+                self.assertEqual(variant_info["codepoints"], 4)
+                self.assertIn("tiers", variant_info)
+                for tier_key in ("1", "2", "3", "4"):
+                    self.assertIn(tier_key, variant_info["tiers"])
+                    self.assertIn("slices", variant_info["tiers"][tier_key])
+                    self.assertIn("codepoints", variant_info["tiers"][tier_key])
+                    self.assertIn("unicode_range_chars", variant_info["tiers"][tier_key])
+                self.assertFalse((tmp_path / "dist").exists(), "`cleome plan --json` must not create ./dist")
+
+                # 3. `cleome build <input> -o <dir> --json`
+                build_out = tmp_path / "built_subcmd"
+                buf_build_json = StringIO()
+                with redirect_stdout(buf_build_json):
+                    rc_build = cli_main(
+                        ["build", str(font_path), "-o", str(build_out), "-c", str(cfg_file), "--preset", "jp", "-j", "1", "--json"]
+                    )
+                self.assertEqual(rc_build, 0)
+                build_data = json.loads(buf_build_json.getvalue())
+                self.assertTrue(build_data["ok"])
+                self.assertEqual(build_data["command"], "build")
+                self.assertEqual(build_data["locale"], "jp")
+                self.assertEqual(build_data["slice_count"], 4)
+                self.assertTrue((build_out / "subcmd-test.css").exists())
+                self.assertEqual(len(list((build_out / "slices").glob("*.woff2"))), 4)
+
+                # 4. Missing config file or malformed config types return exit code 1 with error on stderr
+                err_buf = StringIO()
+                with redirect_stderr(err_buf):
+                    rc_missing_cfg = cli_main(["plan", str(font_path), "-c", str(tmp_path / "no_such.json")])
+                self.assertEqual(rc_missing_cfg, 1)
+                self.assertIn("Config file not found", err_buf.getvalue())
+
+                bad_cfg = tmp_path / "bad_config.json"
+                bad_cfg.write_text(json.dumps({"rare_chunk_size": ["not-an-int"]}), encoding="utf-8")
+                err_bad_buf = StringIO()
+                with redirect_stderr(err_bad_buf):
+                    rc_bad_cfg = cli_main(["plan", str(font_path), "-c", str(bad_cfg)])
+                self.assertEqual(rc_bad_cfg, 1)
+                self.assertIn("Invalid integer for 'rare_chunk_size'", err_bad_buf.getvalue())
+
+                typo_cfg = tmp_path / "typo_config.json"
+                typo_cfg.write_text(json.dumps({"rare_kanji_chunk_szie": 120}), encoding="utf-8")
+                err_typo_buf = StringIO()
+                with redirect_stderr(err_typo_buf):
+                    rc_typo_cfg = cli_main(["plan", str(font_path), "-c", str(typo_cfg)])
+                self.assertEqual(rc_typo_cfg, 1)
+                self.assertIn("Unsupported key(s) in config file: 'rare_kanji_chunk_szie'", err_typo_buf.getvalue())
+            finally:
+                os.chdir(orig_cwd)
 
     def test_subprocess_script_with_and_without_main_guard(self) -> None:
         """
