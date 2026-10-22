@@ -14,6 +14,7 @@ Implements the 4-tier architecture:
 
 from bisect import bisect_left, bisect_right
 from dataclasses import dataclass
+from pathlib import Path
 
 from cleome.data.kanji_freq import KANJI_FREQ_CODEPOINTS, KANJI_FREQ_RANK
 from cleome.data.kr_freq import KR_HANGUL_FREQ_CODEPOINTS, KR_HANGUL_FREQ_RANK
@@ -89,10 +90,31 @@ class SliceConfig:
             raise ValueError(f"rare_kanji_chunk_size must be > 0, got {self.rare_kanji_chunk_size}")
         if self.symbols_ext_chunk_size <= 0:
             raise ValueError(f"symbols_ext_chunk_size must be > 0, got {self.symbols_ext_chunk_size}")
-        if not self.slices_subdir.strip():
+        subdir_str = self.slices_subdir.strip()
+        if not subdir_str:
             raise ValueError("slices_subdir cannot be empty")
-        if not self.font_display.strip():
+        subdir_norm = subdir_str.rstrip("/") or "."
+        subdir_path = Path(subdir_norm)
+        if (
+            "\\" in subdir_str
+            or "\x00" in subdir_str
+            or subdir_str.startswith("/")
+            or subdir_path.is_absolute()
+            or ".." in subdir_path.parts
+        ):
+            raise ValueError(
+                f"slices_subdir must be a relative path inside out_dir without '..', got {self.slices_subdir!r}"
+            )
+        display_str = self.font_display.strip()
+        if not display_str:
             raise ValueError("font_display cannot be empty")
+        if (
+            any(ch in display_str for ch in (";", "{", "}", "\r", "\n", "\f", "'", '"', "\\"))
+            or "/*" in display_str
+            or "*/" in display_str
+        ):
+            raise ValueError(f"Invalid CSS font-display value: {self.font_display!r}")
+        object.__setattr__(self, "font_display", display_str)
 
 
 @dataclass(frozen=True, slots=True)

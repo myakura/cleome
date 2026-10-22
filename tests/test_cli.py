@@ -118,12 +118,24 @@ class TestCleomeCLI(unittest.TestCase):
                 self.assertTrue((build_out / "subcmd-test.css").exists())
                 self.assertEqual(len(list((build_out / "slices").glob("*.woff2"))), 4)
 
-                # 4. Empty string validation on --display returns exit code 1 with error on stderr
+                # 4. Empty string or invalid CSS/path tokens return exit code 1 with error on stderr
                 empty_display_buf = StringIO()
                 with redirect_stderr(empty_display_buf):
                     rc_empty_disp = cli_main(["plan", str(font_path), "--display", "   "])
                 self.assertEqual(rc_empty_disp, 1)
                 self.assertIn("font_display cannot be empty", empty_display_buf.getvalue())
+
+                for bad_args, expected_err in (
+                    (["plan", str(font_path), "--slices-dir", "../outside"], "slices_subdir"),
+                    (["plan", str(font_path), "--slug", "../outside"], "slug"),
+                    (["plan", str(font_path), "--weight", "400; } @import url(x)"], "font-weight"),
+                    (["build", str(font_path), "-o", str(build_out), "--css-name", "../outside.css"], "css_filename"),
+                ):
+                    err_buf = StringIO()
+                    with redirect_stderr(err_buf):
+                        rc_bad = cli_main(bad_args)
+                    self.assertEqual(rc_bad, 1, f"Expected exit code 1 for {bad_args}")
+                    self.assertIn(expected_err, err_buf.getvalue())
             finally:
                 os.chdir(orig_cwd)
 

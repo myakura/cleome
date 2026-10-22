@@ -22,6 +22,35 @@ OS2_WIDTH_CLASS_TO_CSS: frozendict[int, str] = frozendict(
 )
 
 
+_CSS_DESCRIPTOR_RE = re.compile(r"^[a-zA-Z0-9 %.+-]+$")
+
+
+def _validate_filename_token(val: str, field_name: str) -> str:
+    cleaned = val.strip()
+    if not cleaned:
+        raise ValueError(f"{field_name} cannot be empty")
+    if (
+        "/" in cleaned
+        or "\\" in cleaned
+        or "\x00" in cleaned
+        or cleaned in (".", "..")
+        or ".." in cleaned
+    ):
+        raise ValueError(
+            f"{field_name} must not contain path separators or '..', got {val!r}"
+        )
+    return cleaned
+
+
+def _validate_css_descriptor(val: str, field_name: str) -> str:
+    cleaned = val.strip()
+    if not cleaned:
+        raise ValueError(f"{field_name} cannot be empty")
+    if not _CSS_DESCRIPTOR_RE.fullmatch(cleaned) or ".." in cleaned:
+        raise ValueError(f"Invalid CSS {field_name} descriptor value: {val!r}")
+    return cleaned
+
+
 @dataclass(frozen=True, slots=True)
 class FontMetadata:
     """Auto-detected or user-overridden CSS @font-face metadata for a single font."""
@@ -38,8 +67,31 @@ class FontMetadata:
     styles_css: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
+        object.__setattr__(self, "slug", _validate_filename_token(self.slug, "slug"))
+        if self.variant_suffix:
+            object.__setattr__(
+                self,
+                "variant_suffix",
+                _validate_filename_token(self.variant_suffix, "variant_suffix"),
+            )
+        object.__setattr__(
+            self, "weight_css", _validate_css_descriptor(self.weight_css, "font-weight")
+        )
+        if self.stretch_css is not None:
+            object.__setattr__(
+                self, "stretch_css", _validate_css_descriptor(self.stretch_css, "font-stretch")
+            )
+        object.__setattr__(
+            self, "style_css", _validate_css_descriptor(self.style_css, "font-style")
+        )
         if not self.styles_css:
             object.__setattr__(self, "styles_css", (self.style_css,))
+        else:
+            object.__setattr__(
+                self,
+                "styles_css",
+                tuple(_validate_css_descriptor(s, "font-style") for s in self.styles_css),
+            )
 
 
 def slugify_family(name: str) -> str:

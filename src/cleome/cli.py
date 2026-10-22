@@ -227,20 +227,20 @@ def _summarize_plan_tiers(plan: list[SliceSpec]) -> dict[int, tuple[int, int, in
 
 def _run_plan(args: argparse.Namespace, config: SliceConfig) -> int:
     metas: list[FontMetadata] = []
-    for p in args.inputs:
-        with TTFont(p, lazy=True, recalcTimestamp=False) as tt:
-            metas.append(
-                extract_font_metadata(
-                    tt,
-                    family_override=args.family,
-                    slug_override=args.slug,
-                    weight_override=args.weight,
-                    stretch_override=args.stretch,
-                    style_override=args.style,
-                    patch_uvs=config.patch_uvs_only_cmap,
-                )
-            )
     try:
+        for p in args.inputs:
+            with TTFont(p, lazy=True, recalcTimestamp=False) as tt:
+                metas.append(
+                    extract_font_metadata(
+                        tt,
+                        family_override=args.family,
+                        slug_override=args.slug,
+                        weight_override=args.weight,
+                        stretch_override=args.stretch,
+                        style_override=args.style,
+                        patch_uvs=config.patch_uvs_only_cmap,
+                    )
+                )
         suffixes = validate_and_compute_variant_suffixes(metas, family_override=args.family)
     except ValueError as exc:
         print(f"Error: {exc}", file=sys.stderr)

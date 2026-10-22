@@ -8,16 +8,20 @@ Variable Font tables (`fvar`, `gvar`, `CFF2`, `HVAR`, `VVAR`, `MVAR`, `STAT`, `a
 
 from concurrent.futures import ProcessPoolExecutor
 from concurrent.futures.process import BrokenProcessPool
+import contextlib
 import copy
 from dataclasses import dataclass
 import io
 import os
 from pathlib import Path
+import secrets
+from typing import Iterator
 from fontTools.ttLib import TTFont
 from fontTools.subset import Subsetter, Options
 
 from cleome.metadata import (
     FontMetadata,
+    _validate_filename_token,
     patch_uvs_missing_base_cmap,
 )
 from cleome.slicer import (
@@ -216,6 +220,30 @@ def _prepare_uvs_for_slice(font: TTFont, codepoints: list[int]) -> list[int]:
     return [*codepoints, *sorted(extra_selectors)]
 
 
+@contextlib.contextmanager
+def _atomic_output_file(
+    target_path: Path, mode: str = "wb", encoding: str | None = None
+) -> Iterator[io.IOBase]:
+    """
+    Create a sibling temporary file next to `target_path` with `O_CREAT | O_EXCL` and
+    mode `0o644` (subject to the process `umask`), yield the open file stream, and
+    atomically `os.replace` `target_path` on clean exit.
+    """
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
+    token = secrets.token_hex(16)
+    tmp_path = target_path.with_name(
+        f".{target_path.stem}.{token}.tmp{target_path.suffix}"
+    )
+    fd = os.open(tmp_path, flags, 0o644)
+    try:
+        with os.fdopen(fd, mode, encoding=encoding) as f:
+            yield f
+        os.replace(tmp_path, target_path)
+    except BaseException:
+        tmp_path.unlink(missing_ok=True)
+        raise
+
+
 def _subset_single_slice_worker(
     task: tuple[int, list[int], str],
 ) -> tuple[str, int, int]:
@@ -224,8 +252,7 @@ def _subset_single_slice_worker(
     assert _WORKER_OPTIONS is not None
     state = _load_cached_font_state(font_idx)
     out_path = Path(out_path_str)
-    tmp_path = out_path.with_name(f".{out_path.stem}.{os.getpid()}.tmp.woff2")
-    try:
+    with _atomic_output_file(out_path, mode="wb") as tf:
         with TTFont(
             io.BytesIO(state.font_bytes), lazy=True, recalcTimestamp=False
         ) as font:
@@ -248,13 +275,8 @@ def _subset_single_slice_worker(
             subsetter.subset(font)
 
             font.flavor = "woff2"
-            font.save(tmp_path)
+            font.save(tf)
             num_glyphs = len(font.getGlyphOrder())
-        os.replace(tmp_path, out_path)
-    except BaseException:
-        if tmp_path.exists():
-            tmp_path.unlink(missing_ok=True)
-        raise
 
     size_bytes = out_path.stat().st_size
     return out_path_str, size_bytes, num_glyphs
@@ -326,6 +348,7 @@ def _export_woff2_slices_batch(
         config = SliceConfig()
 
     slices_dir.mkdir(parents=True, exist_ok=True)
+    slices_dir_resolved = slices_dir.resolve()
     hints = is_woff_hints if is_woff_hints is not None else [None] * len(variants)
 
     sources: list[tuple[bytes | Path, bool]] = []
@@ -347,8 +370,14 @@ def _export_woff2_slices_batch(
             cps = sorted(spec.binary_codepoints & meta.codepoints)
             if not cps:
                 continue
-            fname = spec.filename(meta.slug, meta.variant_suffix)
+            fname = _validate_filename_token(
+                spec.filename(meta.slug, meta.variant_suffix), "slice filename"
+            )
             out_path = slices_dir / fname
+            if not out_path.resolve().is_relative_to(slices_dir_resolved):
+                raise ValueError(
+                    f"Slice output path {out_path!r} resolves outside slices_dir {slices_dir!r}"
+                )
             out_str = str(out_path)
             if out_str in seen_out_paths:
                 raise ValueError(f"Duplicate slice output path across variants: {out_str}")

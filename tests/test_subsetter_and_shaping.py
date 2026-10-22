@@ -5,6 +5,7 @@ Variable Font (`ital`/`slnt`/`wght`/`wdth`) CSS generation, TTFont immutability,
 
 import copy
 import io
+import os
 from pathlib import Path
 import sys
 import tempfile
@@ -711,6 +712,64 @@ class TestSubsetterAndShaping(unittest.TestCase):
                     slices_dir=Path(tmp) / "dup_slices",
                     workers=1,
                 )
+
+    def test_css_escaping_and_path_traversal_hardening(self) -> None:
+        """
+        Verify that:
+        1. Font `name` table strings containing `*/` comment closers, single quotes, backslashes,
+           or raw newlines (`\\n`, `\\r`, `\\f`) cannot break out of CSS comments or `font-family`
+           string tokens in single- or multi-variant `@font-face` output.
+        2. Path traversal attempts in `slug`, `css_filename`, or `slices_subdir` raise `ValueError`.
+        3. Temporary files created via `NamedTemporaryFile` leave no `.tmp` files behind.
+        """
+        malicious_family = "Evil */ @import url('https://evil.example/a.css'); /* Font'\n  src: url('x');\r\f\\End"
+        f400 = create_synthetic_ttfont([ord("A"), ord("あ")], family_name=malicious_family, weight=400)
+        f700 = create_synthetic_ttfont([ord("A"), ord("あ")], family_name=malicious_family, weight=700)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            out_dir = Path(tmp) / "hardened_out"
+            old_umask = os.umask(0o022)
+            try:
+                res = slice_fonts(
+                    [f400, f700],
+                    out_dir=out_dir,
+                    config=SliceConfig(url_prefix="https://cdn.example/fonts'\n/v1"),
+                    workers=1,
+                )
+            finally:
+                os.umask(old_umask)
+            # Every comment line must have exactly one opening `/*` and one closing `*/` at the end
+            for line in res.css_text.splitlines():
+                stripped = line.strip()
+                if stripped.startswith("/*"):
+                    self.assertTrue(stripped.endswith("*/"), f"Unclosed comment line: {line!r}")
+                    inner = stripped[2:-2]
+                    self.assertNotIn("*/", inner, f"Unescaped comment closer inside comment: {line!r}")
+                if stripped.startswith("font-family:") or stripped.startswith("src:"):
+                    self.assertNotIn("\n", stripped)
+                    self.assertNotIn("\r", stripped)
+                    self.assertNotIn("\f", stripped)
+
+            self.assertIn(r"\'\a   src: url(\'x\');\d \c \\End", res.css_text)
+            self.assertIn(r"url('https://cdn.example/fonts\'\a /v1/", res.css_text)
+
+            # Verify published CSS and WOFF2 files are world-readable (0o644 under umask 0o022)
+            for p in (res.css_path, *(bf.path for bf in res.built_files)):
+                self.assertEqual(p.stat().st_mode & 0o777, 0o644, f"Unexpected mode for {p.name}")
+
+            # No leftover temporary files
+            leftover_tmps = list(out_dir.rglob("*.tmp*"))
+            self.assertEqual(leftover_tmps, [])
+
+            # Path traversal rejections
+            with self.assertRaisesRegex(ValueError, "slices_subdir"):
+                SliceConfig(slices_subdir="../escape")
+            with self.assertRaisesRegex(ValueError, "slices_subdir"):
+                SliceConfig(slices_subdir="/etc/escape")
+            with self.assertRaisesRegex(ValueError, "slug"):
+                slice_font(f400, out_dir=out_dir, slug="../escape", workers=1)
+            with self.assertRaisesRegex(ValueError, "css_filename"):
+                slice_font(f400, out_dir=out_dir, css_filename="../escape.css", workers=1)
 
 
 if __name__ == "__main__":
