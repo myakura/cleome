@@ -10,21 +10,21 @@ readme = "README.md"
 license = { file = "LICENSE" }
 requires-python = ">=3.15"
 dependencies = [
-    "fonttools[woff]>=4.50.0",
-    "brotli>=1.1.0",
+    "fonttools[woff]>=4.67.0",
+    "brotli>=1.2.1",
 ]
 
 [project.optional-dependencies]
 test = [
-    "uharfbuzz>=0.40.0",
+    "uharfbuzz>=0.56.4",
 ]
 
 [dependency-groups]
 dev = [
-    "uharfbuzz>=0.40.0",
+    "uharfbuzz>=0.56.4",
 ]
 test = [
-    "uharfbuzz>=0.40.0",
+    "uharfbuzz>=0.56.4",
 ]
 
 [project.scripts]
