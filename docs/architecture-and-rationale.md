@@ -7,9 +7,13 @@
 
 A Japanese font covers anywhere from ~7,000-9,300 glyphs (JIS Level 1 and 2 / Adobe-Japan1-3 class, such as `Kosugi Maru` or `IBM Plex Sans JP`) to 16,700-18,000 glyphs (Adobe-Japan1-6 / JIS Level 1-4 class, such as `Noto Sans JP`, `Source Han Sans`, or `BIZ UDPGothic`). Even with WOFF2 Brotli compression, a single static weight is 1.0 to 3.0 MB, and a multi-axis Variable Font reaches 2.5 to 6.0 MB.
 
-Serving a Japanese font as a single `@font-face` rule forces the browser to download the entire multi-megabyte binary synchronously as soon as a single character on the page matches the font family, delaying text rendering and causing layout shifts (FOUT / CLS). Conversely, static per-page subsetting works only when every possible text string is known at build time, which fails for blogs, CMS-driven sites, user-generated content, and web applications.
+Serving or self-hosting a CJK web font (whether directly from a CDN or through framework integrations such as Next.js `next/font`, Astro, or Fontsource) typically forces a choice between three flawed approaches:
 
-CSS `unicode-range` partitioning splits a font into smaller `.woff2` chunks so the browser downloads only the slices required by the characters on the page. However, existing public setups rely on a single static fixed-charset template shared across all Japanese fonts regardless of their actual glyph coverage, leaving no general-purpose open-source tool that dynamically adapts to any Japanese `.ttf` or `.otf` font's character set.
+* **Serving the unsliced font (`next/font/local` or raw `.woff2`)**: A single `@font-face` rule forces the browser to download the entire multi-megabyte binary synchronously as soon as a single character on the page matches the font family, delaying text rendering and causing layout shifts (FOUT / CLS).
+* **Running per-page dynamic subsetters on every site build**: Build plugins that scan HTML/JS and invoke a subsetter on every deploy add heavy CPU overhead to CI pipelines and only work when every possible text string is known at build time - breaking as soon as CMS updates, search results, or user-generated content introduce characters absent during the build.
+* **Copying Google Fonts' static 120-slice templates (`next/font/google` or pre-sliced packages)**: CSS `unicode-range` partitioning splits a font into smaller `.woff2` chunks so the browser downloads only the slices required by the page. However, existing public setups rely on a single static fixed-charset template shared across all fonts of a language regardless of their actual glyph coverage, bloating stylesheets to 107-150 KB per weight and emitting ghost `unicode-range` rules for smaller-charset fonts.
+
+`cleome` takes a **slice-once, serve-anywhere** approach: it inspects a font's `cmap` once to generate deterministic `.woff2` slices and a compact `@font-face` stylesheet that can be committed or hosted as static assets, supporting arbitrary dynamic content without per-deploy rebuilds.
 
 
 ---

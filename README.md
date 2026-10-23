@@ -2,7 +2,7 @@
 
 **`cleome`** is a Python CLI tool and library that takes Japanese, Korean, or Chinese (`JP` / `KR` / `SC` / `TC` / `HK`) fonts (`.ttf` / `.otf`, both **Variable Fonts** and **Static Fonts**) and generates Web-optimized `unicode-range` `.woff2` slices and `@font-face` CSS.
 
-`cleome` dynamically inspects the input font's character set (auto-detecting the target CJK profile or accepting `--locale jp|kr|sc|tc|hk`) to strike a more efficient balance between stylesheet size and font slice downloads than Google Fonts' static slicing templates, while preserving OpenType layout features, UVS/IVS variation sequences, and Variable Font axes.
+`cleome` slices a font **once** from its character set into deterministic static assets rather than scanning page HTML on every site deploy. The generated `.woff2` chunks and `@font-face` CSS drop directly into any self-hosting setup (Next.js, Astro, Fontsource, or static CDNs) and handle arbitrary dynamic text while cutting stylesheet size and `.woff2` transfer compared to Google Fonts' static slicing templates, preserving OpenType layout features, UVS/IVS variation sequences, and Variable Font axes.
 
 ---
 
