@@ -1,13 +1,13 @@
 # Cleome
 
-**Cleome** is a Python CLI tool and library that takes Japanese, Korean, or Chinese (`JP` / `KR` / `SC` / `TC` / `HK`) fonts (`.ttf` / `.otf`, both **Variable Fonts** and **Static Fonts**) and generates Web-optimized `unicode-range` `.woff2` slices and `@font-face` CSS.
+Cleome is a Python CLI tool and library that slices Japanese, Korean, and Chinese (`JP` / `KR` / `SC` / `TC` / `HK`) variable and static fonts (`.ttf` / `.otf`) into `unicode-range` `.woff2` files and `@font-face` CSS.
 
-Cleome slices a font **once** from its character set into deterministic static assets rather than scanning page HTML on every site deploy. The generated `.woff2` chunks and `@font-face` CSS drop directly into any self-hosting setup (Next.js, Astro, Fontsource, or static CDNs) and handle arbitrary dynamic text while cutting stylesheet size and `.woff2` transfer compared to Google Fonts' static slicing templates, preserving OpenType layout features, UVS/IVS variation sequences, and Variable Font axes.
+Cleome inspects a font's `cmap` once and writes deterministic static assets instead of scanning page HTML on every site deploy. You can host the generated `.woff2` chunks and `@font-face` stylesheet directly from Next.js, Astro, Fontsource, or any static CDN. Compared to Google Fonts' static slicing templates, Cleome produces smaller stylesheets and transfers fewer `.woff2` bytes while keeping OpenType layout features, UVS/IVS variation sequences, and variable font axes intact.
 
 ---
 
 
-## CLI Usage
+## CLI usage
 
 ```bash
 # Preview the dynamic 4-tier slice plan without writing files (read-only)
@@ -41,11 +41,11 @@ cleome build MyFont-VF.otf -o dist/web \
 ---
 
 
-## Python API Usage
+## Python API usage
 
-Cleome can be called directly from font build pipelines (accepting either file paths or in-memory `fontTools.ttLib.TTFont` objects without mutating the caller's `TTFont`).
+Call `slice_font` or `slice_fonts` from a build script with either file paths or in-memory `fontTools.ttLib.TTFont` objects. Cleome does not mutate caller-supplied `TTFont` instances.
 
-> **Note**: When `workers > 1` (the default), Cleome uses `ProcessPoolExecutor`. On platforms using `spawn` or `forkserver` (`macOS`, `Windows`, and `Linux` on Python 3.14+), top-level scripts must guard calls with `if __name__ == "__main__":` (or pass `workers=1`).
+When `workers > 1` (the default), Cleome runs subsetting in a `ProcessPoolExecutor`. On platforms that use `spawn` or `forkserver` (`macOS`, `Windows`, and `Linux` on Python 3.14+), guard top-level scripts with `if __name__ == "__main__":` or pass `workers=1`.
 
 ```python
 from pathlib import Path
@@ -78,7 +78,7 @@ if __name__ == "__main__":
 ---
 
 
-## Development & Testing
+## Development and testing
 
 ```bash
 uv venv
@@ -91,19 +91,19 @@ uv pip install -e ".[test]"
 
 ## Documentation
 
-* **[Architecture & Rationale](docs/architecture-and-rationale.md)**: Background, Google Fonts (`Noto Sans JP` and static fonts) `unicode-range` analysis, 4-tier cascade shadowing, inverted-pyramid Kanji granularity simulations, and OpenType subsetting details.
-* **[Chinese & Korean (`KR` / `SC` / `TC` / `HK`) Slicing Analysis](docs/cjk-slicing-analysis.md)**: Analysis of Google Fonts' Korean and Chinese (`SC`, `TC`, `HK`) slicing templates, ghost `unicode-range`s, punctuation/Jamo/Bopomofo fragmentation, and 4-tier simulation comparisons.
+* [Architecture and rationale](docs/architecture-and-rationale.md) explains the 4-tier cascade shadowing design, inverted-pyramid Kanji granularity simulations, OpenType subsetting details, and the issues found in Google Fonts' Japanese delivery.
+* [Chinese and Korean (`KR` / `SC` / `TC` / `HK`) slicing analysis](docs/cjk-slicing-analysis.md) covers Google Fonts' Korean and Chinese (`SC`, `TC`, `HK`) slice templates, ghost `unicode-range` rules, punctuation/Jamo/Bopomofo splits, and 4-tier simulation results.
 
 ---
 
 
 ## Acknowledgments
 
-* **[Google Fonts](https://fonts.google.com/)**: For pioneering frequency-ranked `unicode-range` web font delivery and providing the production stylesheets and slices that informed Cleome's analysis and Kanji frequency rankings.
-* **[Noto Sans Japanese (`Noto Sans JP`)](https://fonts.google.com/noto/specimen/Noto+Sans+JP) & [Source Han Sans (`源ノ角ゴシック`)](https://github.com/adobe-fonts/source-han-sans)**: For serving as the foundational open-source Japanese typefaces inspected during the design and verification of Cleome.
-* **[fontTools](https://github.com/fonttools/fonttools)**: For OpenType table inspection, `cmap` / `GSUB` / `GPOS` subsetting (`fontTools.subset`), and WOFF2 table packing.
-* **[Brotli](https://github.com/google/brotli)**: For WOFF2 stream compression and decompression.
-* **[HarfBuzz](https://github.com/harfbuzz/harfbuzz) & [uharfbuzz](https://github.com/harfbuzz/uharfbuzz)**: For verifying OpenType glyph shaping, `cmap` Format 14 IVS/UVS variation sequences, and combining mark composition (`ccmp`) across slices.
+* [Google Fonts](https://fonts.google.com/) published the production stylesheets, slice definitions (`gfsubsets` / `nam-files`), and corpus frequency data analyzed during this project.
+* [Noto Sans Japanese (`Noto Sans JP`)](https://fonts.google.com/noto/specimen/Noto+Sans+JP) and [Source Han Sans (`源ノ角ゴシック`)](https://github.com/adobe-fonts/source-han-sans) were the primary Japanese typefaces used to test and verify Cleome.
+* [fontTools](https://github.com/fonttools/fonttools) handles OpenType table inspection, `cmap` / `GSUB` / `GPOS` subsetting (`fontTools.subset`), and WOFF2 packing.
+* [Brotli](https://github.com/google/brotli) compresses and decompresses the WOFF2 streams.
+* [HarfBuzz](https://github.com/harfbuzz/harfbuzz) and [uharfbuzz](https://github.com/harfbuzz/uharfbuzz) verify OpenType glyph shaping, `cmap` Format 14 variation sequences, and combining mark composition (`ccmp`) in the test suite.
 
 ---
 

@@ -50,10 +50,10 @@ def _create_subset_options(
     options = Options()
     options.flavor = "woff2"
     options.desubroutinize = False
-    # Retain specified layout features and all scripts so intra-slice lookups —
-    # single-glyph substitutions (`vert`/`vrt2`), proportional metrics (`palt`/`vpal`/`halt`/`vhal`),
-    # kerning, ligatures, and base + combining mark composition (`ccmp`/`mark`/`mkmk` when both
-    # base and mark reside in the same slice) — are preserved via forward GSUB closure.
+    # Retain specified layout features and all scripts so forward GSUB closure preserves
+    # intra-slice lookups (single-glyph substitutions `vert`/`vrt2`, proportional metrics
+    # `palt`/`vpal`/`halt`/`vhal`, kerning, ligatures, and `ccmp`/`mark`/`mkmk` composition
+    # when both base and mark reside in the same slice).
     options.layout_features = list(layout_features)
     options.layout_scripts = ["*"]
     options.layout_closure = retain_layout_closure
