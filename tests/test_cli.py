@@ -113,10 +113,53 @@ class TestCleomeCLI(unittest.TestCase):
                 build_data = json.loads(buf_build_json.getvalue())
                 self.assertTrue(build_data["ok"])
                 self.assertEqual(build_data["command"], "build")
+                self.assertFalse(build_data["cached"])
                 self.assertEqual(build_data["locale"], "jp")
                 self.assertEqual(build_data["slice_count"], 4)
                 self.assertTrue((build_out / "subcmd-test.css").exists())
                 self.assertEqual(len(list((build_out / "slices").glob("*.woff2"))), 4)
+
+                # 3b. Second `cleome build` hits the cache (`cached: true` in JSON, `Cached ... (up to date)` in text)
+                buf_cached_json = StringIO()
+                with redirect_stdout(buf_cached_json):
+                    rc_cached = cli_main(
+                        ["build", str(font_path), "-o", str(build_out), "--locale", "jp", "-j", "1", "--json"]
+                    )
+                self.assertEqual(rc_cached, 0)
+                cached_data = json.loads(buf_cached_json.getvalue())
+                self.assertTrue(cached_data["cached"])
+                self.assertEqual(cached_data["slice_count"], 4)
+                self.assertEqual(cached_data["total_woff2_bytes"], build_data["total_woff2_bytes"])
+
+                buf_cached_text = StringIO()
+                with redirect_stdout(buf_cached_text):
+                    rc_cached_txt = cli_main(
+                        ["build", str(font_path), "-o", str(build_out), "--locale", "jp", "-j", "1"]
+                    )
+                self.assertEqual(rc_cached_txt, 0)
+                self.assertIn("[cleome] Cached 4 WOFF2 slices", buf_cached_text.getvalue())
+                self.assertIn("(up to date)", buf_cached_text.getvalue())
+
+                # 3c. `cleome build --force` bypasses cache and rebuilds (`cached: false`)
+                buf_force_json = StringIO()
+                with redirect_stdout(buf_force_json):
+                    rc_force = cli_main(
+                        [
+                            "build",
+                            str(font_path),
+                            "-o",
+                            str(build_out),
+                            "--locale",
+                            "jp",
+                            "-j",
+                            "1",
+                            "--force",
+                            "--json",
+                        ]
+                    )
+                self.assertEqual(rc_force, 0)
+                force_data = json.loads(buf_force_json.getvalue())
+                self.assertFalse(force_data["cached"])
 
                 # 4. Empty string or invalid CSS/path tokens return exit code 1 with error on stderr
                 empty_display_buf = StringIO()

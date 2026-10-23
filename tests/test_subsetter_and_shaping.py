@@ -771,6 +771,146 @@ class TestSubsetterAndShaping(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "css_filename"):
                 slice_font(f400, out_dir=out_dir, css_filename="../escape.css", workers=1)
 
+    def test_build_cache_skip_subsetting_and_invalidation(self) -> None:
+        """
+        Verify build caching across single- and multi-font bundles:
+        1. Second invocation with identical inputs and `SliceConfig` skips `_export_woff2_slices_batch`,
+           returns `cached=True`, and preserves `built_files` (`size_bytes`, `glyph_count`, `spec`,
+           `variant_suffix`), `slice_specs`, `variant_slice_specs`, and `css_text` without creating
+           extra files in `out_dir` or `slices_dir`.
+        2. Changing `SliceConfig` (e.g. `rare_kanji_chunk_size`, `locale`, `url_prefix`), override args
+           (`weight`, `family_name`), or input font bytes invalidates the cache and triggers a rebuild.
+        3. Deleting or truncating/corrupting any `.woff2` slice or modifying the CSS file invalidates
+           the cache and rebuilds the intact files.
+        4. `force=True` bypasses a valid cache and rebuilds.
+        """
+        from unittest.mock import patch
+
+        cps_reg = [ord("A"), ord("あ"), ord("日"), 0x4E02, 0x4E04]
+        cps_bold = [ord("A"), ord("あ"), ord("日"), 0x4E02, 0x4E04, 0x4E05]
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            p_reg = tmp_path / "Cache-Regular.ttf"
+            p_bold = tmp_path / "Cache-Bold.ttf"
+            create_synthetic_ttfont(cps_reg, family_name="Cache Sans", weight=400).save(
+                p_reg, reorderTables=False
+            )
+            create_synthetic_ttfont(cps_bold, family_name="Cache Sans", weight=700).save(
+                p_bold, reorderTables=False
+            )
+
+            out_dir = tmp_path / "dist_cache"
+
+            # 1. Initial build -> cached=False
+            res1 = slice_fonts([p_reg, p_bold], out_dir=out_dir, workers=1)
+            self.assertFalse(res1.cached)
+            self.assertTrue(res1.css_path.exists())
+            # Ensure no dotfile or JSON manifest polluted out_dir or slices_dir
+            self.assertEqual([p.name for p in out_dir.iterdir() if p.is_file()], [res1.css_path.name])
+            self.assertTrue(all(p.suffix == ".woff2" for p in res1.slices_dir.iterdir()))
+
+            # 2. Second call -> skips _export_woff2_slices_batch completely and returns identical metadata
+            with patch(
+                "cleome.css._export_woff2_slices_batch",
+                side_effect=AssertionError("_export_woff2_slices_batch should be skipped on cache hit"),
+            ) as mock_export:
+                res2 = slice_fonts([p_reg, p_bold], out_dir=out_dir, workers=1)
+                self.assertEqual(mock_export.call_count, 0)
+
+            self.assertTrue(res2.cached)
+            self.assertEqual(res2.css_text, res1.css_text)
+            self.assertEqual(res2.total_woff2_bytes, res1.total_woff2_bytes)
+            self.assertEqual(res2.slice_specs, res1.slice_specs)
+            self.assertEqual(res2.variant_slice_specs, res1.variant_slice_specs)
+            self.assertEqual(res2.built_files, res1.built_files)
+
+            # 3. Changing SliceConfig (e.g. rare_kanji_chunk_size=1) invalidates cache -> cached=False
+            res_cfg = slice_fonts(
+                [p_reg, p_bold],
+                out_dir=out_dir,
+                config=SliceConfig(rare_kanji_chunk_size=1),
+                workers=1,
+            )
+            self.assertFalse(res_cfg.cached)
+            self.assertGreater(len(res_cfg.built_files), len(res1.built_files))
+
+            # Repeat with rare_kanji_chunk_size=1 -> cached=True
+            res_cfg_hit = slice_fonts(
+                [p_reg, p_bold],
+                out_dir=out_dir,
+                config=SliceConfig(rare_kanji_chunk_size=1),
+                workers=1,
+            )
+            self.assertTrue(res_cfg_hit.cached)
+
+            # 4. Missing .woff2 slice invalidates cache and restores the deleted file
+            victim = res_cfg_hit.built_files[0].path
+            victim.unlink()
+            res_missing = slice_fonts(
+                [p_reg, p_bold],
+                out_dir=out_dir,
+                config=SliceConfig(rare_kanji_chunk_size=1),
+                workers=1,
+            )
+            self.assertFalse(res_missing.cached)
+            self.assertTrue(victim.exists())
+
+            # 5. Truncated / corrupted .woff2 slice (both size mismatch and same-size content corruption)
+            orig_bytes = victim.read_bytes()
+            victim.write_bytes(orig_bytes[:10])
+            res_corrupt = slice_fonts(
+                [p_reg, p_bold],
+                out_dir=out_dir,
+                config=SliceConfig(rare_kanji_chunk_size=1),
+                workers=1,
+            )
+            self.assertFalse(res_corrupt.cached)
+            self.assertEqual(victim.read_bytes(), orig_bytes)
+
+            # 5b. Same-size content modification (e.g. overwritten by another build with identical byte length)
+            flipped = bytes([orig_bytes[0] ^ 0xFF]) + orig_bytes[1:]
+            self.assertEqual(len(flipped), len(orig_bytes))
+            victim.write_bytes(flipped)
+            res_same_size_corrupt = slice_fonts(
+                [p_reg, p_bold],
+                out_dir=out_dir,
+                config=SliceConfig(rare_kanji_chunk_size=1),
+                workers=1,
+            )
+            self.assertFalse(res_same_size_corrupt.cached)
+            self.assertEqual(victim.read_bytes(), orig_bytes)
+
+            # 6. Modified input font binary invalidates cache
+            create_synthetic_ttfont([*cps_reg, ord("B")], family_name="Cache Sans", weight=400).save(
+                p_reg, reorderTables=False
+            )
+            res_font_changed = slice_fonts(
+                [p_reg, p_bold],
+                out_dir=out_dir,
+                config=SliceConfig(rare_kanji_chunk_size=1),
+                workers=1,
+            )
+            self.assertFalse(res_font_changed.cached)
+
+            # 7. force=True bypasses cache even when everything is up to date
+            res_forced = slice_fonts(
+                [p_reg, p_bold],
+                out_dir=out_dir,
+                config=SliceConfig(rare_kanji_chunk_size=1),
+                workers=1,
+                force=True,
+            )
+            self.assertFalse(res_forced.cached)
+
+            # 8. Custom slugs containing ',', ':', or '*' hit the cache on second build
+            for special_slug in ("cache,font", "cache:font", "cache*font"):
+                special_out = tmp_path / f"out_{special_slug}"
+                r1 = slice_font(p_reg, out_dir=special_out, slug=special_slug, workers=1)
+                r2 = slice_font(p_reg, out_dir=special_out, slug=special_slug, workers=1)
+                self.assertFalse(r1.cached)
+                self.assertTrue(r2.cached, f"Expected cache hit for slug={special_slug!r}")
+
 
 if __name__ == "__main__":
     unittest.main()

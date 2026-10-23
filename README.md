@@ -15,7 +15,9 @@ cleome plan SourceHanSansJP-VF.otf
 cleome plan SourceHanSansJP-VF.otf --json
 
 # Slice a Variable Font (auto-detects CJK profile; outputs <out-dir>/<slug>.css and <out-dir>/slices/<slug>-*.woff2)
+# Subsequent builds with unchanged inputs/config skip WOFF2 subsetting automatically; pass --force to rebuild
 cleome build SourceHanSansJP-VF.otf -o dist/web
+cleome build SourceHanSansJP-VF.otf -o dist/web --force
 
 # Explicitly select a CJK slicing profile (auto, jp, kr, sc, tc, hk)
 cleome build SourceHanSansJP-VF.otf --locale jp -o dist/web-jp

@@ -177,6 +177,11 @@ def _add_shared_arguments(parser: argparse.ArgumentParser, *, is_build: bool) ->
             default=None,
             help="Number of parallel worker processes for WOFF2 compression (default: CPU count)",
         )
+        parser.add_argument(
+            "--force",
+            action="store_true",
+            help="Rebuild all WOFF2 slices and CSS even if cached outputs are up to date",
+        )
     parser.add_argument(
         "--json",
         dest="json_output",
@@ -314,6 +319,7 @@ def _run_build(args: argparse.Namespace, config: SliceConfig) -> int:
             style=args.style,
             config=config,
             workers=args.workers,
+            force=args.force,
         )
     except ValueError as exc:
         print(f"Error: {exc}", file=sys.stderr)
@@ -330,6 +336,7 @@ def _run_build(args: argparse.Namespace, config: SliceConfig) -> int:
         payload = {
             "ok": True,
             "command": "build",
+            "cached": result.cached,
             "family_name": result.family_name,
             "slug": result.slug,
             "locale": resolved_loc,
@@ -343,10 +350,12 @@ def _run_build(args: argparse.Namespace, config: SliceConfig) -> int:
         print(json.dumps(payload, ensure_ascii=False))
         return 0
 
+    action_label = "Cached" if result.cached else "Built"
+    cache_suffix = " (up to date)" if result.cached else ""
     print(
-        f"[cleome] Built {len(result.built_files)} WOFF2 slices "
+        f"[cleome] {action_label} {len(result.built_files)} WOFF2 slices "
         f"({result.total_woff2_bytes / (1024 * 1024):.2f} MB total) + "
-        f"{result.css_path.name} ({result.css_bytes / 1024:.1f} KB) in {elapsed:.2f}s"
+        f"{result.css_path.name} ({result.css_bytes / 1024:.1f} KB) in {elapsed:.2f}s{cache_suffix}"
     )
     print(f"         CSS   : {result.css_path}")
     print(f"         Slices: {result.slices_dir}/")
