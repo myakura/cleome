@@ -806,6 +806,13 @@ class TestSubsetterAndShaping(unittest.TestCase):
             res1 = slice_fonts([p_reg, p_bold], out_dir=out_dir, workers=1)
             self.assertFalse(res1.cached)
             self.assertTrue(res1.css_path.exists())
+            css_lines = res1.css_text.splitlines()
+            self.assertEqual(len(css_lines[1]), 96)
+            self.assertRegex(
+                css_lines[1],
+                r"^/\* cleome-cache: v1 key=[0-9a-f]{32} out=[0-9a-f]{32} \*/$",
+            )
+            self.assertIn(" glyphs, ", css_lines[4])
             # Ensure no dotfile or JSON manifest polluted out_dir or slices_dir
             self.assertEqual([p.name for p in out_dir.iterdir() if p.is_file()], [res1.css_path.name])
             self.assertTrue(all(p.suffix == ".woff2" for p in res1.slices_dir.iterdir()))

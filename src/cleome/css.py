@@ -31,7 +31,10 @@ from cleome.subsetter import (
 
 _CACHE_FORMAT_VERSION = 1
 _CACHE_COMMENT_RE = re.compile(
-    r"^/\* cleome-cache: v(?P<version>\d+) sha256=(?P<sha256>[0-9a-f]{64}) slices=(?P<slices>[^*]*) \*/$"
+    r"^/\* cleome-cache: v(?P<version>\d+) key=(?P<key>[0-9a-f]{32}) out=(?P<out>[0-9a-f]{32}) \*/$"
+)
+_BLOCK_GLYPHS_RE = re.compile(
+    r"^/\* \[[^\]]+\] .* \((?P<glyphs>\d+) glyphs, [0-9.]+ KB\) \*/$"
 )
 
 
@@ -144,15 +147,20 @@ def _format_font_face(
     return f"{_render_css(comment)}\n@font-face {{\n{body}\n}}"
 
 
-def _format_cache_comment(cache_key: str, built_files: list[BuiltSliceFile]) -> str:
-    tokens: list[str] = []
+def _compute_slices_output_digest(built_files: list[BuiltSliceFile]) -> str:
+    """Compute a single 32-hex-char SHA-256 digest over all built `.woff2` slice files in order."""
+    hasher = hashlib.sha256()
     for bf in built_files:
-        file_digest = hashlib.sha256(bf.path.read_bytes()).hexdigest()[:16]
-        tokens.append(f"{bf.size_bytes}:{bf.glyph_count}:{file_digest}")
-    slices_token = ",".join(tokens)
+        raw = bf.path.read_bytes()
+        hasher.update(f"{bf.filename}:{len(raw)}:{bf.glyph_count}\n".encode("utf-8"))
+        hasher.update(raw)
+    return hasher.hexdigest()[:32]
+
+
+def _format_cache_comment(cache_key: str, out_digest: str) -> str:
     return (
         f"/* cleome-cache: v{_CACHE_FORMAT_VERSION} "
-        f"sha256={cache_key} slices={slices_token} */"
+        f"key={cache_key} out={out_digest} */"
     )
 
 
@@ -221,7 +229,7 @@ def _compute_cache_key(
         ],
     }
     raw = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
-    return hashlib.sha256(raw).hexdigest()
+    return hashlib.sha256(raw).hexdigest()[:32]
 
 
 def _try_load_cached_bundle(
@@ -247,74 +255,83 @@ def _try_load_cached_bundle(
     if (
         match is None
         or int(match.group("version")) != _CACHE_FORMAT_VERSION
-        or match.group("sha256") != cache_key
+        or match.group("key") != cache_key
     ):
         return None
+    expected_out_digest = match.group("out")
 
-    slices_str = match.group("slices").strip()
-    entries = [item for item in slices_str.split(",") if item] if slices_str else []
+    # Extract per-block glyph counts from `/* [slice-id] ... (N glyphs, M.K KB) */` lines
+    block_glyphs: list[int] = []
+    for line in lines[2:]:
+        bm = _BLOCK_GLYPHS_RE.match(line.strip())
+        if bm is not None:
+            block_glyphs.append(int(bm.group("glyphs")))
 
-    expected_specs: list[tuple[FontMetadata, SliceSpec, str]] = []
-    for m, plan in zip(metas, variant_plans):
-        for spec in plan:
-            if not (spec.binary_codepoints & m.codepoints):
-                continue
-            fname = _validate_filename_token(
-                spec.filename(m.slug, m.variant_suffix), "slice filename"
-            )
-            expected_specs.append((m, spec, fname))
-
-    if len(entries) != len(expected_specs):
+    expected_block_count = sum(
+        len(m.styles_css or (m.style_css,))
+        * sum(1 for spec in plan if spec.binary_codepoints & m.codepoints)
+        for m, plan in zip(metas, variant_plans)
+    )
+    if len(block_glyphs) != expected_block_count:
         return None
 
     slices_dir_resolved = slices_dir.resolve()
     per_meta_files: dict[int, list[BuiltSliceFile]] = {i: [] for i in range(len(metas))}
     all_built_files: list[BuiltSliceFile] = []
+    out_hasher = hashlib.sha256()
 
-    meta_index_map = {id(m): idx for idx, m in enumerate(metas)}
-    for entry, (m, spec, expected_fname) in zip(entries, expected_specs):
-        parts = entry.split(":")
-        if len(parts) != 3:
-            return None
-        size_str, glyphs_str, expected_digest = parts
-        if len(expected_digest) != 16:
-            return None
-        try:
-            expected_size = int(size_str)
-            glyph_count = int(glyphs_str)
-        except ValueError:
-            return None
-        if expected_size <= 0 or glyph_count <= 0:
-            return None
+    block_cursor = 0
+    for meta_idx, (m, plan) in enumerate(zip(metas, variant_plans)):
+        active_specs = [spec for spec in plan if spec.binary_codepoints & m.codepoints]
+        num_styles = len(m.styles_css or (m.style_css,))
+        n_specs = len(active_specs)
+        # First style block carries the glyph counts for this variant's active slices
+        variant_glyph_counts = block_glyphs[block_cursor : block_cursor + n_specs]
+        block_cursor += num_styles * n_specs
 
-        slice_path = slices_dir / expected_fname
-        try:
-            if not slice_path.resolve().is_relative_to(slices_dir_resolved):
+        for spec, glyph_count in zip(active_specs, variant_glyph_counts):
+            if glyph_count <= 0:
                 return None
-            st = slice_path.stat()
-            if st.st_size != expected_size:
+            expected_fname = _validate_filename_token(
+                spec.filename(m.slug, m.variant_suffix), "slice filename"
+            )
+            slice_path = slices_dir / expected_fname
+            try:
+                if not slice_path.resolve().is_relative_to(slices_dir_resolved):
+                    return None
+                raw_slice = slice_path.read_bytes()
+            except OSError:
                 return None
-            raw_slice = slice_path.read_bytes()
-        except OSError:
-            return None
-        if len(raw_slice) != expected_size:
-            return None
-        if hashlib.sha256(raw_slice).hexdigest()[:16] != expected_digest:
-            return None
+            size_bytes = len(raw_slice)
+            if size_bytes <= 0:
+                return None
 
-        bf = BuiltSliceFile(
-            spec=spec,
-            filename=expected_fname,
-            path=slice_path,
-            size_bytes=expected_size,
-            glyph_count=glyph_count,
-            variant_suffix=m.variant_suffix,
-        )
-        per_meta_files[meta_index_map[id(m)]].append(bf)
-        all_built_files.append(bf)
+            out_hasher.update(
+                f"{expected_fname}:{size_bytes}:{glyph_count}\n".encode("utf-8")
+            )
+            out_hasher.update(raw_slice)
+
+            bf = BuiltSliceFile(
+                spec=spec,
+                filename=expected_fname,
+                path=slice_path,
+                size_bytes=size_bytes,
+                glyph_count=glyph_count,
+                variant_suffix=m.variant_suffix,
+            )
+            per_meta_files[meta_idx].append(bf)
+            all_built_files.append(bf)
+
+    if out_hasher.hexdigest()[:32] != expected_out_digest:
+        return None
 
     fonts_and_files = [(m, per_meta_files[i]) for i, m in enumerate(metas)]
-    expected_css = generate_css(fonts_and_files, config=config, cache_key=cache_key)
+    expected_css = generate_css(
+        fonts_and_files,
+        config=config,
+        cache_key=cache_key,
+        out_digest=expected_out_digest,
+    )
     if css_text != expected_css:
         return None
 
@@ -337,6 +354,7 @@ def generate_css(
     config: SliceConfig | None = None,
     *,
     cache_key: str | None = None,
+    out_digest: str | None = None,
 ) -> str:
     """
     Generate the complete `@font-face` CSS text for one or more font variants.
@@ -360,7 +378,12 @@ def generate_css(
             )
         )
         if cache_key is not None:
-            blocks.append(_format_cache_comment(cache_key, all_files))
+            resolved_out = (
+                out_digest
+                if out_digest is not None
+                else _compute_slices_output_digest(all_files)
+            )
+            blocks.append(_format_cache_comment(cache_key, resolved_out))
 
     for meta, built_files in fonts_and_files:
         styles = meta.styles_css or (meta.style_css,)
@@ -382,7 +405,7 @@ def generate_css(
                 url_val = f"{url_prefix}{bf.filename}"
                 blocks.append(
                     _format_font_face(
-                        t"/* [{spec.slice_id}] {spec.description} ({size_kb:.1f} KB) */",
+                        t"/* [{spec.slice_id}] {spec.description} ({bf.glyph_count} glyphs, {size_kb:.1f} KB) */",
                         {
                             "font-family": t"'{meta.family_name}'",
                             "font-style": style_val,
