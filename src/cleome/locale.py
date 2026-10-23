@@ -1,6 +1,6 @@
 """
 Unicode character classification predicates and CJK locale auto-detection
-(`"jp"`, `"kr"`, `"sc"`, `"tc"`, `"hk"`) for cleome.
+(`"jp"`, `"kr"`, `"sc"`, `"tc"`, `"hk"`) for Cleome.
 """
 
 import re

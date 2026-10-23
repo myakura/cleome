@@ -1,5 +1,5 @@
 """
-Core dynamic unicode-range slicing planner for cleome.
+Core dynamic unicode-range slicing planner for Cleome.
 
 Implements the 4-tier architecture:
 - Tier 4 (kanji-rare-XX): Rare/Extended Kanji (JIS Level 2-4, Ext A-I, Compat) declared FIRST

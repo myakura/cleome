@@ -1,5 +1,5 @@
 """
-WOFF2 subsetting and parallel export engine for cleome.
+WOFF2 subsetting and parallel export engine for Cleome.
 
 Uses `fontTools.subset` while preserving OpenType Layout features (`GSUB`, `GPOS`, `GDEF`),
 OFL/license metadata (`nameID` 0, 13, 14), source `head.modified` timestamps, and

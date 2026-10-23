@@ -1,5 +1,5 @@
 """
-cleome — Smart `unicode-range` WOFF2 slicer and `@font-face` CSS generator
+Cleome — Smart `unicode-range` WOFF2 slicer and `@font-face` CSS generator
 for Japanese Variable and Static web fonts.
 
 Uses CSS Cascade Shadowing (1-token hex ranges for rare Kanji) and

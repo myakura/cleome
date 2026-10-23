@@ -2,7 +2,7 @@
 
 While [Architecture & Rationale](architecture-and-rationale.md) focuses on Japanese (`JP`) web fonts, Chinese (Simplified `SC`, Traditional `TC`, and Hong Kong `HK`) and Korean (`KR`) web fonts face analogous multi-megabyte delivery challenges with distinct script structures.
 
-To evaluate how production CJK slicing behaves outside Japanese and how `cleome`'s 4-tier architecture applies to Chinese and Korean, we inspected 37 Google Fonts CSS2 stylesheets and 1,785 `.woff2` / `.ttf` slice binaries across 28 Chinese and Korean families:
+To evaluate how production CJK slicing behaves outside Japanese and how Cleome's 4-tier architecture applies to Chinese and Korean, we inspected 37 Google Fonts CSS2 stylesheets and 1,785 `.woff2` / `.ttf` slice binaries across 28 Chinese and Korean families:
 
 * **Korean (`KR`, 12 families)**: Variable Fonts `Noto Sans KR` (v40), `Noto Serif KR`, and `Hahmlet`; Static Fonts `IBM Plex Sans KR`, `Nanum Gothic`, `Nanum Myeongjo`, `Gothic A1`, `Gowun Dodum`, `Gowun Batang`, `Do Hyeon`, `Black Han Sans`, and `Bagel Fat One` (plus `Orbit`, `Diphylleia`, `Gasoek One`, `Jua`, and `Song Myung`).
 * **Simplified Chinese (`SC`, 9 families)**: Variable Fonts `Noto Sans SC` (v41) and `Noto Serif SC`; Static Fonts `ZCOOL XiaoWei`, `ZCOOL KuaiLe`, `ZCOOL QingKe HuangYou`, `Ma Shan Zheng`, `Long Cang`, `Liu Jian Mao Cao`, and `Zhi Mang Xing`.
@@ -111,9 +111,9 @@ Neither `SC` nor `TC`/`HK` defines a dedicated CJK punctuation or phonetic core 
 ---
 
 
-## How Does `cleome`'s 4-Tier Architecture Perform on Korean and Chinese?
+## How Does Cleome's 4-Tier Architecture Perform on Korean and Chinese?
 
-Applying `cleome`'s three core mechanisms - **(1) Tier 4 CSS Cascade Shadowing with 1-token hex ranges**, **(2) Tier 1 & Tier 2 semantic non-ideograph partitioning and `cmap`-driven compaction**, and **(3) Tier 3 Inverted-Pyramid progressive granularity** - resolves these issues across Korean, Simplified Chinese, and Traditional/Hong Kong Chinese.
+Applying Cleome's three core mechanisms - **(1) Tier 4 CSS Cascade Shadowing with 1-token hex ranges**, **(2) Tier 1 & Tier 2 semantic non-ideograph partitioning and `cmap`-driven compaction**, and **(3) Tier 3 Inverted-Pyramid progressive granularity** - resolves these issues across Korean, Simplified Chinese, and Traditional/Hong Kong Chinese.
 
 
 ### 1. Korean (`KR`) 4-Tier Architecture & Simulation Comparison
@@ -129,7 +129,7 @@ Applying `cleome`'s three core mechanisms - **(1) Tier 4 CSS Cascade Shadowing w
   * **Automatic scaling for Hangul-only and KS X 1001 fonts**: Because slices are built strictly from the input font's `cmap`, a Hangul-only font (`IBM Plex Sans KR`) omits all 20 Hanja slices (scaling to 71 slices / ~35 KB CSS), and a 2,350-syllable KS X 1001 display font (`Do Hyeon`, `Black Han Sans`, `Bagel Fat One`) omits both Hanja and `hangul-rare` (scaling to **36 slices / ~27 KB CSS** with **zero ghost `unicode-range`s**).
 
 
-| Metric / Scenario | Google Fonts `KR` Current<br>_(124 slices, 100-char fixed)_ | `cleome` 4-Tier Model for `KR`<br>_(91 slices, Inverted-Pyramid + cascade shadowing)_ |
+| Metric / Scenario | Google Fonts `KR` Current<br>_(124 slices, 100-char fixed)_ | Cleome 4-Tier Model for `KR`<br>_(91 slices, Inverted-Pyramid + cascade shadowing)_ |
 | :--- | :--- | :--- |
 | **Total slices (`@font-face` rules)** | 124 _(92-99 for Hangul-only; 88-93 for KS X 1001)_ | **91** _(scales down to 71 for Hangul-only and **36** for KS X 1001 fonts)_ |
 | **Raw CSS size (`unicode-range` text)** | 93.4 KB (60.4 KB) | **~39.5 KB (20.4 KB; -57.7% raw CSS reduction)** |
@@ -154,7 +154,7 @@ Applying `cleome`'s three core mechanisms - **(1) Tier 4 CSS Cascade Shadowing w
   * **CSS reduction**: Tier 4 `unicode-range` text shrinks from **54.7 KB (`SC`), 61.5 KB (`TC`), and 78.3 KB (`HK`) to 0.4-0.5 KB (a >99.2% reduction)**, cutting overall single-weight CSS size in half (from 110.7-150.4 KB to **54.6-57.1 KB raw / ~7 KB Brotli**).
   * **Automatic scaling for GB2312 static fonts**: A 6,763-character GB2312 font (`ZCOOL XiaoWei`, `Ma Shan Zheng`, `Long Cang`) scales down to **66 slices (~48 KB CSS)** with **zero ghost `unicode-range`s**.
 
-| Metric / Scenario (`SC` - `Noto Sans SC` VF) | Google Fonts `SC` Current<br>_(101 slices, 188-char fixed)_ | `cleome` 4-Tier Model for `SC`<br>_(96 slices, Inverted-Pyramid + cascade shadowing)_ |
+| Metric / Scenario (`SC` - `Noto Sans SC` VF) | Google Fonts `SC` Current<br>_(101 slices, 188-char fixed)_ | Cleome 4-Tier Model for `SC`<br>_(96 slices, Inverted-Pyramid + cascade shadowing)_ |
 | :--- | :--- | :--- |
 | **Total slices (`@font-face` rules)** | 101 _(92-93 for ~6,763-char GB2312 static fonts)_ | **96** _(scales down to **66** for GB2312 static fonts)_ |
 | **Raw CSS size (`unicode-range` text)** | 110.7 KB (82.3 KB; 54.7 KB in Tier 4 alone) | **~56.3 KB (36.2 KB; 0.4 KB in Tier 4, -49.1% reduction)** |
@@ -163,7 +163,7 @@ Applying `cleome`'s three core mechanisms - **(1) Tier 4 CSS Cascade Shadowing w
 | **Scenario 3: Blog intro**<br>(~170 chars / 118 unique) | 14 files / 747.5 KB | **20 files / 575.7 KB (-23.0% / -171.8 KB)** |
 | **Scenario 4: Full technical article**<br>(~4,500 chars / 563 unique) | 22 files / 1,228.5 KB | **41 files / 1,123.7 KB (-104.8 KB transfer)** |
 
-| Metric / Scenario (`TC` / `HK` - `Noto Sans TC` VF) | Google Fonts `TC` / `HK` Current<br>_(108 / 109 slices, 213-char fixed)_ | `cleome` 4-Tier Model for `TC` / `HK`<br>_(96 / 108 slices, Inverted-Pyramid + cascade shadowing)_ |
+| Metric / Scenario (`TC` / `HK` - `Noto Sans TC` VF) | Google Fonts `TC` / `HK` Current<br>_(108 / 109 slices, 213-char fixed)_ | Cleome 4-Tier Model for `TC` / `HK`<br>_(96 / 108 slices, Inverted-Pyramid + cascade shadowing)_ |
 | :--- | :--- | :--- |
 | **Total slices (`@font-face` rules)** | 108 (`TC`) / 109 (`HK`) | **96 (`TC`) / 108 (`HK`)** |
 | **Raw CSS size (`unicode-range` text)** | 122.4 KB (`TC`, 91.9 KB) / 138.6 KB (`HK`, 108.2 KB) | **~54.6 KB (`TC`, -55.4%) / ~57.1 KB (`HK`, -58.8%)** |

@@ -1,5 +1,5 @@
 """
-Shared synthetic font builders and CSS Cascade Shadowing invariant assertions for the cleome test suite.
+Shared synthetic font builders and CSS Cascade Shadowing invariant assertions for the Cleome test suite.
 """
 
 from pathlib import Path

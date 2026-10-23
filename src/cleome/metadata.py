@@ -1,6 +1,6 @@
 """
 OpenType table inspection (`name`, `fvar`, `OS/2`, `post`, `cmap`), UVS Format 14 base
-character auto-patching, and CSS `@font-face` metadata extraction for cleome.
+character auto-patching, and CSS `@font-face` metadata extraction for Cleome.
 """
 
 from dataclasses import dataclass, field

@@ -1,4 +1,4 @@
-"""Data modules for cleome."""
+"""Data modules for Cleome."""
 
 from cleome.data.kanji_freq import KANJI_FREQ_CHARS, KANJI_FREQ_CODEPOINTS
 

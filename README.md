@@ -1,8 +1,8 @@
-# cleome
+# Cleome
 
-**`cleome`** is a Python CLI tool and library that takes Japanese, Korean, or Chinese (`JP` / `KR` / `SC` / `TC` / `HK`) fonts (`.ttf` / `.otf`, both **Variable Fonts** and **Static Fonts**) and generates Web-optimized `unicode-range` `.woff2` slices and `@font-face` CSS.
+**Cleome** is a Python CLI tool and library that takes Japanese, Korean, or Chinese (`JP` / `KR` / `SC` / `TC` / `HK`) fonts (`.ttf` / `.otf`, both **Variable Fonts** and **Static Fonts**) and generates Web-optimized `unicode-range` `.woff2` slices and `@font-face` CSS.
 
-`cleome` slices a font **once** from its character set into deterministic static assets rather than scanning page HTML on every site deploy. The generated `.woff2` chunks and `@font-face` CSS drop directly into any self-hosting setup (Next.js, Astro, Fontsource, or static CDNs) and handle arbitrary dynamic text while cutting stylesheet size and `.woff2` transfer compared to Google Fonts' static slicing templates, preserving OpenType layout features, UVS/IVS variation sequences, and Variable Font axes.
+Cleome slices a font **once** from its character set into deterministic static assets rather than scanning page HTML on every site deploy. The generated `.woff2` chunks and `@font-face` CSS drop directly into any self-hosting setup (Next.js, Astro, Fontsource, or static CDNs) and handle arbitrary dynamic text while cutting stylesheet size and `.woff2` transfer compared to Google Fonts' static slicing templates, preserving OpenType layout features, UVS/IVS variation sequences, and Variable Font axes.
 
 ---
 
@@ -43,9 +43,9 @@ cleome build MyFont-VF.otf -o dist/web \
 
 ## Python API Usage
 
-`cleome` can be called directly from font build pipelines (accepting either file paths or in-memory `fontTools.ttLib.TTFont` objects without mutating the caller's `TTFont`).
+Cleome can be called directly from font build pipelines (accepting either file paths or in-memory `fontTools.ttLib.TTFont` objects without mutating the caller's `TTFont`).
 
-> **Note**: When `workers > 1` (the default), `cleome` uses `ProcessPoolExecutor`. On platforms using `spawn` or `forkserver` (`macOS`, `Windows`, and `Linux` on Python 3.14+), top-level scripts must guard calls with `if __name__ == "__main__":` (or pass `workers=1`).
+> **Note**: When `workers > 1` (the default), Cleome uses `ProcessPoolExecutor`. On platforms using `spawn` or `forkserver` (`macOS`, `Windows`, and `Linux` on Python 3.14+), top-level scripts must guard calls with `if __name__ == "__main__":` (or pass `workers=1`).
 
 ```python
 from pathlib import Path
@@ -99,8 +99,8 @@ uv pip install -e ".[test]"
 
 ## Acknowledgments
 
-* **[Google Fonts](https://fonts.google.com/)**: For pioneering frequency-ranked `unicode-range` web font delivery and providing the production stylesheets and slices that informed `cleome`'s analysis and Kanji frequency rankings.
-* **[Noto Sans Japanese (`Noto Sans JP`)](https://fonts.google.com/noto/specimen/Noto+Sans+JP) & [Source Han Sans (`源ノ角ゴシック`)](https://github.com/adobe-fonts/source-han-sans)**: For serving as the foundational open-source Japanese typefaces inspected during the design and verification of `cleome`.
+* **[Google Fonts](https://fonts.google.com/)**: For pioneering frequency-ranked `unicode-range` web font delivery and providing the production stylesheets and slices that informed Cleome's analysis and Kanji frequency rankings.
+* **[Noto Sans Japanese (`Noto Sans JP`)](https://fonts.google.com/noto/specimen/Noto+Sans+JP) & [Source Han Sans (`源ノ角ゴシック`)](https://github.com/adobe-fonts/source-han-sans)**: For serving as the foundational open-source Japanese typefaces inspected during the design and verification of Cleome.
 * **[fontTools](https://github.com/fonttools/fonttools)**: For OpenType table inspection, `cmap` / `GSUB` / `GPOS` subsetting (`fontTools.subset`), and WOFF2 table packing.
 * **[Brotli](https://github.com/google/brotli)**: For WOFF2 stream compression and decompression.
 * **[HarfBuzz](https://github.com/harfbuzz/harfbuzz) & [uharfbuzz](https://github.com/harfbuzz/uharfbuzz)**: For verifying OpenType glyph shaping, `cmap` Format 14 IVS/UVS variation sequences, and combining mark composition (`ccmp`) across slices.
