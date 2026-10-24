@@ -13,15 +13,19 @@ from cleome.locale import (
     detect_font_locale,
 )
 from cleome.metadata import (
+    FontFaceDescriptors,
     FontMetadata,
+    extract_font_face_descriptors,
     extract_font_metadata,
-    patch_uvs_missing_base_cmap,
     slugify_family,
 )
 from cleome.slicer import (
     SliceConfig,
     SliceSpec,
     build_slice_plan,
+)
+from cleome.urange import (
+    compact_unicode_range,
     format_unicode_range,
     parse_unicode_range,
 )
@@ -29,20 +33,27 @@ from cleome.slicer import (
 if TYPE_CHECKING:
     from cleome.css import generate_css
     from cleome.pipeline import SliceBundleResult, slice_font, slice_fonts
-    from cleome.subsetter import BuiltSliceFile, export_woff2_slices
+    from cleome.subsetter import (
+        BuiltSliceFile,
+        export_woff2_slices,
+        patch_uvs_missing_base_cmap,
+    )
 
 __version__ = "0.1.0"
 
 __all__ = [
     "BuiltSliceFile",
+    "FontFaceDescriptors",
     "FontMetadata",
     "SUPPORTED_LOCALES",
     "SliceBundleResult",
     "SliceConfig",
     "SliceSpec",
     "build_slice_plan",
+    "compact_unicode_range",
     "detect_font_locale",
     "export_woff2_slices",
+    "extract_font_face_descriptors",
     "extract_font_metadata",
     "format_unicode_range",
     "generate_css",
@@ -55,7 +66,7 @@ __all__ = [
 
 
 def __getattr__(name: str) -> Any:
-    if name in ("BuiltSliceFile", "export_woff2_slices"):
+    if name in ("BuiltSliceFile", "export_woff2_slices", "patch_uvs_missing_base_cmap"):
         from cleome import subsetter as _subsetter
 
         return getattr(_subsetter, name)

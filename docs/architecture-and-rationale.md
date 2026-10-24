@@ -90,7 +90,7 @@ A variable font shares one set of 124 `.woff2` URLs across `font-weight: 400` an
 
 ## How Cleome slices a font
 
-Cleome replaces static templates with a 4-tier slicing planner ([`cleome/slicer.py`](../src/cleome/slicer.py)) that reads each input font's `cmap`. It orders `@font-face` rules from lowest priority (Tier 4, at the top of the stylesheet) to highest priority (Tier 1, at the bottom of the stylesheet):
+Cleome replaces static templates with a 4-tier slicing planner ([`cleome/slicer.py`](../src/cleome/slicer.py)) and `unicode-range` compaction helpers ([`cleome/urange.py`](../src/cleome/urange.py)) that read each input font's `cmap`. It orders `@font-face` rules from lowest priority (Tier 4, at the top of the stylesheet) to highest priority (Tier 1, at the bottom of the stylesheet):
 
 | Tier (CSS order) | Slice ID pattern | Target characters | `unicode-range` strategy |
 | :--- | :--- | :--- | :--- |
@@ -157,7 +157,7 @@ Combining 1-token Tier 4 cascade shadowing with Tier 3 inverted-pyramid Kanji gr
 
 ## OpenType shaping and subsetting details
 
-Slicing arbitrary Japanese `.ttf` and `.otf` fonts surfaced several OpenType and CSS edge cases handled in [`cleome/metadata.py`](../src/cleome/metadata.py), [`cleome/subsetter.py`](../src/cleome/subsetter.py), [`cleome/css.py`](../src/cleome/css.py), and [`cleome/pipeline.py`](../src/cleome/pipeline.py).
+Slicing arbitrary Japanese `.ttf` and `.otf` fonts surfaced several OpenType and CSS edge cases handled in [`cleome/urange.py`](../src/cleome/urange.py), [`cleome/metadata.py`](../src/cleome/metadata.py), [`cleome/subsetter.py`](../src/cleome/subsetter.py), [`cleome/css.py`](../src/cleome/css.py), and [`cleome/pipeline.py`](../src/cleome/pipeline.py).
 
 
 ### 1. Intra-slice OpenType shaping and cross-slice lookup pruning
