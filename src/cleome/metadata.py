@@ -283,3 +283,56 @@ def extract_font_metadata(
         patched_uvs_codepoints=patched_uvs,
         styles_css=styles_css,
     )
+
+
+def validate_and_compute_variant_suffixes(
+    raw_metas: list[FontMetadata],
+    *,
+    family_override: str | None = None,
+) -> list[str]:
+    """
+    Validate that multiple input fonts can be safely bundled into a single `@font-face`
+    stylesheet without silent family mismatches or duplicate `(weight, stretch, style)` descriptors,
+    and return collision-free filename suffixes (`400`, `700`, `75-400`, `400-italic`, etc.).
+    """
+    if len(raw_metas) <= 1:
+        return [m.variant_suffix for m in raw_metas]
+
+    distinct_families = sorted({m.family_name for m in raw_metas})
+    if family_override is None and len(distinct_families) > 1:
+        raise ValueError(
+            f"Input fonts have different detected font-family names ({', '.join(repr(f) for f in distinct_families)}). "
+            "Slice each family separately, or pass `--family` / `family_name=...` explicitly if unifying them."
+        )
+
+    seen_descriptors: set[tuple[str, str, str]] = set()
+    for m in raw_metas:
+        for st in (m.styles_css or (m.style_css,)):
+            desc_key = (m.weight_css, m.stretch_css or "100%", st)
+            if desc_key in seen_descriptors:
+                raise ValueError(
+                    f"Duplicate @font-face descriptors across input fonts: "
+                    f"weight={m.weight_css!r}, stretch={m.stretch_css or 'normal'!r}, style={st!r}. "
+                    "Each font in a multi-file bundle must have a unique (weight, stretch, style) combination."
+                )
+            seen_descriptors.add(desc_key)
+
+    has_multiple_styles = len({m.styles_css for m in raw_metas}) > 1
+    has_multiple_stretches = len({m.stretch_css for m in raw_metas}) > 1
+
+    suffixes: list[str] = []
+    for m in raw_metas:
+        if m.variant_suffix:
+            suf = m.variant_suffix
+        else:
+            parts: list[str] = []
+            if has_multiple_stretches:
+                stretch_label = (m.stretch_css or "100%").replace("%", "").replace(".", "_").replace(" ", "-").lower()
+                parts.append(f"w{stretch_label}")
+            parts.append(m.weight_css.replace(".", "_").replace(" ", "-"))
+            if has_multiple_styles and m.style_css != "normal":
+                parts.append(m.style_css.replace(".", "_").replace(" ", "-").lower())
+            suf = "-".join(parts)
+        suffixes.append(suf)
+    return suffixes
+

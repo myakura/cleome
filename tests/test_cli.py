@@ -71,7 +71,7 @@ class TestCleomeCLI(unittest.TestCase):
             try:
                 os.chdir(tmp_path)
 
-                # 1. `cleome plan` must NOT create ./dist
+                # 1. `cleome plan` must NOT create ./dist or import css / subsetter / pipeline
                 buf_plan = StringIO()
                 with redirect_stdout(buf_plan):
                     rc_plan = cli_main(["plan", str(font_path)])
@@ -79,6 +79,31 @@ class TestCleomeCLI(unittest.TestCase):
                 self.assertIn("Font Family : Subcmd Test (slug: subcmd-test)", buf_plan.getvalue())
                 self.assertIn("4 chars -> 4 slices", buf_plan.getvalue())
                 self.assertFalse((tmp_path / "dist").exists(), "`cleome plan` must not create ./dist")
+
+                src_dir = Path(__file__).resolve().parent.parent / "src"
+                plan_iso = subprocess.run(
+                    [
+                        sys.executable,
+                        "-c",
+                        (
+                            f"import sys; sys.path.insert(0, {str(src_dir)!r}); "
+                            f"from cleome.cli import main; "
+                            f"rc = main(['plan', {str(font_path)!r}]); "
+                            f"assert rc == 0; "
+                            f"assert 'cleome.css' not in sys.modules; "
+                            f"assert 'cleome.subsetter' not in sys.modules; "
+                            f"assert 'cleome.pipeline' not in sys.modules; "
+                            f"from cleome.css import SliceBundleResult, generate_css, slice_font, slice_fonts, validate_and_compute_variant_suffixes; "
+                            f"from cleome.pipeline import SliceBundleResult as PRes, slice_font as p_sf, slice_fonts as p_sfs; "
+                            f"from cleome.metadata import validate_and_compute_variant_suffixes as m_val; "
+                            f"assert SliceBundleResult is PRes and slice_font is p_sf and slice_fonts is p_sfs and validate_and_compute_variant_suffixes is m_val"
+                        ),
+                    ],
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                self.assertEqual(plan_iso.returncode, 0, f"Plan import isolation failed: {plan_iso.stderr}")
 
                 # 2. `cleome plan --json --preset kr`
                 buf_plan_json = StringIO()

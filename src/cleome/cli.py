@@ -11,9 +11,12 @@ import sys
 import time
 from fontTools.ttLib import TTFont
 
-from cleome.css import slice_fonts, validate_and_compute_variant_suffixes
 from cleome.locale import SUPPORTED_LOCALES, detect_font_locale
-from cleome.metadata import FontMetadata, extract_font_metadata
+from cleome.metadata import (
+    FontMetadata,
+    extract_font_metadata,
+    validate_and_compute_variant_suffixes,
+)
 from cleome.slicer import SliceConfig, SliceSpec, build_slice_plan
 
 
@@ -306,6 +309,8 @@ def _run_plan(args: argparse.Namespace, config: SliceConfig) -> int:
 
 
 def _run_build(args: argparse.Namespace, config: SliceConfig) -> int:
+    from cleome.pipeline import slice_fonts
+
     t0 = time.time()
     try:
         result = slice_fonts(

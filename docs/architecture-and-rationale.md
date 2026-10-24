@@ -157,7 +157,7 @@ Combining 1-token Tier 4 cascade shadowing with Tier 3 inverted-pyramid Kanji gr
 
 ## OpenType shaping and subsetting details
 
-Slicing arbitrary Japanese `.ttf` and `.otf` fonts surfaced several OpenType and CSS edge cases handled in [`cleome/subsetter.py`](../src/cleome/subsetter.py) and [`cleome/css.py`](../src/cleome/css.py).
+Slicing arbitrary Japanese `.ttf` and `.otf` fonts surfaced several OpenType and CSS edge cases handled in [`cleome/metadata.py`](../src/cleome/metadata.py), [`cleome/subsetter.py`](../src/cleome/subsetter.py), [`cleome/css.py`](../src/cleome/css.py), and [`cleome/pipeline.py`](../src/cleome/pipeline.py).
 
 
 ### 1. Intra-slice OpenType shaping and cross-slice lookup pruning

@@ -819,7 +819,7 @@ class TestSubsetterAndShaping(unittest.TestCase):
 
             # 2. Second call -> skips _export_woff2_slices_batch completely and returns identical metadata
             with patch(
-                "cleome.css._export_woff2_slices_batch",
+                "cleome.pipeline._export_woff2_slices_batch",
                 side_effect=AssertionError("_export_woff2_slices_batch should be skipped on cache hit"),
             ) as mock_export:
                 res2 = slice_fonts([p_reg, p_bold], out_dir=out_dir, workers=1)

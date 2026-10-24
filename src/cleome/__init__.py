@@ -6,6 +6,8 @@ Uses CSS cascade shadowing (1-token hex ranges for rare ideographs and syllables
 and inverted-pyramid frequency granularity.
 """
 
+from typing import TYPE_CHECKING, Any
+
 from cleome.locale import (
     SUPPORTED_LOCALES,
     detect_font_locale,
@@ -23,16 +25,11 @@ from cleome.slicer import (
     format_unicode_range,
     parse_unicode_range,
 )
-from cleome.subsetter import (
-    BuiltSliceFile,
-    export_woff2_slices,
-)
-from cleome.css import (
-    SliceBundleResult,
-    generate_css,
-    slice_font,
-    slice_fonts,
-)
+
+if TYPE_CHECKING:
+    from cleome.css import generate_css
+    from cleome.pipeline import SliceBundleResult, slice_font, slice_fonts
+    from cleome.subsetter import BuiltSliceFile, export_woff2_slices
 
 __version__ = "0.1.0"
 
@@ -55,3 +52,19 @@ __all__ = [
     "slice_fonts",
     "slugify_family",
 ]
+
+
+def __getattr__(name: str) -> Any:
+    if name in ("BuiltSliceFile", "export_woff2_slices"):
+        from cleome import subsetter as _subsetter
+
+        return getattr(_subsetter, name)
+    if name == "generate_css":
+        from cleome import css as _css
+
+        return getattr(_css, name)
+    if name in ("SliceBundleResult", "slice_font", "slice_fonts"):
+        from cleome import pipeline as _pipeline
+
+        return getattr(_pipeline, name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
