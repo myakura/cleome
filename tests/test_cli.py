@@ -278,6 +278,101 @@ class TestCleomeCLI(unittest.TestCase):
                 f"Final stderr line did not contain wrapped RuntimeError. Got:\n{proc_bad.stderr}",
             )
 
+    def test_consumer_skill_and_readme_stay_in_sync_with_public_api(self) -> None:
+        """
+        Verify that `skills/cleome/SKILL.md` and `README.md` stay synchronized with `cleome.__all__`,
+        public function/dataclass signatures, and runnable Python code blocks.
+        """
+        import ast
+        import inspect
+        import re
+        import cleome
+
+        repo_root = Path(__file__).resolve().parent.parent
+        src_dir = repo_root / "src"
+        skill_path = repo_root / "skills" / "cleome" / "SKILL.md"
+        readme_path = repo_root / "README.md"
+        skill_text = skill_path.read_text(encoding="utf-8")
+        readme_text = readme_path.read_text(encoding="utf-8")
+
+        # 1. Every runtime symbol in `cleome.__all__` must be documented in `skills/cleome/SKILL.md`
+        missing_symbols = [sym for sym in cleome.__all__ if sym not in skill_text]
+        self.assertFalse(
+            missing_symbols,
+            f"Public exports in cleome.__all__ missing from skills/cleome/SKILL.md: {missing_symbols}",
+        )
+
+        # 2. Every public parameter of core entry points and dataclasses must appear in `skills/cleome/SKILL.md`
+        core_callables = (
+            cleome.SliceConfig,
+            cleome.slice_font,
+            cleome.slice_fonts,
+            cleome.build_slice_plan,
+            cleome.detect_font_locale,
+            cleome.extract_font_face_descriptors,
+            cleome.extract_font_metadata,
+            cleome.export_woff2_slices,
+            cleome.generate_css,
+            cleome.compact_unicode_range,
+            cleome.format_unicode_range,
+            cleome.parse_unicode_range,
+            cleome.patch_uvs_missing_base_cmap,
+            cleome.slugify_family,
+        )
+        missing_params: list[str] = []
+        for fn in core_callables:
+            sig = inspect.signature(fn)
+            for param_name in sig.parameters:
+                if param_name.startswith("_"):
+                    continue
+                if param_name not in skill_text:
+                    missing_params.append(f"{fn.__name__}({param_name}=...)")
+        self.assertFalse(
+            missing_params,
+            f"Public parameters missing from skills/cleome/SKILL.md: {missing_params}",
+        )
+
+        # 3. Every fenced `python` code block in `SKILL.md` and `README.md` must parse and execute cleanly
+        code_block_re = re.compile(r"```python\n(.*?)```", re.DOTALL)
+        sample_cps = [ord("A"), ord("あ"), ord("日"), 0x4E02]
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            create_synthetic_ttfont(
+                sample_cps, family_name="Source Han Sans JP", is_variable=True
+            ).save(tmp_path / "SourceHanSansJP-VF.otf", reorderTables=False)
+            create_synthetic_ttfont(
+                sample_cps, family_name="My Font JP", is_variable=False, weight=400
+            ).save(tmp_path / "MyFontJP-Regular.ttf", reorderTables=False)
+            create_synthetic_ttfont(
+                sample_cps, family_name="My Font JP", is_variable=False, weight=700
+            ).save(tmp_path / "MyFontJP-Bold.ttf", reorderTables=False)
+
+            env = os.environ.copy()
+            existing_pypath = env.get("PYTHONPATH", "")
+            env["PYTHONPATH"] = (
+                f"{src_dir}{os.pathsep}{existing_pypath}" if existing_pypath else str(src_dir)
+            )
+
+            for doc_name, doc_content in (("SKILL.md", skill_text), ("README.md", readme_text)):
+                blocks = code_block_re.findall(doc_content)
+                self.assertTrue(blocks, f"Expected at least one ```python block in {doc_name}")
+                for idx, block in enumerate(blocks):
+                    tree = ast.parse(block, filename=f"{doc_name}#block-{idx}")
+                    self.assertTrue(tree.body)
+                    res = subprocess.run(
+                        [sys.executable, "-c", block],
+                        cwd=tmp_path,
+                        env=env,
+                        capture_output=True,
+                        text=True,
+                        check=False,
+                    )
+                    self.assertEqual(
+                        res.returncode,
+                        0,
+                        f"{doc_name}#block-{idx} failed:\n{res.stderr}",
+                    )
+
 
 if __name__ == "__main__":
     unittest.main()
