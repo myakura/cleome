@@ -1,0 +1,31 @@
+name: Feature or Ergonomics Request
+description: Propose a CJK slicing profile improvement, CLI/API option, or OpenType subsetting enhancement
+title: ""
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: what-happens
+    attributes:
+      label: What Happens?
+      description: Describe the current limitation or friction when using `cleome` in a font build or web delivery pipeline.
+      placeholder: |
+        Currently, slicing `...` with `SliceConfig(...)` requires `...`.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: How to Reproduce?
+      description: Show a minimal Python snippet or `cleome plan` output illustrating the current behavior.
+      render: python
+      placeholder: |
+        from cleome import ...
+    validations:
+      required: false
+  - type: textarea
+    id: expected
+    attributes:
+      label: What Should Happen?
+      description: Describe the proposed API signature, CLI option, or slicing tier behavior and how it preserves Cleome invariants (4-tier cascade shadowing, non-destructive `TTFont` handling, deterministic `.woff2` output).
+    validations:
+      required: true
