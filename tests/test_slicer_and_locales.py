@@ -89,6 +89,8 @@ class TestSlicerAndLocales(unittest.TestCase):
             SliceConfig(slices_subdir="   ")
         with self.assertRaisesRegex(ValueError, "font_display cannot be empty"):
             SliceConfig(font_display="")
+        with self.assertRaisesRegex(ValueError, "Invalid CSS font-display value"):
+            SliceConfig(font_display="not-a-display-keyword")
 
         # 1. Family name detection
         self.assertEqual(detect_font_locale({ord("A")}, "Noto Sans KR"), "kr")

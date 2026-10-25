@@ -108,7 +108,7 @@ def _get_toolchain_versions() -> dict[str, str]:
     from importlib.metadata import PackageNotFoundError, version as pkg_version
 
     versions: dict[str, str] = {}
-    for dist_name in ("cleome", "fonttools", "brotli"):
+    for dist_name in ("cleome", "fonttools", "brotli", "stixis"):
         try:
             versions[dist_name] = pkg_version(dist_name)
         except PackageNotFoundError:

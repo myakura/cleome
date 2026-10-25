@@ -15,6 +15,7 @@ Implements the 4-tier architecture:
 from bisect import bisect_left, bisect_right
 from dataclasses import dataclass
 from pathlib import Path
+from stixis import canonicalize, format_urange
 
 from cleome.data.kanji_freq import KANJI_FREQ_CODEPOINTS, KANJI_FREQ_RANK
 from cleome.data.kr_freq import KR_HANGUL_FREQ_CODEPOINTS, KR_HANGUL_FREQ_RANK
@@ -115,13 +116,15 @@ class SliceConfig:
         display_str = self.font_display.strip()
         if not display_str:
             raise ValueError("font_display cannot be empty")
-        if (
-            any(ch in display_str for ch in (";", "{", "}", "\r", "\n", "\f", "'", '"', "\\"))
-            or "/*" in display_str
-            or "*/" in display_str
-        ):
-            raise ValueError(f"Invalid CSS font-display value: {self.font_display!r}")
-        object.__setattr__(self, "font_display", display_str)
+        try:
+            norm_display = canonicalize(
+                "font-display",
+                display_str,
+                at_rule="@font-face",
+            )
+        except ValueError as exc:
+            raise ValueError(f"Invalid CSS font-display value: {self.font_display!r}") from exc
+        object.__setattr__(self, "font_display", norm_display)
 
 
 @dataclass(frozen=True, slots=True)
@@ -211,7 +214,7 @@ def _build_rare_ideograph_slices(
     slices: list[SliceSpec] = []
     total_rare = len(rare_chunk_tuples)
     for i, (reg_name, ch_cps, s_hex, e_hex) in enumerate(rare_chunk_tuples, start=1):
-        ur_token = f"U+{s_hex:X}" if s_hex == e_hex else f"U+{s_hex:X}-{e_hex:X}"
+        ur_token = format_urange((s_hex, e_hex))
         slices.append(
             SliceSpec(
                 slice_id=f"{category}-{i:02d}",
@@ -432,7 +435,7 @@ def _build_kr_slice_plan(all_cps: set[int], config: SliceConfig) -> list[SliceSp
     total_rare_hangul = len(rare_hangul_chunks)
     for i, ch_cps in enumerate(rare_hangul_chunks, start=1):
         s_hex, e_hex = ch_cps[0], ch_cps[-1]
-        ur_token = f"U+{s_hex:X}" if s_hex == e_hex else f"U+{s_hex:X}-{e_hex:X}"
+        ur_token = format_urange((s_hex, e_hex))
         slices.append(
             SliceSpec(
                 slice_id=f"hangul-rare-{i:02d}",

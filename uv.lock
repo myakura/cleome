@@ -81,6 +81,7 @@ source = { editable = "." }
 dependencies = [
     { name = "brotli" },
     { name = "fonttools", extra = ["woff"] },
+    { name = "stixis" },
 ]
 
 [package.dev-dependencies]
@@ -92,6 +93,7 @@ dev = [
 requires-dist = [
     { name = "brotli", specifier = ">=1.2.1" },
     { name = "fonttools", extras = ["woff"], specifier = ">=4.67.0" },
+    { name = "stixis", specifier = ">=0.1.0" },
 ]
 
 [package.metadata.requires-dev]
@@ -136,6 +138,15 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/cb/27/eeb9f307bf07060f3d9f9aa0fb8c15b01bdfded0a941e4b2719c7f94cacd/pycparser-3.12.tar.gz", hash = "sha256:f03387877eab82ce01bbdfd0ba7252ee55a90b1c708d5129e2ce915475cf1db6", size = 158785, upload-time = "2026-10-22T13:40:03.56Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/b6/ae/315bbeee126a769cbde43cf4908acb4b40408d8bf8bbf334dd7368d8dadf/pycparser-3.12-py3-none-any.whl", hash = "sha256:a076f3f489b39b43ed13563a1dafe42447445bec2e294154ec5c57fcdda4c85e", size = 62600, upload-time = "2026-10-22T13:40:02.021Z" },
+]
+
+[[package]]
+name = "stixis"
+version = "0.1.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/b5/a5/629fb1de70eec73a1c919fc0dbb12df5fe6cdaf0c827c24ca6f38f21acac/stixis-0.1.0.tar.gz", hash = "sha256:f41ad93aa366f56e5af747c4e22024d392d560311c1a000f990f41f2ded012bc", size = 135883, upload-time = "2026-10-25T19:23:33.533Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/b3/42/53e8bbc5439ad3c74d21703c2bf82b4f7d444057e70a38e7bbde4c5b5a75/stixis-0.1.0-py3-none-any.whl", hash = "sha256:d372be95d533d61c18582e9856a5dd94ee1d8ba1f4854fd454e029d5571cacbc", size = 83232, upload-time = "2026-10-25T19:23:32.277Z" },
 ]
 
 [[package]]

@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 import re
 from typing import TYPE_CHECKING, Any
 from fontTools.ttLib import TTFont
+from stixis import SerializationOptions, canonicalize
 
 if TYPE_CHECKING:
     from cleome.subsetter import (
@@ -28,8 +29,7 @@ OS2_WIDTH_CLASS_TO_CSS: frozendict[int, str] = frozendict(
     }
 )
 
-
-_CSS_DESCRIPTOR_RE = re.compile(r"^[a-zA-Z0-9 %.+-]+$")
+_CLEOME_CSS_OPTIONS = SerializationOptions.cleome()
 
 
 def _validate_filename_token(val: str, field_name: str) -> str:
@@ -53,9 +53,15 @@ def _validate_css_descriptor(val: str, field_name: str) -> str:
     cleaned = val.strip()
     if not cleaned:
         raise ValueError(f"{field_name} cannot be empty")
-    if not _CSS_DESCRIPTOR_RE.fullmatch(cleaned) or ".." in cleaned:
-        raise ValueError(f"Invalid CSS {field_name} descriptor value: {val!r}")
-    return cleaned
+    try:
+        return canonicalize(
+            field_name,
+            cleaned,
+            at_rule="@font-face",
+            options=_CLEOME_CSS_OPTIONS,
+        )
+    except ValueError as exc:
+        raise ValueError(f"Invalid CSS {field_name} descriptor value: {val!r}") from exc
 
 
 @dataclass(frozen=True, slots=True)
