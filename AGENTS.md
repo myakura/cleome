@@ -28,6 +28,7 @@ Cleome (`cleome`) is a Python (`>= 3.15`) CLI tool and library that inspects Jap
 
 ## Domain guides
 
+* Read [docs/hosting-and-usage.md](docs/hosting-and-usage.md) for deploying generated `<slug>.css` and `.woff2` slice files, configuring `--url-prefix` and `--slices-dir`, and setting preload, CORS, and `Cache-Control` headers.
 * Read [docs/architecture-and-rationale.md](docs/architecture-and-rationale.md) and [docs/cjk-slicing-analysis.md](docs/cjk-slicing-analysis.md) for the empirical analysis of Google Fonts' `JP`, `KR`, `SC`, `TC`, and `HK` templates and the 4-tier simulation benchmarks.
 * Read [.agents/docs/subsetting-and-shaping.md](.agents/docs/subsetting-and-shaping.md) when modifying `unicode-range` compaction (`src/cleome/urange.py`), the 4-tier slicing planner (`src/cleome/slicer.py`), locale detection (`src/cleome/locale.py`), or `fontTools.subset` / `cmap` Format 14 UVS handling (`src/cleome/subsetter.py`).
 * Read [.agents/docs/css-and-metadata.md](.agents/docs/css-and-metadata.md) when modifying OpenType descriptor extraction (`src/cleome/metadata.py`), `@font-face` stylesheet generation (`src/cleome/css.py`), or cached multi-variant bundling (`src/cleome/pipeline.py`).
