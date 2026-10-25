@@ -7,13 +7,43 @@ name = "cleome"
 version = "0.1.0"
 description = "Dynamic unicode-range WOFF2 slicer and @font-face CSS generator for Japanese, Korean, and Chinese web fonts"
 readme = "README.md"
-license = { file = "LICENSE" }
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [
+    { name = "Masataka Yakura", email = "myakura.web@gmail.com" },
+]
+keywords = [
+    "woff2",
+    "webfont",
+    "unicode-range",
+    "cjk",
+    "font-face",
+    "opentype",
+    "subsetting",
+    "variable-fonts",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.15",
+    "Topic :: Internet :: WWW/HTTP",
+    "Topic :: Multimedia :: Graphics :: Editors :: Vector-Based",
+    "Topic :: Text Processing :: Fonts",
+    "Typing :: Typed",
+]
 requires-python = ">=3.15"
 dependencies = [
     "fonttools[woff]>=4.67.0",
     "brotli>=1.2.1",
     "stixis>=0.1.1",
 ]
+
+[project.urls]
+Homepage = "https://github.com/myakura/cleome"
+Repository = "https://github.com/myakura/cleome.git"
+Issues = "https://github.com/myakura/cleome/issues"
 
 [dependency-groups]
 dev = [
@@ -25,3 +55,15 @@ cleome = "cleome.cli:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/cleome"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "src/cleome",
+    "tests",
+    "docs",
+    "README.md",
+    "LICENSE",
+    "AGENTS.md",
+    ".agents",
+    "pyproject.toml",
+]
