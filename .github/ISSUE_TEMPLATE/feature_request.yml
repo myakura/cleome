@@ -7,9 +7,9 @@ body:
     id: what-happens
     attributes:
       label: What Happens?
-      description: Describe the current limitation or friction when using `cleome` in a font build or web delivery pipeline.
+      description: Describe the current limitation when using `cleome`.
       placeholder: |
-        Currently, slicing `...` with `SliceConfig(...)` requires `...`.
+        Slicing `...` with `SliceConfig(...)` requires `...`.
     validations:
       required: true
   - type: textarea
@@ -26,6 +26,6 @@ body:
     id: expected
     attributes:
       label: What Should Happen?
-      description: Describe the proposed API signature, CLI option, or slicing tier behavior and how it preserves Cleome invariants (4-tier cascade shadowing, non-destructive `TTFont` handling, deterministic `.woff2` output).
+      description: Describe the proposed API signature, CLI option, or slicing tier behavior.
     validations:
       required: true

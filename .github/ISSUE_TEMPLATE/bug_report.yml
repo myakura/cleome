@@ -6,21 +6,21 @@ body:
   - type: markdown
     attributes:
       value: |
-        Thank you for reporting an issue in Cleome! Please isolate the reproduction to `cleome` APIs or `cleome plan` / `cleome build` CLI commands and verify all assertions against actual runtime output before submitting.
+        Isolate the reproduction to `cleome` APIs or CLI commands and run it before submitting.
   - type: textarea
     id: what-happens
     attributes:
       label: What Happens?
-      description: Describe the actual behavior, including affected `cleome` functions/classes (`src/cleome/...`), target CJK locale (`jp`, `kr`, `sc`, `tc`, `hk`), and observed output or exception.
+      description: Describe the observed behavior, including the affected `cleome` functions or classes (`src/cleome/...`), target CJK locale (`jp`, `kr`, `sc`, `tc`, `hk`), and the output or exception.
       placeholder: |
-        When running `cleome plan ...` or calling `slice_font(...)`, Cleome raises / produces `...`.
+        Calling `...` or running `cleome plan ...` raises / returns `...`.
     validations:
       required: true
   - type: textarea
     id: reproduction
     attributes:
       label: How to Reproduce?
-      description: Provide a self-contained Python 3.15+ snippet (using `fontTools` / `cleome`) or `cleome plan` / `cleome build` CLI command and font details that reproduce the issue. Every `assert` or comment should reflect verified runtime output.
+      description: Provide a self-contained Python 3.15+ snippet or `cleome plan` / `cleome build` CLI command using only `cleome` and `fontTools`. Every `assert` or comment must match actual runtime output.
       render: python
       placeholder: |
         from cleome import SliceConfig, build_slice_plan
@@ -33,6 +33,6 @@ body:
     id: expected
     attributes:
       label: What Should Happen?
-      description: Describe the expected slice plan, `.woff2` subsetting behavior, or `@font-face` CSS output, referencing the relevant OpenType, WOFF2, or W3C CSS Fonts specification if applicable.
+      description: Describe the expected slice plan, `.woff2` subsetting behavior, or `@font-face` CSS output, citing the relevant OpenType, WOFF2, or W3C CSS Fonts specification when applicable.
     validations:
       required: true
