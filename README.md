@@ -7,6 +7,24 @@ Cleome inspects a font's `cmap` once and writes deterministic static assets inst
 ---
 
 
+## Installation
+
+Requires Python `>= 3.15` and [`uv`](https://docs.astral.sh/uv/).
+
+```bash
+# Install as a standalone CLI tool from GitHub
+uv tool install git+https://github.com/myakura/cleome
+
+# Or run directly without installing
+uvx --from git+https://github.com/myakura/cleome cleome plan SourceHanSansJP-VF.otf
+
+# Or add to a Python project
+uv add git+https://github.com/myakura/cleome
+```
+
+---
+
+
 ## CLI usage
 
 ```bash
@@ -103,6 +121,7 @@ uv run python -m unittest discover -s tests -v -f
 * [fontTools](https://github.com/fonttools/fonttools) handles OpenType table inspection, `cmap` / `GSUB` / `GPOS` subsetting (`fontTools.subset`), and WOFF2 packing.
 * [Brotli](https://github.com/google/brotli) compresses and decompresses the WOFF2 streams.
 * [HarfBuzz](https://github.com/harfbuzz/harfbuzz) and [uharfbuzz](https://github.com/harfbuzz/uharfbuzz) verify OpenType glyph shaping, `cmap` Format 14 variation sequences, and combining mark composition (`ccmp`) in the test suite.
+* [Stixis](https://github.com/myakura/stixis) validates and serializes the generated `@font-face` CSS rules and `unicode-range` descriptors.
 
 ---
 

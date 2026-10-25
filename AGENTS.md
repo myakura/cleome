@@ -22,6 +22,17 @@ Cleome is a Python (>= 3.15) CLI tool and library that dynamically inspects Japa
 * **Deterministic, non-destructive font handling**: Open fonts with `recalcTimestamp=False` so repeated builds produce byte-identical `.woff2` files, retain license records (`nameID` `0`, `13`, `14`) in every slice, and never mutate caller-supplied `TTFont` objects in public slicing APIs.
 
 
+## Issue Triage & Release Workflow
+
+* **Verify premises first**: Before implementing an Issue, check every factual claim and reproduction snippet against live runtime output (`uv run python -m unittest discover -s tests -v -f`, `uv run cleome plan`) and the relevant OpenType, WOFF2, or W3C CSS Fonts specification. If a claim contradicts the specification or observed font tables, close the Issue or scope out that item, and cite the spec section or table behavior.
+* **Label and link Issues and PRs**:
+  * Add appropriate labels (`bug`, `enhancement`, `documentation`) to every Issue and PR.
+  * Use a dedicated branch per Issue, include `Closes #<n>` in the PR body, and run `codex review` and `uv run python -m unittest discover -s tests -v -f` before merging.
+* **Keep documentation and releases in sync**:
+  * When you add or change public APIs, CLI flags, or slicing behavior, update `README.md` and the relevant domain guide under `docs/` or `.agents/docs/`.
+  * To cut a release, bump the version in `pyproject.toml` and `src/cleome/__init__.py`, run `uv sync`, commit `chore(release): bump version to X.Y.Z`, push tag `vX.Y.Z`, and run `gh release create vX.Y.Z --title "vX.Y.Z" --generate-notes`.
+
+
 ## Domain References
 
 * [Architecture & Rationale](docs/architecture-and-rationale.md)
