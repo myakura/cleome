@@ -270,7 +270,13 @@ class TestCleomeCLI(unittest.TestCase):
                 check=False,
             )
             self.assertNotEqual(proc_bad.returncode, 0)
-            stderr_lines = [ln for ln in proc_bad.stderr.strip().splitlines() if ln.strip()]
+            stderr_lines = [
+                ln
+                for ln in proc_bad.stderr.strip().splitlines()
+                if ln.strip()
+                and "resource_tracker:" not in ln
+                and not ln.lstrip().startswith("warnings.warn(")
+            ]
             self.assertTrue(stderr_lines, "Expected non-empty stderr from unguarded script")
             self.assertIn(
                 "RuntimeError: Failed to run parallel WOFF2 worker processes.",

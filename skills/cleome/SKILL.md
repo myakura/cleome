@@ -72,6 +72,19 @@ if __name__ == "__main__":
   * `uv run cleome build <font.ttf> -o dist/web [--locale auto|jp|kr|sc|tc|hk] [--force] [--json]`
   * `uv run cleome build MyFont-Regular.ttf MyFont-Bold.ttf -o dist/web-static --family "My Font"`
 
+## Hosting and consuming generated CSS and slices
+
+* **URL resolution (`--slices-dir` and `--url-prefix`).**
+  * By default, `<out-dir>/<slug>.css` references `url('./slices/<slug>-<slice_id>.woff2') format('woff2')`, which resolves relative to the `.css` file URL. When serving both `<slug>.css` and `slices/*.woff2` from a static directory (such as `public/fonts/<slug>/`), keep the defaults and link `<link rel="stylesheet" href="/fonts/<slug>/<slug>.css">`.
+  * When importing `<slug>.css` into a bundler (Vite, Astro, Next.js) or serving slices from a separate CDN origin, pass `--url-prefix "/fonts/<slug>/slices"` or `--url-prefix "https://cdn.example.com/fonts/<slug>/v1/slices"` so URLs do not depend on the bundled stylesheet's path.
+  * Pass `--slices-dir .` (or `SliceConfig(slices_subdir=".")`) to write `.woff2` files into the same directory as `<slug>.css`.
+* **Preloading (`<link rel="preload">`).**
+  * Never preload all `.woff2` slices; browsers use `unicode-range` to download only the slices needed by rendered text.
+  * If preloading above-the-fold text, preload at most the Tier 1 core slice (`<slug>-latin.woff2` and/or `<slug>-kana-core.woff2`, `<slug>-hangul-core.woff2`, `<slug>-cjk-core.woff2`) and always include `as="font" type="font/woff2" crossorigin` (even on same-origin hosts) so the preload matches `@font-face`'s anonymous CORS mode.
+* **HTTP headers and cache invalidation.**
+  * Cross-origin CDN responses for `.woff2` files must include `Access-Control-Allow-Origin` and `Content-Type: font/woff2` (without HTTP `Content-Encoding` re-compression, since WOFF2 streams are already Brotli-compressed). Compress `<slug>.css` with HTTP Brotli or gzip.
+  * Because slice filenames (`<slug>-<slice_id>.woff2`) do not include content hashes, host under a versioned directory path (such as `/fonts/<slug>/v1/`) when setting `Cache-Control: public, max-age=31536000, immutable` so font or Cleome updates switch `<slug>.css` and `.woff2` slices atomically.
+
 ## Filing Issues from consumer projects
 
 When filing a GitHub Issue on `myakura/cleome` from a consumer project:
