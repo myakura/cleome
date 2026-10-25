@@ -61,6 +61,7 @@ include = [
     "src/cleome",
     "tests",
     "docs",
+    "skills",
     "README.md",
     "LICENSE",
     "AGENTS.md",
