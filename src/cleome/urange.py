@@ -16,10 +16,9 @@ __all__ = [
 
 def format_unicode_range(codepoints: CodepointSet | list[int]) -> str:
     """Format a collection of integer codepoints into a minimal CSS `unicode-range` string."""
-    cp_set = codepoints if isinstance(codepoints, (set, frozenset)) else set(codepoints)
-    if not cp_set:
+    if not codepoints:
         return ""
-    return format_urange(cp_set)
+    return format_urange(codepoints)
 
 
 def parse_unicode_range(ur_str: str) -> set[int]:
