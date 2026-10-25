@@ -6,14 +6,14 @@ Cleome is a Python (>= 3.15) CLI tool and library that dynamically inspects Japa
 ## Commands
 
 * Package manager: `uv` (requires Python `>= 3.15`)
-* Install with test dependencies (`uharfbuzz`):
-  `uv venv && uv pip install -e ".[test]"`
+* Install dependencies (`uharfbuzz`):
+  `uv sync`
 * Run test suite (`unittest` + HarfBuzz shaping verification, fail-fast):
-  `.venv/bin/python -m unittest discover -s tests -v -f`
+  `uv run python -m unittest discover -s tests -v -f`
 * Preview a 4-tier slice plan without writing files (read-only):
-  `.venv/bin/cleome plan <font.ttf> [--json]`
+  `uv run cleome plan <font.ttf> [--json]`
 * Build `.woff2` slices and `@font-face` CSS:
-  `.venv/bin/cleome build <font.ttf> -o dist/`
+  `uv run cleome build <font.ttf> -o dist/`
 
 
 ## Core Rules

@@ -81,9 +81,8 @@ if __name__ == "__main__":
 ## Development and testing
 
 ```bash
-uv venv
-uv pip install -e ".[test]"
-.venv/bin/python -m unittest discover -s tests -v -f
+uv sync
+uv run python -m unittest discover -s tests -v -f
 ```
 
 ---

@@ -14,16 +14,8 @@ dependencies = [
     "brotli>=1.2.1",
 ]
 
-[project.optional-dependencies]
-test = [
-    "uharfbuzz>=0.56.4",
-]
-
 [dependency-groups]
 dev = [
-    "uharfbuzz>=0.56.4",
-]
-test = [
     "uharfbuzz>=0.56.4",
 ]
 
