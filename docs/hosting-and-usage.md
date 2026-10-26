@@ -5,7 +5,7 @@ This guide explains how to deploy and use the `@font-face` stylesheet (`<slug>.c
 
 ## 1. Output layout and URL resolution
 
-Running `cleome build` writes a stylesheet and a slice directory under `--out-dir` (`dist` by default), appending an 8-character SHA-256 content hash to each `.woff2` filename by default (`--no-filename-hash` disables the hash):
+Running `cleome build` writes a stylesheet and a slice directory under `--out-dir` (`dist` by default). Each `.woff2` filename includes an 8-character SHA-256 content hash by default (`--no-filename-hash` disables the hash):
 
 ```text
 dist/web/
@@ -55,22 +55,30 @@ In CSS, `url('./slices/...')` resolves relative to the URL of the `.css` file, n
   Link `/fonts/source-han-sans-jp/source-han-sans-jp.css` from HTML. The browser resolves `./slices/*.woff2` to `/fonts/source-han-sans-jp/slices/*.woff2`.
 
 * **CSS imported into a bundler or inlined into `<style>`.**
-  When a bundler merges `<slug>.css` into `/assets/index-<hash>.css` or inlines it into HTML, relative `./slices/...` paths either get rewritten by the bundler (copying 90+ `.woff2` files into the build graph) or resolve against the document URL. Place the slices in your static `public/` directory or on a CDN and set `--url-prefix` to an absolute path or URL:
+  When a bundler merges `<slug>.css` into `/assets/index-<hash>.css` or inlines it into HTML, relative `./slices/...` paths either get rewritten by the bundler (copying 90+ `.woff2` files into the build graph) or resolve against the document URL. Place the slices in your static `public/` directory or on a CDN, set `--url-prefix` to an absolute path or URL, and pass `--css-out` to write the stylesheet directly into `src/`:
 
   ```bash
-  # Root-relative URL prefix for static public/fonts/slices/
+  # Next.js / Astro: write slices to public/fonts/slices/ and CSS to src/styles/fonts.css
   cleome build SourceHanSansJP-VF.otf \
     -o public/fonts \
-    --url-prefix "/fonts/slices"
+    --url-prefix "/fonts/slices" \
+    --css-out src/styles/fonts.css
 
   # Full CDN origin URL prefix
   cleome build SourceHanSansJP-VF.otf \
     -o dist/cdn-upload \
-    --url-prefix "https://cdn.example.com/fonts/source-han-sans-jp/v1/slices"
+    --url-prefix "https://cdn.example.com/fonts/source-han-sans-jp/slices"
+  ```
+
+* **Bundler-managed asset directory (`src/assets/`).**
+  When placing both `<slug>.css` and `.woff2` slices inside a bundler-managed directory where Vite or Webpack adds its own content hash, pass `--no-filename-hash`:
+
+  ```bash
+  cleome build SourceHanSansJP-VF.otf -o src/assets/fonts --no-filename-hash
   ```
 
 * **Flat directory (CSS and `.woff2` files in the same folder).**
-  Pass `--slices-dir .` to write `.woff2` files into `--out-dir` with `url('./<slug>-<slice_id>.woff2')`:
+  Pass `--slices-dir .` to write `.woff2` files into `--out-dir` with `url('./<slug>-<slice_id>-<hash8>.woff2')`:
 
   ```bash
   cleome build SourceHanSansJP-VF.otf -o dist/flat --slices-dir .
@@ -97,8 +105,8 @@ Place font `<link>` tags in `<head>` after `<meta charset="utf-8">`, viewport `<
   <!-- Only when serving slices from a separate CDN origin: preconnect with crossorigin -->
   <link rel="preconnect" href="https://cdn.example.com" crossorigin>
 
-  <!-- Optional: preload at most the Tier 1 core slices, always with crossorigin -->
-  <link rel="preload" href="/fonts/source-han-sans-jp/slices/source-han-sans-jp-kana-core.woff2" as="font" type="font/woff2" crossorigin>
+  <!-- Optional: preload at most the Tier 1 core slices (printed by `cleome build`), always with crossorigin -->
+  <link rel="preload" href="/fonts/source-han-sans-jp/slices/source-han-sans-jp-kana-core-3a7f91bc.woff2" as="font" type="font/woff2" crossorigin>
 
   <!-- Generated @font-face stylesheet and application CSS -->
   <link rel="stylesheet" href="/fonts/source-han-sans-jp/source-han-sans-jp.css">
@@ -189,14 +197,14 @@ Without `Access-Control-Allow-Origin`, browsers reject cross-origin `@font-face`
 
 ### Cache invalidation and content hashes (`Cache-Control`)
 
-By default (`--filename-hash` / `SliceConfig(filename_hash=True)`), Cleome appends an 8-character SHA-256 content digest of each built `.woff2` binary to its filename (`<slug>(-<variant>)-<slice_id>-<hash8>.woff2`) and automatically removes superseded `<slug>(-<variant>)-<slice_id>-[0-9a-f]{8}.woff2` files on rebuild:
+By default (`--filename-hash` / `SliceConfig(filename_hash=True)`), Cleome includes an 8-character SHA-256 content digest of each `.woff2` binary in its filename (`<slug>(-<variant>)-<slice_id>-<hash8>.woff2`) and removes superseded `<slug>(-<variant>)-<slice_id>-[0-9a-f]{8}.woff2` files on rebuild:
 
-1. **Serve `.woff2` slices directly with immutable caching**:
+1. **Serve `.woff2` slices with immutable caching**:
 
    ```http
    Cache-Control: public, max-age=31536000, immutable
    ```
 
-2. **When updating the font or slicing configuration**, re-run `cleome build` into the same directory. Unchanged slices (such as `latin` or `kana-core`) keep their exact filename and remain cached in browsers and CDN edge nodes, while slices whose `.woff2` bytes changed receive a new `<hash8>` filename in `<slug>.css`.
+2. **When updating the font or slicing configuration**, re-run `cleome build` into the same directory. Unchanged slices (such as `latin` or `kana-core`) keep their filename and stay cached in browsers and CDN edge nodes, while slices whose `.woff2` bytes changed get a new `<hash8>` filename in `<slug>.css`.
 
-3. **When `--no-filename-hash` is used**, include a version segment in your hosting directory path (such as `/fonts/source-han-sans-jp/v1/` -> `/v2/`) whenever you set `Cache-Control: public, max-age=31536000, immutable` so `<slug>.css` and all `.woff2` slices rotate together.
+3. **When using `--no-filename-hash`**, include a version segment in your hosting directory path (such as `/fonts/source-han-sans-jp/v1/` to `/v2/`) whenever you set `Cache-Control: public, max-age=31536000, immutable` so `<slug>.css` and all `.woff2` slices rotate together.

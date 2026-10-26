@@ -223,7 +223,155 @@ class TestCleomeCLI(unittest.TestCase):
                 self.assertEqual(rc_unhashed_2, 0)
                 self.assertTrue(json.loads(buf_unhashed_cached.getvalue())["cached"])
 
-                # 3c. `cleome build --force` bypasses cache and rebuilds (`cached: false`)
+                # 3d. `cleome build --css-out` writes stylesheet to a separate directory and hits cache on repeat
+                sep_slices_out = tmp_path / "public_fonts"
+                sep_css_out = tmp_path / "src" / "styles" / "custom-fonts.css"
+                buf_css_out = StringIO()
+                with redirect_stdout(buf_css_out):
+                    rc_css_out = cli_main(
+                        [
+                            "build",
+                            str(font_path),
+                            "-o",
+                            str(sep_slices_out),
+                            "--url-prefix",
+                            "/fonts/slices",
+                            "--css-out",
+                            str(sep_css_out),
+                            "-j",
+                            "1",
+                            "--json",
+                        ]
+                    )
+                self.assertEqual(rc_css_out, 0)
+                css_out_data = json.loads(buf_css_out.getvalue())
+                self.assertFalse(css_out_data["cached"])
+                self.assertEqual(Path(css_out_data["css_path"]), sep_css_out)
+                self.assertTrue(sep_css_out.is_file())
+                self.assertIn("url('/fonts/slices/subcmd-test-", sep_css_out.read_text(encoding="utf-8"))
+
+                buf_css_out_2 = StringIO()
+                with redirect_stdout(buf_css_out_2):
+                    rc_css_out_2 = cli_main(
+                        [
+                            "build",
+                            str(font_path),
+                            "-o",
+                            str(sep_slices_out),
+                            "--url-prefix",
+                            "/fonts/slices",
+                            "--css-out",
+                            str(sep_css_out),
+                            "-j",
+                            "1",
+                            "--json",
+                        ]
+                    )
+                self.assertEqual(rc_css_out_2, 0)
+                self.assertTrue(json.loads(buf_css_out_2.getvalue())["cached"])
+
+                # 3d-rel. `cleome build --css-out` without `--url-prefix` computes a relative URL prefix to `slices_dir`
+                rel_css_out = tmp_path / "src" / "styles" / "rel-fonts.css"
+                buf_rel_css = StringIO()
+                with redirect_stdout(buf_rel_css):
+                    rc_rel_css = cli_main(
+                        [
+                            "build",
+                            str(font_path),
+                            "-o",
+                            str(sep_slices_out),
+                            "--css-out",
+                            str(rel_css_out),
+                            "-j",
+                            "1",
+                            "--json",
+                        ]
+                    )
+                self.assertEqual(rc_rel_css, 0)
+                rel_css_data = json.loads(buf_rel_css.getvalue())
+                self.assertIn("url('../../public_fonts/slices/subcmd-test-", rel_css_out.read_text(encoding="utf-8"))
+                for item in rel_css_data["preload_slices"]:
+                    self.assertTrue(item["url"].startswith("../../public_fonts/slices/"))
+                    self.assertTrue((rel_css_out.parent / item["url"]).is_file())
+
+                # 3d-sym. `css_out` pointing to a symlink or directory with `#` / `?` encodes URL segments and resolves parent
+                hash_slices_out = tmp_path / "fonts#v1?test"
+                sym_target_dir = tmp_path / "deep" / "nested"
+                sym_target_dir.mkdir(parents=True, exist_ok=True)
+                old_target_css = sym_target_dir / "old.css"
+                old_target_css.write_text("/* old */", encoding="utf-8")
+                sym_css_out = tmp_path / "src" / "styles" / "sym-fonts.css"
+                sym_css_out.symlink_to(old_target_css)
+                buf_sym_css = StringIO()
+                with redirect_stdout(buf_sym_css):
+                    rc_sym_css = cli_main(
+                        [
+                            "build",
+                            str(font_path),
+                            "-o",
+                            str(hash_slices_out),
+                            "--css-out",
+                            str(sym_css_out),
+                            "-j",
+                            "1",
+                            "--json",
+                        ]
+                    )
+                self.assertEqual(rc_sym_css, 0)
+                self.assertFalse(sym_css_out.is_symlink())
+                self.assertIn(
+                    "url('../../fonts%23v1%3Ftest/slices/subcmd-test-",
+                    sym_css_out.read_text(encoding="utf-8"),
+                )
+
+                # 3d-symdir. Symlinked parent directory preserves logical URL path; cross-drive raises ValueError
+                from unittest.mock import patch as mock_patch
+
+                shared_styles = tmp_path / "shared" / "styles"
+                shared_styles.mkdir(parents=True, exist_ok=True)
+                site_dir = tmp_path / "site"
+                site_dir.mkdir(parents=True, exist_ok=True)
+                (site_dir / "styles").symlink_to(shared_styles, target_is_directory=True)
+                symdir_css = site_dir / "styles" / "site-fonts.css"
+                buf_symdir = StringIO()
+                with redirect_stdout(buf_symdir):
+                    rc_symdir = cli_main(
+                        [
+                            "build",
+                            str(font_path),
+                            "-o",
+                            str(site_dir / "fonts"),
+                            "--css-out",
+                            str(symdir_css),
+                            "-j",
+                            "1",
+                            "--json",
+                        ]
+                    )
+                self.assertEqual(rc_symdir, 0)
+                self.assertIn("url('../fonts/slices/subcmd-test-", symdir_css.read_text(encoding="utf-8"))
+
+                err_xdrive = StringIO()
+                with (
+                    mock_patch("os.path.relpath", side_effect=ValueError("cross-drive")),
+                    redirect_stderr(err_xdrive),
+                ):
+                    rc_xdrive = cli_main(
+                        [
+                            "build",
+                            str(font_path),
+                            "-o",
+                            str(site_dir / "fonts"),
+                            "--css-out",
+                            str(symdir_css),
+                            "-j",
+                            "1",
+                        ]
+                    )
+                self.assertEqual(rc_xdrive, 1)
+                self.assertIn("pass an explicit --url-prefix", err_xdrive.getvalue())
+
+                # 3e. `cleome build --force` bypasses cache and rebuilds (`cached: false`)
                 buf_force_json = StringIO()
                 with redirect_stdout(buf_force_json):
                     rc_force = cli_main(
@@ -256,6 +404,23 @@ class TestCleomeCLI(unittest.TestCase):
                     (["plan", str(font_path), "--slug", "../outside"], "slug"),
                     (["plan", str(font_path), "--weight", "400; } @import url(x)"], "font-weight"),
                     (["build", str(font_path), "-o", str(build_out), "--css-name", "../outside.css"], "css_filename"),
+                    (
+                        [
+                            "build",
+                            str(font_path),
+                            "-o",
+                            str(build_out),
+                            "--css-name",
+                            "a.css",
+                            "--css-out",
+                            str(tmp_path / "b.css"),
+                        ],
+                        "Cannot specify both css_filename and css_out",
+                    ),
+                    (
+                        ["build", str(font_path), "-o", str(build_out), "--css-out", str(build_out)],
+                        "css_out must be a file path, not an existing directory",
+                    ),
                 ):
                     err_buf = StringIO()
                     with redirect_stderr(err_buf):

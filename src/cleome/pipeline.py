@@ -11,6 +11,7 @@ import re
 from fontTools.ttLib import TTFont
 
 from cleome.css import (
+    _resolve_url_prefix,
     generate_css,
 )
 from cleome.metadata import (
@@ -125,6 +126,7 @@ def _compute_cache_key(
     family_name: str | None,
     slug: str | None,
     css_filename: str,
+    effective_url_prefix: str = "",
     weight: str | None,
     stretch: str | None,
     style: str | None,
@@ -138,6 +140,7 @@ def _compute_cache_key(
             "family_name": family_name,
             "slug": slug,
             "css_filename": css_filename,
+            "effective_url_prefix": effective_url_prefix,
             "weight": weight,
             "stretch": stretch,
             "style": style,
@@ -299,6 +302,8 @@ def _try_load_cached_bundle(
         config=config,
         cache_key=cache_key,
         out_digest=expected_out_digest,
+        css_path=css_path,
+        slices_dir=slices_dir,
     )
     if css_text != expected_css:
         return None
@@ -324,6 +329,7 @@ def slice_fonts(
     family_name: str | None = None,
     slug: str | None = None,
     css_filename: str | None = None,
+    css_out: Path | str | None = None,
     weight: str | None = None,
     stretch: str | None = None,
     style: str | None = None,
@@ -347,8 +353,17 @@ def slice_fonts(
         raise ValueError("At least one input font must be provided.")
     if config is None:
         config = SliceConfig()
+    if css_filename is not None and css_out is not None:
+        raise ValueError("Cannot specify both css_filename and css_out.")
     if css_filename is not None:
         css_filename = _validate_filename_token(css_filename, "css_filename")
+    if css_out is not None:
+        css_out_str = str(css_out).strip()
+        if not css_out_str or "\x00" in css_out_str:
+            raise ValueError(f"Invalid css_out path: {css_out!r}")
+        css_out_path = Path(css_out_str)
+        if not css_out_path.name or css_out_path.name in (".", ".."):
+            raise ValueError(f"css_out must point to a file path, got {css_out!r}")
 
     out_path = Path(out_dir)
     out_resolved = out_path.resolve()
@@ -429,14 +444,24 @@ def slice_fonts(
             union_codepoints, config=config, family_name=unified_family
         )
 
-        resolved_css_name = _validate_filename_token(
-            css_filename or f"{unified_slug}.css", "css_filename"
-        )
-        css_path = out_path / resolved_css_name
-        if not css_path.resolve().is_relative_to(out_resolved):
-            raise ValueError(f"css_path {css_path!r} resolves outside out_dir {out_path!r}")
+        if css_out is not None:
+            css_path = Path(str(css_out).strip())
+            if css_path.exists() and css_path.is_dir():
+                raise ValueError(f"css_out must be a file path, not an existing directory: {css_out!r}")
+            css_path.parent.mkdir(parents=True, exist_ok=True)
+            resolved_css_name = css_path.name
+        else:
+            resolved_css_name = _validate_filename_token(
+                css_filename or f"{unified_slug}.css", "css_filename"
+            )
+            css_path = out_path / resolved_css_name
+            if not css_path.resolve().is_relative_to(out_resolved):
+                raise ValueError(f"css_path {css_path!r} resolves outside out_dir {out_path!r}")
 
         font_digests = [d for _, _, _, _, d in loaded_fonts]
+        effective_prefix = _resolve_url_prefix(
+            config, css_path=css_path, slices_dir=slices_dir
+        )
         cache_key = _compute_cache_key(
             font_digests,
             metas,
@@ -445,6 +470,7 @@ def slice_fonts(
             family_name=family_name,
             slug=slug,
             css_filename=resolved_css_name,
+            effective_url_prefix=effective_prefix,
             weight=weight,
             stretch=stretch,
             style=style,
@@ -486,7 +512,12 @@ def slice_fonts(
         # 4. Generate CSS file atomically
         out_digest = _compute_slices_output_digest(all_built_files)
         css_text = generate_css(
-            fonts_and_files, config=config, cache_key=cache_key, out_digest=out_digest
+            fonts_and_files,
+            config=config,
+            cache_key=cache_key,
+            out_digest=out_digest,
+            css_path=css_path,
+            slices_dir=slices_dir,
         )
         with _atomic_output_file(css_path, mode="w", encoding="utf-8") as tf:
             tf.write(css_text)
@@ -516,6 +547,7 @@ def slice_font(
     family_name: str | None = None,
     slug: str | None = None,
     css_filename: str | None = None,
+    css_out: Path | str | None = None,
     weight: str | None = None,
     stretch: str | None = None,
     style: str | None = None,
@@ -537,6 +569,7 @@ def slice_font(
         family_name=family_name,
         slug=slug,
         css_filename=css_filename,
+        css_out=css_out,
         weight=weight,
         stretch=stretch,
         style=style,

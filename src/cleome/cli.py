@@ -99,8 +99,15 @@ def _add_shared_arguments(parser: argparse.ArgumentParser, *, is_build: bool) ->
     parser.add_argument(
         "--css-name",
         default=None,
-        help="Custom filename for the output CSS file (default: '<slug>.css')",
+        help="Custom filename for the output CSS file inside --out-dir (default: '<slug>.css')",
     )
+    if is_build:
+        parser.add_argument(
+            "--css-out",
+            type=Path,
+            default=None,
+            help="Write the output CSS file to an explicit path (e.g. 'src/styles/fonts.css' while -o is 'public/fonts')",
+        )
     parser.add_argument(
         "--family",
         default=None,
@@ -326,6 +333,7 @@ def _run_build(args: argparse.Namespace, config: SliceConfig) -> int:
             family_name=args.family,
             slug=args.slug,
             css_filename=args.css_name,
+            css_out=args.css_out,
             weight=args.weight,
             stretch=args.stretch,
             style=args.style,
@@ -338,7 +346,9 @@ def _run_build(args: argparse.Namespace, config: SliceConfig) -> int:
         return 1
 
     elapsed = time.time() - t0
-    url_prefix = _resolve_url_prefix(config)
+    url_prefix = _resolve_url_prefix(
+        config, css_path=result.css_path, slices_dir=result.slices_dir
+    )
     preload_slices = [
         {
             "slice_id": bf.spec.slice_id,

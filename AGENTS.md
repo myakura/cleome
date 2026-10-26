@@ -7,7 +7,7 @@ Cleome (`cleome`) is a Python (`>= 3.15`) CLI tool and library that inspects Jap
 * Install dependencies (`uharfbuzz`): `uv sync`
 * Run test suite (`unittest` + HarfBuzz shaping verification, fail-fast): `uv run python -m unittest discover -s tests -v -f`
 * Preview a 4-tier slice plan without writing files (read-only): `uv run cleome plan <font.ttf> [--json]`
-* Build `.woff2` slices and `@font-face` CSS: `uv run cleome build <font.ttf> -o dist/`
+* Build `.woff2` slices and `@font-face` CSS: `uv run cleome build <font.ttf> -o dist/ [--css-out <path.css>] [--no-filename-hash]`
 
 ## Architecture and invariants
 

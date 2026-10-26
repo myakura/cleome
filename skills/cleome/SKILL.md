@@ -42,14 +42,14 @@ if __name__ == "__main__":
 ```
 
 * `SliceConfig(locale="auto", freq_tiers=((200, 2), (80, 10)), freq_tail_chunk_size=70, rare_kanji_chunk_size=250, symbols_ext_chunk_size=350, retain_layout_closure=True, layout_features=("*",), drop_tables=(), patch_uvs_only_cmap=True, slices_subdir="slices", url_prefix=None, font_display="swap", filename_hash=True)`. Frozen configuration dataclass validated in `__post_init__`. `locale` accepts any value in `SUPPORTED_LOCALES` (`"auto"`, `"jp"`, `"kr"`, `"sc"`, `"tc"`, `"hk"`). When `filename_hash=True` (default), each built `.woff2` filename includes an 8-character SHA-256 content digest (`<slug>(-<variant>)-<slice_id>-<hash8>.woff2`).
-* `slice_font(font, out_dir, *, family_name=None, slug=None, css_filename=None, weight=None, stretch=None, style=None, config=None, workers=None, force=False) -> SliceBundleResult`. Slice one `.ttf` or `.otf` path or in-memory `TTFont` into `.woff2` files and `@font-face` CSS. Skips subsetting when `force=False` and existing outputs match the input SHA-256 digest and configuration (`result.cached == True`).
-* `slice_fonts(fonts, out_dir, *, family_name=None, slug=None, css_filename=None, weight=None, stretch=None, style=None, config=None, workers=None, force=False) -> SliceBundleResult`. Bundle multiple static weights, widths, or styles into one `@font-face` stylesheet and `slices/` directory. Validates that all variants share a common family name (unless `family_name` is passed) and distinct `(font-weight, font-stretch, font-style)` descriptors.
+* `slice_font(font, out_dir, *, family_name=None, slug=None, css_filename=None, css_out=None, weight=None, stretch=None, style=None, config=None, workers=None, force=False) -> SliceBundleResult`. Slice one `.ttf` or `.otf` path or in-memory `TTFont` into `.woff2` files and `@font-face` CSS. Pass `css_out` to write the stylesheet to an explicit path outside `out_dir` (such as `src/styles/fonts.css` while `out_dir="public/fonts"`; when `config.url_prefix` is `None`, Cleome computes a relative URL prefix from `css_out`'s parent directory to `slices_dir`). Skips subsetting when `force=False` and existing outputs match the input SHA-256 digest and configuration (`result.cached == True`).
+* `slice_fonts(fonts, out_dir, *, family_name=None, slug=None, css_filename=None, css_out=None, weight=None, stretch=None, style=None, config=None, workers=None, force=False) -> SliceBundleResult`. Bundle multiple static weights, widths, or styles into one `@font-face` stylesheet and `slices/` directory. Validates that all variants share a common family name (unless `family_name` is passed) and distinct `(font-weight, font-stretch, font-style)` descriptors.
 * `build_slice_plan(codepoints, config=None, *, family_name="") -> list[SliceSpec]`. Build the ordered 4-tier slice plan from lowest CSS priority (`tier=4`, declared first) to highest CSS priority (`tier=1`, declared last).
 * `detect_font_locale(codepoints, family_name="") -> str`. Auto-detect `"jp"`, `"kr"`, `"sc"`, `"tc"`, or `"hk"` from `family_name` tokens and `cmap` coverage ratios.
 * `extract_font_face_descriptors(font, *, family_override=None, weight_override=None, stretch_override=None, style_override=None) -> FontFaceDescriptors`. Extract CSS `@font-face` descriptors from `name`, `fvar` (`wght`, `wdth`, `ital`, `slnt`), `OS/2`, and `post`.
 * `extract_font_metadata(font, *, family_override=None, slug_override=None, weight_override=None, stretch_override=None, style_override=None, variant_suffix="", patch_uvs=True) -> FontMetadata`. Extract descriptors, `codepoints`, and `patched_uvs_codepoints` from a `TTFont`.
 * `export_woff2_slices(font_or_bytes, meta, slice_specs, slices_dir, config=None, workers=None) -> list[BuiltSliceFile]`. Export `.woff2` slices in parallel without mutating `font_or_bytes`.
-* `generate_css(fonts_and_files, config=None, *, cache_key=None, out_digest=None) -> str`. Render the `@font-face` stylesheet using Stixis (`SerializationOptions.cleome()`).
+* `generate_css(fonts_and_files, config=None, *, cache_key=None, out_digest=None, css_path=None, slices_dir=None) -> str`. Render the `@font-face` stylesheet using Stixis (`SerializationOptions.cleome()`).
 * `patch_uvs_missing_base_cmap(font) -> list[int]`. Restore characters mapped in `cmap` Format 14 (UVS/IVS) that upstream fonts omitted from Format 4 or Format 12, prioritizing IVS (`U+E0100..U+E01EF`) over `VS1..VS16`.
 * `slugify_family(name) -> str`. Convert a font family name into a kebab-case filename slug.
 * `format_unicode_range(codepoints) -> str`, `parse_unicode_range(ur_str) -> set[int]`, and `compact_unicode_range(sorted_target_cps, forbidden_sorted, max_gap=0x80) -> str`. Format, parse, and compact CSS `unicode-range` strings without shadowing lower-priority slices.
@@ -68,15 +68,15 @@ if __name__ == "__main__":
 
 * Preview a 4-tier slice plan without writing files (read-only):
   * `uv run cleome plan <font.ttf> [--locale auto|jp|kr|sc|tc|hk] [--json]`
-* Build `.woff2` slices and `@font-face` CSS (skips subsetting when cached outputs match; pass `--force` to rebuild, or `--no-filename-hash` to disable per-slice content hashes):
-  * `uv run cleome build <font.ttf> -o dist/web [--locale auto|jp|kr|sc|tc|hk] [--no-filename-hash] [--force] [--json]`
+* Build `.woff2` slices and `@font-face` CSS (skips subsetting when cached outputs match; pass `--force` to rebuild, `--no-filename-hash` to disable per-slice content hashes, or `--css-out` to place the stylesheet in a separate directory):
+  * `uv run cleome build <font.ttf> -o dist/web [--locale auto|jp|kr|sc|tc|hk] [--css-out <path.css>] [--no-filename-hash] [--force] [--json]`
   * `uv run cleome build MyFont-Regular.ttf MyFont-Bold.ttf -o dist/web-static --family "My Font"`
 
 ## Host and consume generated CSS and slices
 
-* **URL resolution (`--slices-dir`, `--url-prefix`, and `--filename-hash`).**
+* **URL resolution (`--slices-dir`, `--url-prefix`, `--css-out`, and `--filename-hash`).**
   * By default, `<out-dir>/<slug>.css` references `url('./slices/<slug>-<slice_id>-<hash8>.woff2') format('woff2')`, which resolves relative to the `.css` file URL. When serving both `<slug>.css` and `slices/*.woff2` from a static directory (such as `public/fonts/<slug>/`), keep the defaults and link `<link rel="stylesheet" href="/fonts/<slug>/<slug>.css">`.
-  * When importing `<slug>.css` into a bundler (Vite, Astro, Next.js) while serving slices from `public/` or a separate CDN origin, pass `--url-prefix "/fonts/<slug>/slices"` or `--url-prefix "https://cdn.example.com/fonts/<slug>/slices"` so URLs do not depend on the bundled stylesheet path. When placing `.woff2` slices inside a bundler-managed `src/assets/` folder where the bundler adds its own asset hash, pass `--no-filename-hash`.
+  * When importing `<slug>.css` into a bundler (Vite, Astro, Next.js) while serving slices from `public/` or a separate CDN origin, pass `--css-out src/styles/<slug>.css` alongside `-o public/fonts/<slug> --url-prefix "/fonts/<slug>/slices"` (or `--url-prefix "https://cdn.example.com/fonts/<slug>/slices"`) so `.woff2` slices go directly to `public/` while the stylesheet goes to `src/`. When placing both CSS and `.woff2` slices inside a bundler-managed `src/assets/` folder where the bundler adds its own asset hash, pass `--no-filename-hash`.
   * Pass `--slices-dir .` (or `SliceConfig(slices_subdir=".")`) to write `.woff2` files into the same directory as `<slug>.css`.
 * **HTML `<head>` placement and preloading.**
   * Place `<link>` tags in `<head>` **after** `<meta charset="utf-8">`, viewport `<meta>` tags, `<title>`, and any synchronous inline `<script>` or `<script type="importmap">`, and **before** external `<script>` tags (`defer` or `type="module"`):
@@ -87,7 +87,7 @@ if __name__ == "__main__":
   * **Do not** load `<slug>.css` via CSS `@import url(...)` (which hides `<slug>.css` from browser preload scanners), **do not** place blocking `<script src="...">` before `<link rel="preconnect">` or `<link rel="stylesheet">` (or synchronous inline `<script>` after `<link rel="stylesheet">`), and **do not** place `<link rel="stylesheet">` inside `<body>`.
 * **HTTP headers and cache invalidation.**
   * Cross-origin CDN responses for `.woff2` files must include `Access-Control-Allow-Origin` and `Content-Type: font/woff2` without HTTP `Content-Encoding` re-compression, because WOFF2 streams are already Brotli-compressed. Compress `<slug>.css` with HTTP Brotli or gzip.
-  * Because built slice filenames (`<slug>-<slice_id>-<hash8>.woff2`) include an 8-character SHA-256 content hash by default, `.woff2` files can be served directly with `Cache-Control: public, max-age=31536000, immutable` without rotating directory paths. If `--no-filename-hash` is used, host under a versioned directory path (such as `/fonts/<slug>/v1/`) when setting `immutable`.
+  * Because built slice filenames (`<slug>-<slice_id>-<hash8>.woff2`) include an 8-character SHA-256 content hash by default, you can serve `.woff2` files with `Cache-Control: public, max-age=31536000, immutable` without rotating directory paths. When using `--no-filename-hash`, host under a versioned directory path (such as `/fonts/<slug>/v1/`) when setting `immutable`.
 
 ## File Issues from consumer projects
 
