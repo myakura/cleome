@@ -3,28 +3,33 @@ High-level font slicing pipeline (`slice_font` / `slice_fonts`) and bundle cache
 """
 
 from collections.abc import Sequence
+from contextlib import ExitStack
 from dataclasses import asdict, dataclass, field
 import hashlib
 import io
 import json
 from pathlib import Path
-import re
 from fontTools.ttLib import TTFont
 
 from cleome.css import (
-    _resolve_url_prefix,
+    _BLOCK_GLYPHS_RE,
+    _CACHE_COMMENT_RE,
+    _CACHE_FORMAT_VERSION,
+    _compute_slices_output_digest,
+    _format_cache_comment,
+    _resolve_and_validate_outputs,
     generate_css,
 )
 from cleome.metadata import (
     FontMetadata,
+    _split_hashed_stem,
     _validate_filename_token,
     extract_font_metadata,
-    validate_and_compute_variant_suffixes,
 )
 from cleome.slicer import (
     SliceConfig,
     SliceSpec,
-    build_slice_plan,
+    _prepare_font_bundle,
 )
 from cleome.subsetter import (
     BuiltSliceFile,
@@ -47,13 +52,15 @@ __all__ = [
     "slice_fonts",
 ]
 
-_CACHE_FORMAT_VERSION = 1
-_CACHE_COMMENT_RE = re.compile(
-    r"^/\* cleome-cache: v(?P<version>\d+) key=(?P<key>[0-9a-f]{32}) out=(?P<out>[0-9a-f]{32}) \*/$"
-)
-_BLOCK_GLYPHS_RE = re.compile(
-    r"^/\* \[[^\]]+\] .* \((?P<glyphs>\d+) glyphs, [0-9.]+ KB\) \*/$"
-)
+
+@dataclass(frozen=True, slots=True)
+class _LoadedFont:
+    """Opened probe `TTFont`, worker export source, flavor hint, and SHA-256 input digest."""
+
+    probe_tt: TTFont
+    export_source: Path | bytes
+    is_woff_hint: bool | None
+    sha256_hex: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -87,23 +94,6 @@ class SliceBundleResult:
     @property
     def css_bytes(self) -> int:
         return len(self.css_text.encode("utf-8"))
-
-
-def _compute_slices_output_digest(built_files: list[BuiltSliceFile]) -> str:
-    """Compute a single 32-hex-char SHA-256 digest over all built `.woff2` slice files in order."""
-    hasher = hashlib.sha256()
-    for bf in built_files:
-        raw = bf.path.read_bytes()
-        hasher.update(f"{bf.filename}:{len(raw)}:{bf.glyph_count}\n".encode("utf-8"))
-        hasher.update(raw)
-    return hasher.hexdigest()[:32]
-
-
-def _format_cache_comment(cache_key: str, out_digest: str) -> str:
-    return (
-        f"/* cleome-cache: v{_CACHE_FORMAT_VERSION} "
-        f"key={cache_key} out={out_digest} */"
-    )
 
 
 def _get_toolchain_versions() -> dict[str, str]:
@@ -212,7 +202,7 @@ def _try_load_cached_bundle(
             block_glyphs.append(int(bm.group("glyphs")))
 
     expected_block_count = sum(
-        len(m.styles_css or (m.style_css,))
+        len(m.styles_css)
         * sum(1 for spec in plan if spec.binary_codepoints & m.codepoints)
         for m, plan in zip(metas, variant_plans)
     )
@@ -226,9 +216,9 @@ def _try_load_cached_bundle(
             for existing in slices_dir.iterdir():
                 if not existing.is_file() or existing.suffix != ".woff2":
                     continue
-                parts = existing.stem.rsplit("-", 1)
-                if len(parts) == 2 and len(parts[1]) == 8 and all(c in "0123456789abcdef" for c in parts[1]):
-                    base_stem = parts[0]
+                split_res = _split_hashed_stem(existing.stem)
+                if split_res is not None:
+                    base_stem = split_res[0]
                     if base_stem in hashed_by_stem:
                         # Ambiguous multiple hashed files for the same stem
                         hashed_by_stem[base_stem] = ""
@@ -237,18 +227,19 @@ def _try_load_cached_bundle(
         except OSError:
             return None
 
-    per_meta_files: dict[int, list[BuiltSliceFile]] = {i: [] for i in range(len(metas))}
+    per_meta_files: list[list[BuiltSliceFile]] = []
     all_built_files: list[BuiltSliceFile] = []
     out_hasher = hashlib.sha256()
 
     block_cursor = 0
-    for meta_idx, (m, plan) in enumerate(zip(metas, variant_plans)):
+    for m, plan in zip(metas, variant_plans):
         active_specs = [spec for spec in plan if spec.binary_codepoints & m.codepoints]
-        num_styles = len(m.styles_css or (m.style_css,))
+        num_styles = len(m.styles_css)
         n_specs = len(active_specs)
         # First style block carries the glyph counts for this variant's active slices
         variant_glyph_counts = block_glyphs[block_cursor : block_cursor + n_specs]
         block_cursor += num_styles * n_specs
+        variant_files: list[BuiltSliceFile] = []
 
         for spec, glyph_count in zip(active_specs, variant_glyph_counts):
             if glyph_count <= 0:
@@ -291,13 +282,14 @@ def _try_load_cached_bundle(
                 glyph_count=glyph_count,
                 variant_suffix=m.variant_suffix,
             )
-            per_meta_files[meta_idx].append(bf)
+            variant_files.append(bf)
             all_built_files.append(bf)
+        per_meta_files.append(variant_files)
 
     if out_hasher.hexdigest()[:32] != expected_out_digest:
         return None
 
-    fonts_and_files = [(m, per_meta_files[i]) for i, m in enumerate(metas)]
+    fonts_and_files = list(zip(metas, per_meta_files))
     expected_css = generate_css(
         fonts_and_files,
         config=config,
@@ -356,55 +348,29 @@ def slice_fonts(
         raise ValueError(f"workers must be >= 1, got {workers}")
     if config is None:
         config = SliceConfig()
-    if css_filename is not None and css_path is not None:
-        raise ValueError("Cannot specify both css_filename and css_path.")
-    if css_filename is not None:
-        css_filename = _validate_filename_token(css_filename, "css_filename")
-    if css_path is not None:
-        css_path_str = str(css_path).strip()
-        if not css_path_str or "\x00" in css_path_str:
-            raise ValueError(f"Invalid css_path: {css_path!r}")
-        explicit_css_path = Path(css_path_str)
-        if not explicit_css_path.name or explicit_css_path.name in (".", ".."):
-            raise ValueError(f"css_path must point to a file path, got {css_path!r}")
-        if explicit_css_path.exists() and explicit_css_path.is_dir():
-            raise ValueError(
-                f"css_path must be a file path, not an existing directory: {css_path!r}"
-            )
-    else:
-        explicit_css_path = None
 
-    out_path = Path(out_dir)
-    if out_path.exists() and not out_path.is_dir():
-        raise ValueError(f"out_dir must be a directory path, not an existing file: {out_dir!r}")
-    out_resolved = out_path.resolve()
-    subdir = config.slices_subdir.strip().rstrip("/")
-    slices_dir = out_path if (not subdir or subdir == ".") else (out_path / subdir)
-    if not slices_dir.resolve().is_relative_to(out_resolved):
-        raise ValueError(f"slices_dir {slices_dir!r} resolves outside out_dir {out_path!r}")
-
-    # Tuple of (probe_tt, source_for_export, is_woff_hint, should_close, sha256_hex)
-    loaded_fonts: list[tuple[TTFont, Path | bytes, bool | None, bool, str]] = []
-    try:
+    loaded_fonts: list[_LoadedFont] = []
+    with ExitStack() as stack:
         for f in fonts:
             if isinstance(f, TTFont):
-                # Serialize once without mutating caller's TTFont instance
                 raw_bytes = serialize_font_to_bytes(f)
                 digest = hashlib.sha256(raw_bytes).hexdigest()
-                probe_tt = TTFont(io.BytesIO(raw_bytes), lazy=True, recalcTimestamp=False)
-                loaded_fonts.append((probe_tt, raw_bytes, False, True, digest))
+                probe_tt = stack.enter_context(
+                    TTFont(io.BytesIO(raw_bytes), lazy=True, recalcTimestamp=False)
+                )
+                loaded_fonts.append(_LoadedFont(probe_tt, raw_bytes, False, digest))
             else:
                 p = Path(f)
                 raw_bytes = p.read_bytes()
                 digest = hashlib.sha256(raw_bytes).hexdigest()
-                probe_tt = TTFont(io.BytesIO(raw_bytes), lazy=True, recalcTimestamp=False)
-                loaded_fonts.append((probe_tt, p, probe_tt.flavor is not None, True, digest))
+                probe_tt = stack.enter_context(
+                    TTFont(io.BytesIO(raw_bytes), lazy=True, recalcTimestamp=False)
+                )
+                loaded_fonts.append(_LoadedFont(probe_tt, p, probe_tt.flavor is not None, digest))
 
-        # 1. Extract metadata from each font
-        raw_metas: list[FontMetadata] = []
-        for tt, _, _, _, _ in loaded_fonts:
-            m = extract_font_metadata(
-                tt,
+        raw_metas = [
+            extract_font_metadata(
+                lf.probe_tt,
                 family_override=family_name,
                 slug_override=slug,
                 weight_override=weight,
@@ -412,73 +378,33 @@ def slice_fonts(
                 style_override=style,
                 uvs_base_repair=config.uvs_base_repair,
             )
-            raw_metas.append(m)
-
-        variant_suffixes = validate_and_compute_variant_suffixes(
-            raw_metas, family_override=family_name
-        )
-
-        # Unify family_name and slug across all variants (using the first font if not overridden)
-        unified_family = family_name or raw_metas[0].family_name
-        unified_slug = slug or raw_metas[0].slug
-
-        metas: list[FontMetadata] = [
-            FontMetadata(
-                family_name=unified_family,
-                slug=unified_slug,
-                is_variable=m.is_variable,
-                weight_css=m.weight_css,
-                stretch_css=m.stretch_css,
-                style_css=m.style_css,
-                variant_suffix=v_suf,
-                codepoints=m.codepoints,
-                patched_uvs_codepoints=m.patched_uvs_codepoints,
-                styles_css=m.styles_css,
-            )
-            for m, v_suf in zip(raw_metas, variant_suffixes)
+            for lf in loaded_fonts
         ]
-
-        # 2. Build dynamic 4-tier slice plan (cached by codepoints frozenset so variants with
-        # identical cmaps share the plan, while variants with differing cmaps get exact ranges)
-        plan_cache: dict[frozenset[int], list[SliceSpec]] = {}
-        for m in metas:
-            if m.codepoints not in plan_cache:
-                plan_cache[m.codepoints] = build_slice_plan(
-                    m.codepoints, config=config, family_name=unified_family
-                )
-
-        variant_plans = [plan_cache[m.codepoints] for m in metas]
-        union_codepoints = frozenset({*m.codepoints for m in metas})
-        slice_specs = plan_cache.get(union_codepoints) or build_slice_plan(
-            union_codepoints, config=config, family_name=unified_family
+        prepared = _prepare_font_bundle(
+            raw_metas,
+            config,
+            family_override=family_name,
+            slug_override=slug,
+        )
+        outputs = _resolve_and_validate_outputs(
+            out_dir,
+            config,
+            prepared.metas,
+            prepared.variant_plans,
+            css_filename=css_filename,
+            css_path=css_path,
         )
 
-        if explicit_css_path is not None:
-            resolved_css_path = explicit_css_path
-            resolved_css_name = resolved_css_path.name
-        else:
-            resolved_css_name = _validate_filename_token(
-                css_filename or f"{unified_slug}.css", "css_filename"
-            )
-            resolved_css_path = out_path / resolved_css_name
-            if not resolved_css_path.resolve().is_relative_to(out_resolved):
-                raise ValueError(
-                    f"css_path {resolved_css_path!r} resolves outside out_dir {out_path!r}"
-                )
-
-        font_digests = [d for _, _, _, _, d in loaded_fonts]
-        effective_prefix = _resolve_url_prefix(
-            config, css_path=resolved_css_path, slices_dir=slices_dir
-        )
+        font_digests = [lf.sha256_hex for lf in loaded_fonts]
         cache_key = _compute_cache_key(
             font_digests,
-            metas,
-            variant_plans,
+            prepared.metas,
+            prepared.variant_plans,
             config,
             family_name=family_name,
             slug=slug,
-            css_filename=resolved_css_name,
-            effective_url_prefix=effective_prefix,
+            css_filename=outputs.css_filename,
+            effective_url_prefix=outputs.url_prefix,
             weight=weight,
             stretch=stretch,
             style=style,
@@ -486,70 +412,61 @@ def slice_fonts(
 
         if not force:
             cached_res = _try_load_cached_bundle(
-                resolved_css_path,
-                slices_dir,
+                outputs.css_path,
+                outputs.slices_dir,
                 cache_key,
-                metas,
-                variant_plans,
-                slice_specs,
+                prepared.metas,
+                prepared.variant_plans,
+                prepared.union_plan,
                 config,
             )
             if cached_res is not None:
                 return cached_res
 
-        out_path.mkdir(parents=True, exist_ok=True)
-        if explicit_css_path is not None:
-            resolved_css_path.parent.mkdir(parents=True, exist_ok=True)
+        outputs.out_path.mkdir(parents=True, exist_ok=True)
+        if outputs.explicit_css:
+            outputs.css_path.parent.mkdir(parents=True, exist_ok=True)
 
-        # 3. Export WOFF2 slices across all input fonts in a single batch
         batch_variants: list[tuple[TTFont | bytes | Path | str, FontMetadata, list[SliceSpec]]] = [
-            (export_src, m, variant_specs)
-            for (_, export_src, _, _, _), m, variant_specs in zip(loaded_fonts, metas, variant_plans)
+            (lf.export_source, m, variant_specs)
+            for lf, m, variant_specs in zip(loaded_fonts, prepared.metas, prepared.variant_plans)
         ]
-        woff_hints = [is_woff for _, _, is_woff, _, _ in loaded_fonts]
+        woff_hints = [lf.is_woff_hint for lf in loaded_fonts]
         variant_built_lists = _export_woff2_slices_batch(
             batch_variants,
-            slices_dir=slices_dir,
+            slices_dir=outputs.slices_dir,
             config=config,
             workers=workers,
             is_woff_hints=woff_hints,
         )
 
-        fonts_and_files: list[tuple[FontMetadata, list[BuiltSliceFile]]] = []
-        all_built_files: list[BuiltSliceFile] = []
-        for m, built in zip(metas, variant_built_lists):
-            fonts_and_files.append((m, built))
-            all_built_files.extend(built)
+        fonts_and_files = list(zip(prepared.metas, variant_built_lists))
+        all_built_files = [bf for built in variant_built_lists for bf in built]
 
-        # 4. Generate CSS file atomically
         out_digest = _compute_slices_output_digest(all_built_files)
         css_text = generate_css(
             fonts_and_files,
             config=config,
             cache_key=cache_key,
             out_digest=out_digest,
-            css_path=resolved_css_path,
-            slices_dir=slices_dir,
+            css_path=outputs.css_path,
+            slices_dir=outputs.slices_dir,
         )
-        with _atomic_output_file(resolved_css_path, mode="w", encoding="utf-8") as tf:
+        with _atomic_output_file(outputs.css_path, mode="w", encoding="utf-8") as tf:
             tf.write(css_text)
 
         return SliceBundleResult(
-            family_name=unified_family,
-            slug=unified_slug,
-            css_path=resolved_css_path,
+            family_name=prepared.family_name,
+            slug=prepared.slug,
+            css_path=outputs.css_path,
             css_text=css_text,
-            slices_dir=slices_dir,
-            slice_specs=slice_specs,
+            slices_dir=outputs.slices_dir,
+            slice_specs=prepared.union_plan,
             built_files=all_built_files,
-            fonts_metadata=metas,
-            variant_slice_specs=variant_plans,
+            fonts_metadata=prepared.metas,
+            variant_slice_specs=prepared.variant_plans,
             cached=False,
         )
-    finally:
-        for tt, _, _, should_close, _ in loaded_fonts:
-            if should_close:
-                tt.close()
 
 
 def slice_font(

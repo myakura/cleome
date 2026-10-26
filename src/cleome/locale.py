@@ -36,13 +36,7 @@ CJK_IDEOGRAPH_REGIONS: tuple[tuple[str, int, int], ...] = (
 
 def is_cjk_ideograph(cp: int) -> bool:
     """Return True if `cp` is a CJK Unified or Compatibility Ideograph (Kanji / Hanzi / Hanja)."""
-    return (
-        (0x3400 <= cp <= 0x4DBF)       # CJK Unified Ideographs Extension A
-        or (0x4E00 <= cp <= 0x9FFF)    # CJK Unified Ideographs (BMP)
-        or (0xF900 <= cp <= 0xFAFF)    # CJK Compatibility Ideographs
-        or (0x20000 <= cp <= 0x2FA1F)  # CJK Unified Ideographs Ext B..F, Ext I & Compat Supplement (SIP)
-        or (0x30000 <= cp <= 0x3347F)  # CJK Unified Ideographs Ext G, Ext H & Ext J (TIP, Unicode 17.0)
-    )
+    return any(lo <= cp <= hi for _, lo, hi in CJK_IDEOGRAPH_REGIONS)
 
 
 def is_hangul_syllable(cp: int) -> bool:

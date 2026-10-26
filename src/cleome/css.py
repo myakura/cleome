@@ -2,8 +2,14 @@
 CSS `@font-face` stylesheet generator for Cleome.
 """
 
+from collections.abc import Sequence
+from dataclasses import dataclass
+import hashlib
+import os
 from pathlib import Path
-from typing import Any, Protocol
+import re
+from typing import Protocol
+from urllib.parse import quote
 from stixis import (
     CommentNode,
     FontFace,
@@ -15,10 +21,21 @@ from stixis import (
     using_options,
 )
 
-from cleome.metadata import FontMetadata, validate_and_compute_variant_suffixes
+from cleome.metadata import (
+    FontMetadata,
+    _validate_filename_token,
+    validate_and_compute_variant_suffixes,
+)
 from cleome.slicer import SliceConfig, SliceSpec
 
 _CLEOME_CSS_OPTIONS = SerializationOptions.cleome()
+_CACHE_FORMAT_VERSION = 1
+_CACHE_COMMENT_RE = re.compile(
+    r"^/\* cleome-cache: v(?P<version>\d+) key=(?P<key>[0-9a-f]{32}) out=(?P<out>[0-9a-f]{32}) \*/$"
+)
+_BLOCK_GLYPHS_RE = re.compile(
+    r"^/\* \[[^\]]+\] .* \((?P<glyphs>\d+) glyphs, [0-9.]+ KB\) \*/$"
+)
 
 
 class _SliceFileLike(Protocol):
@@ -38,6 +55,38 @@ class _SliceFileLike(Protocol):
     def glyph_count(self) -> int: ...
 
 
+def _compute_slices_output_digest(built_files: Sequence[_SliceFileLike]) -> str:
+    """Compute a single 32-hex-char SHA-256 digest over all built `.woff2` slice files in order."""
+    hasher = hashlib.sha256()
+    for bf in built_files:
+        raw = bf.path.read_bytes()
+        hasher.update(f"{bf.filename}:{len(raw)}:{bf.glyph_count}\n".encode("utf-8"))
+        hasher.update(raw)
+    return hasher.hexdigest()[:32]
+
+
+def _format_cache_comment(cache_key: str, out_digest: str) -> str:
+    return (
+        f"/* cleome-cache: v{_CACHE_FORMAT_VERSION} "
+        f"key={cache_key} out={out_digest} */"
+    )
+
+
+def _ensure_directory_creatable(dir_path: Path, label: str) -> None:
+    """Raise `ValueError` if `dir_path` or any existing ancestor on disk is a non-directory file."""
+    if dir_path.exists():
+        if not dir_path.is_dir():
+            raise ValueError(f"{label} must be a directory path, not an existing file: {dir_path!r}")
+        return
+    for parent in dir_path.parents:
+        if parent.exists():
+            if not parent.is_dir():
+                raise ValueError(
+                    f"Cannot create {label} under existing file {parent!r}: {dir_path!r}"
+                )
+            return
+
+
 def _resolve_url_prefix(
     config: SliceConfig,
     *,
@@ -48,9 +97,6 @@ def _resolve_url_prefix(
         prefix = config.url_prefix.rstrip("/")
         return f"{prefix}/" if prefix else ""
     if css_path is not None and slices_dir is not None:
-        import os
-        from urllib.parse import quote
-
         css_dir_abs = os.path.abspath(css_path.parent)
         slices_dir_abs = os.path.abspath(slices_dir)
         try:
@@ -77,8 +123,146 @@ def _resolve_url_prefix(
     return f"./{subdir}/"
 
 
+@dataclass(frozen=True, slots=True)
+class _ResolvedOutputs:
+    """Validated output paths, resolved URL prefix, and dry-run preload summary."""
+
+    out_path: Path
+    slices_dir: Path
+    css_path: Path
+    css_filename: str
+    explicit_css: bool
+    url_prefix: str
+    total_active_slices: int
+    preload_slices: list[dict[str, str]]
+
+
+def _resolve_and_validate_outputs(
+    out_dir: Path | str,
+    config: SliceConfig,
+    metas: Sequence[FontMetadata],
+    variant_plans: Sequence[Sequence[SliceSpec]],
+    *,
+    css_filename: str | None = None,
+    css_path: Path | str | None = None,
+) -> _ResolvedOutputs:
+    """Validate all output directories, CSS path, URL prefix, and slice filenames without mutating disk."""
+    if css_filename is not None and css_path is not None:
+        raise ValueError("Cannot specify both css_filename and css_path.")
+    if css_filename is not None:
+        css_filename = _validate_filename_token(css_filename, "css_filename")
+
+    if css_path is not None:
+        css_path_str = str(css_path).strip()
+        if not css_path_str or "\x00" in css_path_str:
+            raise ValueError(f"Invalid css_path: {css_path!r}")
+        explicit_css_path = Path(css_path_str)
+        if not explicit_css_path.name or explicit_css_path.name in (".", ".."):
+            raise ValueError(f"css_path must point to a file path, got {css_path!r}")
+        if explicit_css_path.exists() and explicit_css_path.is_dir():
+            raise ValueError(
+                f"css_path must be a file path, not an existing directory: {css_path!r}"
+            )
+    else:
+        explicit_css_path = None
+
+    out_path = Path(out_dir)
+    _ensure_directory_creatable(out_path, "out_dir")
+    out_resolved = out_path.resolve()
+
+    subdir = config.slices_subdir.strip().rstrip("/")
+    slices_dir = out_path if (not subdir or subdir == ".") else (out_path / subdir)
+    slices_resolved = slices_dir.resolve()
+    if not slices_resolved.is_relative_to(out_resolved):
+        raise ValueError(f"slices_dir {slices_dir!r} resolves outside out_dir {out_path!r}")
+    _ensure_directory_creatable(slices_dir, "slices_dir")
+
+    unified_slug = metas[0].slug
+    if explicit_css_path is not None:
+        resolved_css_path = explicit_css_path
+        resolved_css_name = resolved_css_path.name
+    else:
+        resolved_css_name = _validate_filename_token(
+            css_filename or f"{unified_slug}.css", "css_filename"
+        )
+        resolved_css_path = out_path / resolved_css_name
+        if not resolved_css_path.resolve().is_relative_to(out_resolved):
+            raise ValueError(
+                f"css_path {resolved_css_path!r} resolves outside out_dir {out_path!r}"
+            )
+
+    _ensure_directory_creatable(resolved_css_path.parent, "css_path parent directory")
+    if resolved_css_path.exists() and resolved_css_path.is_dir():
+        raise ValueError(
+            f"css_path must be a file path, not an existing directory: {resolved_css_path!r}"
+        )
+    css_resolved = resolved_css_path.resolve()
+    if css_resolved in (out_resolved, slices_resolved):
+        raise ValueError(
+            f"css_path {resolved_css_path!r} collides with output directory"
+        )
+
+    url_prefix = _resolve_url_prefix(
+        config, css_path=resolved_css_path, slices_dir=slices_dir
+    )
+
+    total_active_slices = 0
+    preload_slices: list[dict[str, str]] = []
+    seen_slice_paths: set[str] = set()
+    hash_placeholder = "<hash8>" if config.filename_hash else ""
+
+    for m, plan in zip(metas, variant_plans):
+        for spec in plan:
+            if not (spec.binary_codepoints & m.codepoints):
+                continue
+            base_fname = _validate_filename_token(
+                spec.filename(m.slug, m.variant_suffix), "slice filename"
+            )
+            slice_out = slices_dir / base_fname
+            slice_resolved = slice_out.resolve()
+            if not slice_resolved.is_relative_to(slices_resolved):
+                raise ValueError(
+                    f"Slice output path {slice_out!r} resolves outside slices_dir {slices_dir!r}"
+                )
+            if not config.filename_hash:
+                if slice_out.exists() and slice_out.is_dir():
+                    raise ValueError(
+                        f"Slice output path must be a file, not an existing directory: {slice_out!r}"
+                    )
+                if slice_resolved == css_resolved:
+                    raise ValueError(
+                        f"css_path {resolved_css_path!r} collides with planned slice output {slice_out!r}"
+                    )
+            slice_str = str(slice_out)
+            if slice_str in seen_slice_paths:
+                raise ValueError(f"Duplicate slice output path across variants: {slice_str}")
+            seen_slice_paths.add(slice_str)
+            total_active_slices += 1
+            if spec.tier == 1:
+                preview_fname = spec.filename(m.slug, m.variant_suffix, hash_placeholder)
+                preload_slices.append(
+                    {
+                        "slice_id": spec.slice_id,
+                        "variant_suffix": m.variant_suffix,
+                        "filename": preview_fname,
+                        "url": f"{url_prefix}{preview_fname}",
+                    }
+                )
+
+    return _ResolvedOutputs(
+        out_path=out_path,
+        slices_dir=slices_dir,
+        css_path=resolved_css_path,
+        css_filename=resolved_css_name,
+        explicit_css=explicit_css_path is not None,
+        url_prefix=url_prefix,
+        total_active_slices=total_active_slices,
+        preload_slices=preload_slices,
+    )
+
+
 def generate_css(
-    fonts_and_files: list[tuple[FontMetadata, list[_SliceFileLike]]],
+    fonts_and_files: Sequence[tuple[FontMetadata, Sequence[_SliceFileLike]]],
     config: SliceConfig | None = None,
     *,
     cache_key: str | None = None,
@@ -104,11 +288,6 @@ def generate_css(
     with using_options(_CLEOME_CSS_OPTIONS):
         rules: list[Rule] = []
         if cache_key is not None:
-            from cleome.pipeline import (
-                _compute_slices_output_digest,
-                _format_cache_comment,
-            )
-
             resolved_out = (
                 out_digest
                 if out_digest is not None
@@ -117,7 +296,7 @@ def generate_css(
             rules.append(CommentNode(_format_cache_comment(cache_key, resolved_out)))
 
         for meta, built_files in fonts_and_files:
-            styles = meta.styles_css or (meta.style_css,)
+            styles = meta.styles_css
             if len(fonts_and_files) > 1:
                 v_label = f" ({meta.variant_suffix})" if meta.variant_suffix else ""
                 stretch_info = f", stretch: {meta.stretch_css}" if meta.stretch_css else ""
@@ -158,32 +337,15 @@ def generate_css(
         return dumps(sheet)
 
 
-_PIPELINE_REEXPORTS = (
-    "SliceBundleResult",
-    "slice_font",
-    "slice_fonts",
+__all__ = [
     "_BLOCK_GLYPHS_RE",
     "_CACHE_COMMENT_RE",
     "_CACHE_FORMAT_VERSION",
-    "_compute_cache_key",
+    "_ResolvedOutputs",
     "_compute_slices_output_digest",
+    "_ensure_directory_creatable",
     "_format_cache_comment",
-    "_get_toolchain_versions",
-    "_try_load_cached_bundle",
-)
-
-__all__ = [
-    "SliceBundleResult",
+    "_resolve_and_validate_outputs",
+    "_resolve_url_prefix",
     "generate_css",
-    "slice_font",
-    "slice_fonts",
-    "validate_and_compute_variant_suffixes",
 ]
-
-
-def __getattr__(name: str) -> Any:
-    if name in _PIPELINE_REEXPORTS:
-        import cleome.pipeline as _pipeline
-
-        return getattr(_pipeline, name)
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

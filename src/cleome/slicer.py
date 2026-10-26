@@ -13,17 +13,16 @@ Implements the 4-tier architecture:
 """
 
 from bisect import bisect_left, bisect_right
-from dataclasses import dataclass
+from collections.abc import Sequence
+from dataclasses import dataclass, replace
 from pathlib import Path
 from stixis import canonicalize, format_urange
 
-from cleome.data.kanji_freq import KANJI_FREQ_CODEPOINTS, KANJI_FREQ_RANK
-from cleome.data.kr_freq import KR_HANGUL_FREQ_CODEPOINTS, KR_HANGUL_FREQ_RANK
-from cleome.data.sc_freq import SC_HANZI_FREQ_CODEPOINTS, SC_HANZI_FREQ_RANK
+from cleome.data.kanji_freq import KANJI_FREQ_RANK
+from cleome.data.kr_freq import KR_HANGUL_FREQ_RANK
+from cleome.data.sc_freq import SC_HANZI_FREQ_RANK
 from cleome.data.tc_freq import (
-    HK_HANZI_FREQ_CODEPOINTS,
     HK_HANZI_FREQ_RANK,
-    TC_HANZI_FREQ_CODEPOINTS,
     TC_HANZI_FREQ_RANK,
 )
 from cleome.locale import (
@@ -38,6 +37,7 @@ from cleome.locale import (
     is_tier1_latin,
     is_tier2_symbols_ui,
 )
+from cleome.metadata import FontMetadata, validate_and_compute_variant_suffixes
 from cleome.urange import (
     CodepointSet,
     compact_unicode_range,
@@ -568,5 +568,65 @@ def _append_tier2_and_tier1_slices(
                 uses_cascade_shadowing=True,
             )
         )
+
+
+@dataclass(frozen=True, slots=True)
+class _PreparedBundle:
+    """Unified metadata, resolved locale, per-variant slice plans, and union plan across input fonts."""
+
+    family_name: str
+    slug: str
+    resolved_locale: str
+    metas: list[FontMetadata]
+    variant_plans: list[list[SliceSpec]]
+    union_plan: list[SliceSpec]
+
+
+def _prepare_font_bundle(
+    raw_metas: Sequence[FontMetadata],
+    config: SliceConfig,
+    *,
+    family_override: str | None = None,
+    slug_override: str | None = None,
+) -> _PreparedBundle:
+    """Validate variants, unify family and slug, and compute cached 4-tier slice plans without I/O."""
+    if not raw_metas:
+        raise ValueError("At least one FontMetadata item is required.")
+    variant_suffixes = validate_and_compute_variant_suffixes(
+        raw_metas, family_override=family_override
+    )
+    unified_family = family_override or raw_metas[0].family_name
+    unified_slug = slug_override or raw_metas[0].slug
+
+    metas: list[FontMetadata] = [
+        replace(m, family_name=unified_family, slug=unified_slug, variant_suffix=v_suf)
+        for m, v_suf in zip(raw_metas, variant_suffixes)
+    ]
+
+    plan_cache: dict[frozenset[int], list[SliceSpec]] = {}
+    for m in metas:
+        if m.codepoints not in plan_cache:
+            plan_cache[m.codepoints] = build_slice_plan(
+                m.codepoints, config=config, family_name=unified_family
+            )
+
+    variant_plans = [plan_cache[m.codepoints] for m in metas]
+    union_codepoints = frozenset({*m.codepoints for m in metas})
+    union_plan = plan_cache.get(union_codepoints) or build_slice_plan(
+        union_codepoints, config=config, family_name=unified_family
+    )
+    resolved_locale = (
+        detect_font_locale(metas[0].codepoints, family_name=unified_family)
+        if config.locale == "auto"
+        else config.locale
+    )
+    return _PreparedBundle(
+        family_name=unified_family,
+        slug=unified_slug,
+        resolved_locale=resolved_locale,
+        metas=metas,
+        variant_plans=variant_plans,
+        union_plan=union_plan,
+    )
 
 

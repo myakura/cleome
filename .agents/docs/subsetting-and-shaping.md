@@ -17,4 +17,4 @@ Domain rules for `unicode-range` formatting and compaction ([`cleome/urange.py`]
 ## UVS and IVS (`cmap` Format 14) handling
 
 * Retain `cmap` Format 14 variation selector mappings (both default and non-default UVS and IVS) and their variant glyphs for all base characters included in a slice (`_prepare_uvs_for_slice` in `cleome/subsetter.py`), without leaking standalone variation selector codepoints into the slice's base Format 4 or Format 12 `cmap`.
-* Keep Format 14 sequence retention separate from `patch_uvs_missing_base_cmap` (`cleome/subsetter.py`), which recovers characters that upstream fonts mapped in Format 14 but omitted from Format 4 and Format 12.
+* Keep Format 14 sequence retention separate from `patch_uvs_missing_base_cmap` (`cleome/metadata.py`, re-exported by `cleome/subsetter.py`), which recovers characters that upstream fonts mapped in Format 14 but omitted from Format 4 and Format 12.
