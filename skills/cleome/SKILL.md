@@ -68,9 +68,10 @@ if __name__ == "__main__":
 
 * Preview a 4-tier slice plan without writing files (read-only):
   * `uv run cleome plan <font.ttf> [--locale auto|jp|kr|sc|tc|hk] [--json]`
-* Build `.woff2` slices and `@font-face` CSS (skips subsetting when cached outputs match; pass `--force` to rebuild, `--no-filename-hash` to disable per-slice content hashes, or `--css-out` to place the stylesheet in a separate directory):
-  * `uv run cleome build <font.ttf> -o dist/web [--locale auto|jp|kr|sc|tc|hk] [--css-out <path.css>] [--no-filename-hash] [--force] [--json]`
+* Build `.woff2` slices and `@font-face` CSS (skips subsetting when cached outputs match; pass `--dry-run` to validate without writing files, `--force` to rebuild, `--no-filename-hash` to disable per-slice content hashes, or `--css-out` to place the stylesheet in a separate directory):
+  * `uv run cleome build <font.ttf> -o dist/web [--locale auto|jp|kr|sc|tc|hk] [--css-out <path.css>] [--no-filename-hash] [--dry-run] [--force] [--json]`
   * `uv run cleome build MyFont-Regular.ttf MyFont-Bold.ttf -o dist/web-static --family "My Font"`
+* Exit codes: `0` (success / cache hit / `--dry-run`), `1` (runtime build or worker error), `2` (invalid arguments, CSS descriptors, or path configuration), `3` (permission denied), `4` (missing, directory, or unreadable/malformed input font).
 
 ## Host and consume generated CSS and slices
 

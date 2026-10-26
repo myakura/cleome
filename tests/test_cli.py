@@ -379,7 +379,7 @@ class TestCleomeCLI(unittest.TestCase):
                             "1",
                         ]
                     )
-                self.assertEqual(rc_xdrive, 1)
+                self.assertEqual(rc_xdrive, 2)
                 self.assertIn("pass an explicit --url-prefix", err_xdrive.getvalue())
 
                 # 3e. `cleome build --force` bypasses cache and rebuilds (`cached: false`)
@@ -402,8 +402,45 @@ class TestCleomeCLI(unittest.TestCase):
                 self.assertEqual(rc_force, 0)
                 force_data = json.loads(buf_force_json.getvalue())
                 self.assertFalse(force_data["cached"])
+                self.assertFalse(force_data["dry_run"])
 
-                # 4. Empty string or invalid CSS/path tokens return error on stderr, and mutually exclusive --css-name / --css-out raises SystemExit(2)
+                # 3f. `cleome build --dry-run` validates inputs and paths without creating directories or files
+                dry_out = tmp_path / "never_created_dir"
+                dry_css = tmp_path / "never_created_css" / "fonts.css"
+                buf_dry_json = StringIO()
+                with redirect_stdout(buf_dry_json):
+                    rc_dry_json = cli_main(
+                        [
+                            "build",
+                            str(font_path),
+                            "-o",
+                            str(dry_out),
+                            "--css-out",
+                            str(dry_css),
+                            "--dry-run",
+                            "--json",
+                        ]
+                    )
+                self.assertEqual(rc_dry_json, 0)
+                self.assertFalse(dry_out.exists(), "build --dry-run must not create --out-dir")
+                self.assertFalse(dry_css.parent.exists(), "build --dry-run must not create --css-out parent")
+                dry_data = json.loads(buf_dry_json.getvalue())
+                self.assertTrue(dry_data["ok"])
+                self.assertTrue(dry_data["dry_run"])
+                self.assertEqual(dry_data["slice_count"], 4)
+                self.assertEqual(
+                    [p["filename"] for p in dry_data["preload_slices"]],
+                    ["subcmd-test-kana-core-<hash8>.woff2", "subcmd-test-latin-<hash8>.woff2"],
+                )
+
+                buf_dry_txt = StringIO()
+                with redirect_stdout(buf_dry_txt):
+                    rc_dry_txt = cli_main(["build", str(font_path), "-o", str(dry_out), "--dry-run"])
+                self.assertEqual(rc_dry_txt, 0)
+                self.assertIn("Dry run: would build 4 WOFF2 slices", buf_dry_txt.getvalue())
+                self.assertFalse(dry_out.exists())
+
+                # 4. Exit codes: 2 for invalid arguments/CSS/path tokens, 3 for PermissionError, 4 for missing/corrupt input, 1 for runtime error
                 with redirect_stderr(StringIO()), self.assertRaises(SystemExit) as cm_mutex:
                     cli_main(
                         [
@@ -429,12 +466,43 @@ class TestCleomeCLI(unittest.TestCase):
                         ["build", str(font_path), "-o", str(build_out), "--css-out", str(build_out)],
                         "css_path must be a file path, not an existing directory",
                     ),
+                    (
+                        ["build", str(font_path), "-o", str(build_out), "--css-out", str(build_out), "--dry-run"],
+                        "css_path must be a file path, not an existing directory",
+                    ),
                 ):
                     err_buf = StringIO()
                     with redirect_stderr(err_buf):
                         rc_bad = cli_main(bad_args)
-                    self.assertEqual(rc_bad, 1, f"Expected exit code 1 for {bad_args}")
+                    self.assertEqual(rc_bad, 2, f"Expected exit code 2 for {bad_args}")
                     self.assertIn(expected_err, err_buf.getvalue())
+
+                # Exit code 4: missing input file, directory passed as input, or corrupt font file
+                corrupt_font = tmp_path / "corrupt.ttf"
+                corrupt_font.write_bytes(b"not a valid opentype font")
+                for input_err_args in (
+                    ["plan", str(tmp_path / "missing.ttf")],
+                    ["build", str(tmp_path), "-o", str(build_out)],
+                    ["plan", str(corrupt_font)],
+                    ["build", str(corrupt_font), "-o", str(tmp_path / "corrupt_out")],
+                ):
+                    with redirect_stderr(StringIO()):
+                        self.assertEqual(cli_main(input_err_args), 4, f"Expected exit code 4 for {input_err_args}")
+                self.assertFalse((tmp_path / "corrupt_out").exists())
+
+                # Exit code 3: PermissionError
+                with (
+                    mock_patch("cleome.pipeline.slice_fonts", side_effect=PermissionError(13, "Denied", str(build_out))),
+                    redirect_stderr(StringIO()),
+                ):
+                    self.assertEqual(cli_main(["build", str(font_path), "-o", str(build_out)]), 3)
+
+                # Exit code 1: RuntimeError
+                with (
+                    mock_patch("cleome.pipeline.slice_fonts", side_effect=RuntimeError("worker pool failed")),
+                    redirect_stderr(StringIO()),
+                ):
+                    self.assertEqual(cli_main(["build", str(font_path), "-o", str(build_out)]), 1)
             finally:
                 os.chdir(orig_cwd)
 

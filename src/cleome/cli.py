@@ -7,17 +7,45 @@ import argparse
 import json
 from pathlib import Path
 import re
+import struct
 import sys
 import time
-from fontTools.ttLib import TTFont
+from fontTools.ttLib import TTFont, TTLibError
 
 from cleome.locale import SUPPORTED_LOCALES, detect_font_locale
 from cleome.metadata import (
     FontMetadata,
+    _validate_filename_token,
     extract_font_metadata,
     validate_and_compute_variant_suffixes,
 )
 from cleome.slicer import SliceConfig, SliceSpec, build_slice_plan
+
+EXIT_OK = 0
+EXIT_RUNTIME_ERROR = 1
+EXIT_USAGE_ERROR = 2
+EXIT_PERMISSION_ERROR = 3
+EXIT_INPUT_ERROR = 4
+
+
+def _handle_cli_exception(exc: BaseException) -> int:
+    """Format a concise stderr diagnostic and return the Gate 3 exit code (`1`, `2`, `3`, or `4`)."""
+    if isinstance(exc, PermissionError):
+        target = f": {exc.filename}" if getattr(exc, "filename", None) else f": {exc}"
+        print(f"Error: Permission denied{target}", file=sys.stderr)
+        return EXIT_PERMISSION_ERROR
+    if isinstance(exc, (FileNotFoundError, IsADirectoryError)):
+        target = f": {exc.filename}" if getattr(exc, "filename", None) else f": {exc}"
+        print(f"Error: Input font not found or is a directory{target}", file=sys.stderr)
+        return EXIT_INPUT_ERROR
+    if isinstance(exc, (TTLibError, EOFError, struct.error)):
+        print(f"Error: Invalid or unreadable font file: {exc}", file=sys.stderr)
+        return EXIT_INPUT_ERROR
+    if isinstance(exc, ValueError):
+        print(f"Error: {exc}", file=sys.stderr)
+        return EXIT_USAGE_ERROR
+    print(f"Error: {exc}", file=sys.stderr)
+    return EXIT_RUNTIME_ERROR
 
 
 def _positive_int(val_str: str) -> int:
@@ -217,6 +245,11 @@ def _add_shared_arguments(parser: argparse.ArgumentParser, *, is_build: bool) ->
             action="store_true",
             help="Rebuild all WOFF2 slices and CSS even if cached outputs are up to date",
         )
+        exec_group.add_argument(
+            "--dry-run",
+            action="store_true",
+            help="Validate inputs, output paths, and planned slices without creating directories or writing files",
+        )
     exec_group.add_argument(
         "--json",
         dest="json_output",
@@ -285,9 +318,8 @@ def _run_plan(args: argparse.Namespace, config: SliceConfig) -> int:
                     )
                 )
         suffixes = validate_and_compute_variant_suffixes(metas, family_override=args.family)
-    except ValueError as exc:
-        print(f"Error: {exc}", file=sys.stderr)
-        return 1
+    except (ValueError, TTLibError, EOFError, struct.error, OSError) as exc:
+        return _handle_cli_exception(exc)
 
     first = metas[0]
     resolved_loc = (
@@ -324,7 +356,7 @@ def _run_plan(args: argparse.Namespace, config: SliceConfig) -> int:
             ],
         }
         print(json.dumps(payload, ensure_ascii=False))
-        return 0
+        return EXIT_OK
 
     print(f"Font Family : {first.family_name} (slug: {first.slug})")
     print(f"Locale      : {resolved_loc} (config: {config.locale})")
@@ -340,10 +372,141 @@ def _run_plan(args: argparse.Namespace, config: SliceConfig) -> int:
                 f"  Tier {tier_num}: {sc:2d} slices | {t_chars:6,d} chars | "
                 f"unicode-range len: {t_ur_len:6,d} chars ({t_ur_len/1024:.1f} KB)"
             )
-    return 0
+    return EXIT_OK
+
+
+def _run_build_dry_run(args: argparse.Namespace, config: SliceConfig) -> int:
+    from cleome.css import _resolve_url_prefix
+
+    try:
+        if args.css_name is not None:
+            _validate_filename_token(args.css_name, "css_filename")
+        if args.css_out is not None:
+            css_path_str = str(args.css_out).strip()
+            if not css_path_str or "\x00" in css_path_str:
+                raise ValueError(f"Invalid css_path: {args.css_out!r}")
+            explicit_css_path = Path(css_path_str)
+            if not explicit_css_path.name or explicit_css_path.name in (".", ".."):
+                raise ValueError(f"css_path must point to a file path, got {args.css_out!r}")
+            if explicit_css_path.exists() and explicit_css_path.is_dir():
+                raise ValueError(
+                    f"css_path must be a file path, not an existing directory: {args.css_out!r}"
+                )
+        else:
+            explicit_css_path = None
+
+        out_path = Path(args.out_dir)
+        if out_path.exists() and not out_path.is_dir():
+            raise ValueError(f"out_dir must be a directory path, not an existing file: {out_path!r}")
+        out_resolved = out_path.resolve()
+        subdir = config.slices_subdir.strip().rstrip("/")
+        slices_dir = out_path if (not subdir or subdir == ".") else (out_path / subdir)
+        if not slices_dir.resolve().is_relative_to(out_resolved):
+            raise ValueError(f"slices_dir {slices_dir!r} resolves outside out_dir {out_path!r}")
+
+        raw_metas: list[FontMetadata] = []
+        for p in args.inputs:
+            with TTFont(p, lazy=True, recalcTimestamp=False) as tt:
+                raw_metas.append(
+                    extract_font_metadata(
+                        tt,
+                        family_override=args.family,
+                        slug_override=args.slug,
+                        weight_override=args.weight,
+                        stretch_override=args.stretch,
+                        style_override=args.style,
+                        uvs_base_repair=config.uvs_base_repair,
+                    )
+                )
+
+        variant_suffixes = validate_and_compute_variant_suffixes(
+            raw_metas, family_override=args.family
+        )
+        unified_family = args.family or raw_metas[0].family_name
+        unified_slug = args.slug or raw_metas[0].slug
+
+        if explicit_css_path is not None:
+            resolved_css_path = explicit_css_path
+        else:
+            resolved_css_name = _validate_filename_token(
+                args.css_name or f"{unified_slug}.css", "css_filename"
+            )
+            resolved_css_path = out_path / resolved_css_name
+            if not resolved_css_path.resolve().is_relative_to(out_resolved):
+                raise ValueError(
+                    f"css_path {resolved_css_path!r} resolves outside out_dir {out_path!r}"
+                )
+
+        url_prefix = _resolve_url_prefix(
+            config, css_path=resolved_css_path, slices_dir=slices_dir
+        )
+
+        total_slices = 0
+        preload_slices: list[dict[str, str]] = []
+        hash_placeholder = "<hash8>" if config.filename_hash else ""
+        for m, v_suf in zip(raw_metas, variant_suffixes):
+            plan = build_slice_plan(m.codepoints, config=config, family_name=unified_family)
+            for spec in plan:
+                if not (spec.binary_codepoints & m.codepoints):
+                    continue
+                _validate_filename_token(spec.filename(unified_slug, v_suf), "slice filename")
+                total_slices += 1
+                if spec.tier == 1:
+                    preview_fname = spec.filename(unified_slug, v_suf, hash_placeholder)
+                    preload_slices.append(
+                        {
+                            "slice_id": spec.slice_id,
+                            "variant_suffix": v_suf,
+                            "filename": preview_fname,
+                            "url": f"{url_prefix}{preview_fname}",
+                        }
+                    )
+    except (ValueError, TTLibError, EOFError, struct.error, OSError) as exc:
+        return _handle_cli_exception(exc)
+
+    resolved_loc = (
+        detect_font_locale(raw_metas[0].codepoints, family_name=unified_family)
+        if config.locale == "auto"
+        else config.locale
+    )
+    if args.json_output:
+        payload = {
+            "ok": True,
+            "command": "build",
+            "dry_run": True,
+            "cached": False,
+            "family_name": unified_family,
+            "slug": unified_slug,
+            "locale": resolved_loc,
+            "filename_hash": config.filename_hash,
+            "css_path": str(resolved_css_path),
+            "slices_dir": str(slices_dir),
+            "slice_count": total_slices,
+            "preload_slices": preload_slices,
+        }
+        print(json.dumps(payload, ensure_ascii=False))
+        return EXIT_OK
+
+    print(
+        f"[cleome] Dry run: would build {total_slices} WOFF2 slices + "
+        f"{resolved_css_path.name} (no files written)"
+    )
+    print(f"         CSS   : {resolved_css_path}")
+    print(f"         Slices: {slices_dir}/")
+    if preload_slices:
+        print("         Preload (Tier 1):")
+        for item in preload_slices:
+            print(
+                f'           <link rel="preload" href="{item["url"]}" '
+                f'as="font" type="font/woff2" crossorigin>'
+            )
+    return EXIT_OK
 
 
 def _run_build(args: argparse.Namespace, config: SliceConfig) -> int:
+    if args.dry_run:
+        return _run_build_dry_run(args, config)
+
     from cleome.css import _resolve_url_prefix
     from cleome.pipeline import slice_fonts
 
@@ -363,9 +526,8 @@ def _run_build(args: argparse.Namespace, config: SliceConfig) -> int:
             workers=args.workers,
             force=args.force,
         )
-    except ValueError as exc:
-        print(f"Error: {exc}", file=sys.stderr)
-        return 1
+    except (ValueError, TTLibError, EOFError, struct.error, RuntimeError, OSError) as exc:
+        return _handle_cli_exception(exc)
 
     elapsed = time.time() - t0
     url_prefix = _resolve_url_prefix(
@@ -391,6 +553,7 @@ def _run_build(args: argparse.Namespace, config: SliceConfig) -> int:
         payload = {
             "ok": True,
             "command": "build",
+            "dry_run": False,
             "cached": result.cached,
             "family_name": result.family_name,
             "slug": result.slug,
@@ -405,7 +568,7 @@ def _run_build(args: argparse.Namespace, config: SliceConfig) -> int:
             "elapsed_seconds": round(elapsed, 3),
         }
         print(json.dumps(payload, ensure_ascii=False))
-        return 0
+        return EXIT_OK
 
     action_label = "Cached" if result.cached else "Built"
     cache_suffix = " (up to date)" if result.cached else ""
@@ -423,7 +586,7 @@ def _run_build(args: argparse.Namespace, config: SliceConfig) -> int:
                 f'           <link rel="preload" href="{item["url"]}" '
                 f'as="font" type="font/woff2" crossorigin>'
             )
-    return 0
+    return EXIT_OK
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -432,7 +595,10 @@ def main(argv: list[str] | None = None) -> int:
     for p in args.inputs:
         if not p.exists():
             print(f"Error: Input font not found: {p}", file=sys.stderr)
-            return 1
+            return EXIT_INPUT_ERROR
+        if p.is_dir():
+            print(f"Error: Input path is a directory, expected a font file: {p}", file=sys.stderr)
+            return EXIT_INPUT_ERROR
 
     try:
         config = SliceConfig(
@@ -451,8 +617,7 @@ def main(argv: list[str] | None = None) -> int:
             filename_hash=getattr(args, "filename_hash", True),
         )
     except ValueError as exc:
-        print(f"Error: {exc}", file=sys.stderr)
-        return 1
+        return _handle_cli_exception(exc)
 
     if args.subcommand == "plan":
         return _run_plan(args, config)
