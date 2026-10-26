@@ -110,7 +110,7 @@ uv run python -m unittest discover -s tests -v -f
 
 * [Hosting and usage guide](docs/hosting-and-usage.md) explains how to deploy generated `<slug>.css` and `.woff2` slices on static hosts, bundlers, and CDNs, configure `--url-prefix` and `--slices-dir`, and set preload, CORS, and `Cache-Control` headers.
 * [Architecture and rationale](docs/architecture-and-rationale.md) explains the 4-tier cascade shadowing design, inverted-pyramid Kanji granularity simulations, OpenType subsetting details, and the issues found in Google Fonts' Japanese delivery.
-* [Chinese and Korean (`KR` / `SC` / `TC` / `HK`) slicing analysis](docs/cjk-slicing-analysis.md) covers Google Fonts' Korean and Chinese (`SC`, `TC`, `HK`) slice templates, ghost `unicode-range` rules, punctuation/Jamo/Bopomofo splits, and 4-tier simulation results.
+* [Chinese and Korean (`KR` / `SC` / `TC` / `HK`) slicing analysis](docs/cjk-slicing-analysis.md) covers Google Fonts' Korean and Chinese (`SC`, `TC`, `HK`) slice templates, ghost `unicode-range` rules, punctuation, Jamo, and Bopomofo splits, and 4-tier simulation results.
 
 ---
 
@@ -119,7 +119,7 @@ uv run python -m unittest discover -s tests -v -f
 
 * [Google Fonts](https://fonts.google.com/) published the production stylesheets, slice definitions (`gfsubsets` / `nam-files`), and corpus frequency data analyzed during this project.
 * [Noto Sans Japanese (`Noto Sans JP`)](https://fonts.google.com/noto/specimen/Noto+Sans+JP) and [Source Han Sans (`源ノ角ゴシック`)](https://github.com/adobe-fonts/source-han-sans) were the primary Japanese typefaces used to test and verify Cleome.
-* [fontTools](https://github.com/fonttools/fonttools) handles OpenType table inspection, `cmap` / `GSUB` / `GPOS` subsetting (`fontTools.subset`), and WOFF2 packing.
+* [fontTools](https://github.com/fonttools/fonttools) handles OpenType table inspection, `cmap`, `GSUB`, and `GPOS` subsetting (`fontTools.subset`), and WOFF2 packing.
 * [Brotli](https://github.com/google/brotli) compresses and decompresses the WOFF2 streams.
 * [HarfBuzz](https://github.com/harfbuzz/harfbuzz) and [uharfbuzz](https://github.com/harfbuzz/uharfbuzz) verify OpenType glyph shaping, `cmap` Format 14 variation sequences, and combining mark composition (`ccmp`) in the test suite.
 * [Stixis](https://github.com/myakura/stixis) validates and serializes the generated `@font-face` CSS rules and `unicode-range` descriptors.

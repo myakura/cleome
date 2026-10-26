@@ -13,8 +13,8 @@ Domain rules for `unicode-range` formatting and compaction ([`cleome/urange.py`]
 
 ## CSS cascade shadowing and range compaction
 
-* `@font-face` declarations are ordered from lowest priority (Tier 4 rare ideographs and syllables, using 1-token hex ranges) to highest priority (Tier 1 core phonetic blocks and Latin).
-* When compacting `unicode-range` intervals in an earlier tier with `compact_unicode_range` (`cleome/urange.py`), bridge only across unmapped gaps or code points that are shadowed by a higher-priority tier declared later in the stylesheet.
+* Cleome orders `@font-face` declarations from lowest priority (Tier 4 rare ideographs and syllables, using 1-token hex ranges) to highest priority (Tier 1 core phonetic blocks and Latin).
+* When compacting `unicode-range` intervals in an earlier tier with `compact_unicode_range` (`cleome/urange.py`), bridge only across unmapped gaps or codepoints shadowed by a higher-priority tier declared later in the stylesheet.
 * Never bridge `unicode-range` tokens across different Unicode planes (such as Plane 2 SIP and Plane 3 TIP).
 
 ## Intra-slice OpenType shaping
@@ -25,5 +25,5 @@ Domain rules for `unicode-range` formatting and compaction ([`cleome/urange.py`]
 
 ## UVS and IVS (`cmap` Format 14) handling
 
-* Retain `cmap` Format 14 variation selector mappings (both default and non-default UVS/IVS) and their variant glyphs for all base characters included in a slice (`_prepare_uvs_for_slice` in `cleome/subsetter.py`), without leaking standalone variation selector code points into the slice's base Format 4/12 `cmap`.
-* Keep Format 14 sequence retention separate from `patch_uvs_missing_base_cmap` (`cleome/subsetter.py`), which recovers characters that upstream fonts mapped in Format 14 but omitted from Format 4/12.
+* Retain `cmap` Format 14 variation selector mappings (both default and non-default UVS and IVS) and their variant glyphs for all base characters included in a slice (`_prepare_uvs_for_slice` in `cleome/subsetter.py`), without leaking standalone variation selector codepoints into the slice's base Format 4 or Format 12 `cmap`.
+* Keep Format 14 sequence retention separate from `patch_uvs_missing_base_cmap` (`cleome/subsetter.py`), which recovers characters that upstream fonts mapped in Format 14 but omitted from Format 4 and Format 12.
