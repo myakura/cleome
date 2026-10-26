@@ -82,11 +82,34 @@ In CSS, `url('./slices/...')` resolves relative to the URL of the `.css` file it
 
 ## 2. Loading and Styling in HTML and CSS
 
-Link the generated stylesheet in `<head>` and reference the `font-family` name in your CSS rules:
+Place your font `<link>` tags in `<head>` after `<meta charset="utf-8">`, viewport/context `<meta>` tags, `<title>`, and any synchronous inline `<script>` or `<script type="importmap">`, and before external `<script>` tags:
 
 ```html
-<link rel="stylesheet" href="/fonts/source-han-sans-jp/source-han-sans-jp.css">
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Page Title</title>
+
+  <!-- Synchronous inline <script> (e.g. theme init) and <script type="importmap"> go BEFORE stylesheets -->
+
+  <!-- Only when serving slices from a separate CDN origin: preconnect with crossorigin -->
+  <link rel="preconnect" href="https://cdn.example.com" crossorigin>
+
+  <!-- Optional: preload at most the Tier 1 core slice(s), always with crossorigin -->
+  <link rel="preload" href="/fonts/source-han-sans-jp/slices/source-han-sans-jp-kana-core.woff2" as="font" type="font/woff2" crossorigin>
+
+  <!-- Generated @font-face stylesheet and application CSS -->
+  <link rel="stylesheet" href="/fonts/source-han-sans-jp/source-han-sans-jp.css">
+  <link rel="stylesheet" href="/assets/main.css">
+
+  <!-- External scripts (defer or type="module") go AFTER stylesheets -->
+  <script type="module" src="/assets/app.js"></script>
+</head>
 ```
+
+Then reference the `font-family` name in your CSS rules:
 
 ```css
 body {
@@ -130,18 +153,15 @@ Cleome retains all OpenType layout features (`layout_features=('*',)` with forwa
 ---
 
 
-## 3. Preloading and `unicode-range` Behavior
+## 3. Preloading and Placement Anti-Patterns to Avoid
 
-Do **not** add `<link rel="preload" as="font">` tags for all `.woff2` slices. `unicode-range` partitioning is designed so the browser downloads only the slices required by the characters rendered on the current page (typically 3 to 12 slices out of 90+). Preloading unused Tier 3 or Tier 4 slices wastes bandwidth and contends with critical page resources.
+When wiring `<slug>.css` and `.woff2` slices into HTML, follow these rules:
 
-If you want to eliminate the CSS-to-font request waterfall for above-the-fold text, preload at most the Tier 1 core slice(s) for your primary language (`<slug>-latin.woff2` and/or `<slug>-kana-core.woff2`, `<slug>-hangul-core.woff2`, or `<slug>-cjk-core.woff2`):
-
-```html
-<link rel="preload" href="/fonts/source-han-sans-jp/slices/source-han-sans-jp-kana-core.woff2" as="font" type="font/woff2" crossorigin>
-<link rel="stylesheet" href="/fonts/source-han-sans-jp/source-han-sans-jp.css">
-```
-
-Always include the `crossorigin` attribute on `<link rel="preload" as="font">`, even when the `.woff2` files are hosted on the same origin. Under the W3C CSS Fonts and Fetch specifications, `@font-face` requests always use anonymous CORS mode; omitting `crossorigin` on the preload causes the browser to fetch the slice twice.
+* **Do NOT preload all `.woff2` slices (or Tier 2-4 Kanji/Hanzi/Hangul chunks)**: `unicode-range` partitioning is designed so the browser downloads only the slices required by the characters rendered on the current page (typically 3 to 12 slices out of 90+). Preloading unused Tier 2-4 slices wastes bandwidth and contends with critical page resources. If you want to eliminate the CSS-to-font request waterfall for above-the-fold text, preload at most the Tier 1 core slice(s) for your primary language (`<slug>-latin.woff2` and/or `<slug>-kana-core.woff2`, `<slug>-hangul-core.woff2`, or `<slug>-cjk-core.woff2`).
+* **Do NOT omit `crossorigin` on `<link rel="preload" as="font">` or `<link rel="preconnect">`**: Always include `crossorigin` even when the `.woff2` files are hosted on the same origin. Under the W3C CSS Fonts and Fetch specifications, `@font-face` requests always use anonymous CORS mode; omitting `crossorigin` causes the browser to fetch the slice twice (or open a non-CORS connection that cannot be reused for fonts).
+* **Do NOT load `<slug>.css` via CSS `@import`**: `@import url('./source-han-sans-jp.css');` inside another external stylesheet is invisible to browser preload scanners, delaying the fetch of `<slug>.css` until the parent stylesheet has finished downloading and parsing. Always use a separate `<link rel="stylesheet">` tag in `<head>` (or bundle the CSS at build time).
+* **Do NOT put blocking `<script src="...">` before `<link rel="preconnect">` or `<link rel="stylesheet">`, and do NOT put synchronous inline `<script>` or `<script type="importmap">` after `<link rel="stylesheet">`**: Placing a synchronous inline `<script>` after `<link rel="stylesheet">` turns the stylesheet into a script-blocking stylesheet that halts the HTML parser until the CSS finishes downloading. Conversely, placing a blocking external `<script src="...">` before `<link rel="preconnect">` prevents Safari's (WebKit's) preload scanner from initiating the early connection while the parser is blocked.
+* **Do NOT place `<link rel="stylesheet" href=".../<slug>.css">` inside `<body>`**: An external stylesheet in `<body>` blocks the HTML parser in Chromium and can cause rendering delays or flashes of unstyled text. Always place `<link rel="stylesheet">` inside `<head>`.
 
 
 ---
