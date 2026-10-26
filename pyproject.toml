@@ -4,13 +4,13 @@ build-backend = "hatchling.build"
 
 [project]
 name = "cleome"
-version = "0.1.0"
+version = "0.2.0"
 description = "Dynamic unicode-range WOFF2 slicer and @font-face CSS generator for Japanese, Korean, and Chinese web fonts"
 readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]
 authors = [
-    { name = "Masataka Yakura", email = "myakura.web@gmail.com" },
+    { name = "Masataka Yakura", email = "masataka.yakura@gmail.com" },
 ]
 keywords = [
     "woff2",

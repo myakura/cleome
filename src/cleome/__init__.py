@@ -39,7 +39,7 @@ if TYPE_CHECKING:
         patch_uvs_missing_base_cmap,
     )
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 __all__ = [
     "BuiltSliceFile",
