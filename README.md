@@ -34,9 +34,11 @@ cleome plan SourceHanSansJP-VF.otf --json
 
 # Slice a Variable Font (auto-detects CJK profile; outputs <out-dir>/<slug>.css and <out-dir>/slices/<slug>-*-<hash8>.woff2)
 # Subsequent builds with unchanged inputs/config skip WOFF2 subsetting automatically; pass --force to rebuild
+# Pass --dry-run to validate inputs and output paths without creating directories or writing files
 # Pass --css-out to write the stylesheet to src/styles/ while keeping .woff2 slices in public/fonts/
 # Pass --no-filename-hash when placing slices in a bundler-managed directory that adds its own asset hash
 cleome build SourceHanSansJP-VF.otf -o dist/web
+cleome build SourceHanSansJP-VF.otf -o dist/web --dry-run
 cleome build SourceHanSansJP-VF.otf -o dist/web --force
 cleome build SourceHanSansJP-VF.otf -o public/fonts --url-prefix "/fonts/slices" --css-out src/styles/fonts.css
 cleome build SourceHanSansJP-VF.otf -o src/assets/fonts --no-filename-hash
@@ -81,7 +83,7 @@ if __name__ == "__main__":
         config=SliceConfig(
             locale="auto",  # "auto", "jp", "kr", "sc", "tc", or "hk"
             slices_subdir="slices",
-            rare_kanji_chunk_size=250,
+            rare_chunk_size=250,
         ),
     )
     print(f"Generated {result.css_path} and {len(result.built_files)} WOFF2 slices")

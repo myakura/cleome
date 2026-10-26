@@ -3,17 +3,11 @@ OpenType table inspection (`name`, `fvar`, `OS/2`, `post`, `cmap`) and CSS `@fon
 descriptor extraction for Cleome.
 """
 
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 import re
-from typing import TYPE_CHECKING, Any
 from fontTools.ttLib import TTFont
 from stixis import SerializationOptions, canonicalize
-
-if TYPE_CHECKING:
-    from cleome.subsetter import (
-        _uvs_selector_sort_key,
-        patch_uvs_missing_base_cmap,
-    )
 
 # OpenType OS/2.usWidthClass (1..9) to CSS font-stretch percentage (5 = 100% normal is omitted)
 OS2_WIDTH_CLASS_TO_CSS: frozendict[int, str] = frozendict(
@@ -30,6 +24,15 @@ OS2_WIDTH_CLASS_TO_CSS: frozendict[int, str] = frozendict(
 )
 
 _CLEOME_CSS_OPTIONS = SerializationOptions.cleome()
+_HASH_SUFFIX_RE = re.compile(r"^[0-9a-f]{8}$")
+
+
+def _split_hashed_stem(stem: str) -> tuple[str, str] | None:
+    """Split `<base_stem>-<hash8>` into `(base_stem, hash8)`, or return `None` if not hashed."""
+    parts = stem.rsplit("-", 1)
+    if len(parts) == 2 and parts[0] and _HASH_SUFFIX_RE.match(parts[1]):
+        return parts[0], parts[1]
+    return None
 
 
 def _validate_filename_token(val: str, field_name: str) -> str:
@@ -259,21 +262,52 @@ def extract_font_face_descriptors(
     )
 
 
-def _has_missing_uvs_base_cmap(font: TTFont) -> bool:
-    """Fast check for whether `font` has a Format 14 UVS table with base codepoints missing from Format 4/12."""
+def _uvs_selector_sort_key(
+    item: tuple[int, list[tuple[int, str | None]]],
+) -> tuple[int, int]:
+    """Prioritize Ideographic Variation Selectors (U+E0100..U+E01EF) in ascending order before VS1..VS16."""
+    sel = item[0]
+    return (0 if 0xE0100 <= sel <= 0xE01EF else 1, sel)
+
+
+def patch_uvs_missing_base_cmap(font: TTFont) -> list[int]:
+    """
+    Detect characters that exist in cmap Format 14 (UVS) with a concrete variant glyph
+    but were accidentally omitted from Format 4/12 (such as U+553E '唾' in Adobe SourceHanSansJP-VF.otf v2.005)
+    and patch them into the base cmap tables in-memory.
+    Prioritizes IVS selectors (U+E0100..U+E01EF) in ascending order so U+E0100 (standard base form) always wins.
+    """
     if "cmap" not in font:
-        return False
+        return []
     tables = font["cmap"].tables
     if not any(getattr(t, "format", None) == 14 and hasattr(t, "uvsDict") for t in tables):
-        return False
+        return []
     best_cmap = font.getBestCmap() or {}
+    uvs_additions: dict[int, str] = {}
     for table in tables:
         if getattr(table, "format", None) == 14 and hasattr(table, "uvsDict"):
-            for records in table.uvsDict.values():
+            for _uvs_selector, records in sorted(
+                table.uvsDict.items(), key=_uvs_selector_sort_key
+            ):
                 for cp, gname in records:
-                    if gname is not None and cp not in best_cmap:
-                        return True
-    return False
+                    if (
+                        cp not in best_cmap
+                        and cp not in uvs_additions
+                        and gname is not None
+                    ):
+                        uvs_additions[cp] = gname
+    if not uvs_additions:
+        return []
+
+    patched: set[int] = set()
+    for table in tables:
+        if getattr(table, "format", None) in (4, 12) and hasattr(table, "cmap"):
+            for cp, gname in uvs_additions.items():
+                if table.format == 4 and cp > 0xFFFF:
+                    continue
+                table.cmap[cp] = gname
+                patched.add(cp)
+    return sorted(patched)
 
 
 def extract_font_metadata(
@@ -285,15 +319,10 @@ def extract_font_metadata(
     stretch_override: str | None = None,
     style_override: str | None = None,
     variant_suffix: str = "",
-    patch_uvs: bool = True,
+    uvs_base_repair: bool = True,
 ) -> FontMetadata:
     """Inspect TTFont tables (`name`, `fvar`, `OS/2`, `post`, `cmap`) to build FontMetadata."""
-    if patch_uvs and _has_missing_uvs_base_cmap(font):
-        from cleome.subsetter import patch_uvs_missing_base_cmap
-
-        patched_uvs = tuple(patch_uvs_missing_base_cmap(font))
-    else:
-        patched_uvs = ()
+    patched_uvs = tuple(patch_uvs_missing_base_cmap(font)) if uvs_base_repair else ()
 
     desc = extract_font_face_descriptors(
         font,
@@ -322,7 +351,7 @@ def extract_font_metadata(
 
 
 def validate_and_compute_variant_suffixes(
-    raw_metas: list[FontMetadata],
+    raw_metas: Sequence[FontMetadata],
     *,
     family_override: str | None = None,
 ) -> list[str]:
@@ -343,7 +372,7 @@ def validate_and_compute_variant_suffixes(
 
     seen_descriptors: set[tuple[str, str, str]] = set()
     for m in raw_metas:
-        for st in (m.styles_css or (m.style_css,)):
+        for st in m.styles_css:
             desc_key = (m.weight_css, m.stretch_css or "100%", st)
             if desc_key in seen_descriptors:
                 raise ValueError(
@@ -383,13 +412,5 @@ __all__ = [
     "slugify_family",
     "validate_and_compute_variant_suffixes",
 ]
-
-
-def __getattr__(name: str) -> Any:
-    if name in ("patch_uvs_missing_base_cmap", "_uvs_selector_sort_key"):
-        from cleome import subsetter as _subsetter
-
-        return getattr(_subsetter, name)
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 

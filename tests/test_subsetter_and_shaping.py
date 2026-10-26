@@ -85,7 +85,7 @@ class TestSubsetterAndShaping(unittest.TestCase):
         }
         tt["cmap"].tables.append(sub14)
 
-        meta = extract_font_metadata(tt, patch_uvs=True)
+        meta = extract_font_metadata(tt, uvs_base_repair=True)
         self.assertIn(0x553E, meta.codepoints)
         self.assertEqual(tt.getBestCmap()[0x553E], "glyph_iv0")
 
@@ -157,13 +157,21 @@ class TestSubsetterAndShaping(unittest.TestCase):
         f3_dup = create_synthetic_ttfont(sample_cps, family_name="Family A", weight=400, width_class=5)
 
         with tempfile.TemporaryDirectory() as tmp:
-            # Mismatched family names without family_name override -> ValueError
+            # Mismatched family names without family_name override -> ValueError (and must not create out_dir)
+            mismatch_dir = Path(tmp) / "mismatch"
             with self.assertRaisesRegex(ValueError, "different detected font-family names"):
-                slice_fonts([f1, f2], out_dir=Path(tmp) / "mismatch", workers=1)
+                slice_fonts((f1, f2), out_dir=mismatch_dir, workers=1)
+            self.assertFalse(mismatch_dir.exists())
 
             # Duplicate (weight=400, stretch=None, style='normal') descriptors -> ValueError
+            dup_dir = Path(tmp) / "dup"
             with self.assertRaisesRegex(ValueError, "Duplicate @font-face descriptors"):
-                slice_fonts([f1, f3_dup], out_dir=Path(tmp) / "dup", workers=1)
+                slice_fonts((f1, f3_dup), out_dir=dup_dir, workers=1)
+            self.assertFalse(dup_dir.exists())
+
+            # Non-positive workers -> ValueError
+            with self.assertRaisesRegex(ValueError, "workers must be >= 1"):
+                slice_font(f1, out_dir=Path(tmp) / "bad_workers", workers=0)
 
     def test_layout_features_passed_to_workers(self) -> None:
         """
@@ -278,7 +286,7 @@ class TestSubsetterAndShaping(unittest.TestCase):
                 res = slice_font(
                     src,
                     out_dir=out_dir,
-                    config=SliceConfig(patch_uvs_only_cmap=patch_missing),
+                    config=SliceConfig(uvs_base_repair=patch_missing),
                     workers=w,
                 )
 
@@ -778,7 +786,7 @@ class TestSubsetterAndShaping(unittest.TestCase):
            returns `cached=True`, and preserves `built_files` (`size_bytes`, `glyph_count`, `spec`,
            `variant_suffix`), `slice_specs`, `variant_slice_specs`, and `css_text` without creating
            extra files in `out_dir` or `slices_dir`.
-        2. Changing `SliceConfig` (e.g. `rare_kanji_chunk_size`, `locale`, `url_prefix`), override args
+        2. Changing `SliceConfig` (e.g. `rare_chunk_size`, `locale`, `url_prefix`), override args
            (`weight`, `family_name`), or input font bytes invalidates the cache and triggers a rebuild.
         3. Deleting or truncating/corrupting any `.woff2` slice or modifying the CSS file invalidates
            the cache and rebuilds the intact files.
@@ -832,21 +840,21 @@ class TestSubsetterAndShaping(unittest.TestCase):
             self.assertEqual(res2.variant_slice_specs, res1.variant_slice_specs)
             self.assertEqual(res2.built_files, res1.built_files)
 
-            # 3. Changing SliceConfig (e.g. rare_kanji_chunk_size=1) invalidates cache -> cached=False
+            # 3. Changing SliceConfig (e.g. rare_chunk_size=1) invalidates cache -> cached=False
             res_cfg = slice_fonts(
                 [p_reg, p_bold],
                 out_dir=out_dir,
-                config=SliceConfig(rare_kanji_chunk_size=1),
+                config=SliceConfig(rare_chunk_size=1),
                 workers=1,
             )
             self.assertFalse(res_cfg.cached)
             self.assertGreater(len(res_cfg.built_files), len(res1.built_files))
 
-            # Repeat with rare_kanji_chunk_size=1 -> cached=True
+            # Repeat with rare_chunk_size=1 -> cached=True
             res_cfg_hit = slice_fonts(
                 [p_reg, p_bold],
                 out_dir=out_dir,
-                config=SliceConfig(rare_kanji_chunk_size=1),
+                config=SliceConfig(rare_chunk_size=1),
                 workers=1,
             )
             self.assertTrue(res_cfg_hit.cached)
@@ -857,7 +865,7 @@ class TestSubsetterAndShaping(unittest.TestCase):
             res_missing = slice_fonts(
                 [p_reg, p_bold],
                 out_dir=out_dir,
-                config=SliceConfig(rare_kanji_chunk_size=1),
+                config=SliceConfig(rare_chunk_size=1),
                 workers=1,
             )
             self.assertFalse(res_missing.cached)
@@ -869,7 +877,7 @@ class TestSubsetterAndShaping(unittest.TestCase):
             res_corrupt = slice_fonts(
                 [p_reg, p_bold],
                 out_dir=out_dir,
-                config=SliceConfig(rare_kanji_chunk_size=1),
+                config=SliceConfig(rare_chunk_size=1),
                 workers=1,
             )
             self.assertFalse(res_corrupt.cached)
@@ -882,7 +890,7 @@ class TestSubsetterAndShaping(unittest.TestCase):
             res_same_size_corrupt = slice_fonts(
                 [p_reg, p_bold],
                 out_dir=out_dir,
-                config=SliceConfig(rare_kanji_chunk_size=1),
+                config=SliceConfig(rare_chunk_size=1),
                 workers=1,
             )
             self.assertFalse(res_same_size_corrupt.cached)
@@ -895,7 +903,7 @@ class TestSubsetterAndShaping(unittest.TestCase):
             res_font_changed = slice_fonts(
                 [p_reg, p_bold],
                 out_dir=out_dir,
-                config=SliceConfig(rare_kanji_chunk_size=1),
+                config=SliceConfig(rare_chunk_size=1),
                 workers=1,
             )
             self.assertFalse(res_font_changed.cached)
@@ -904,7 +912,7 @@ class TestSubsetterAndShaping(unittest.TestCase):
             res_forced = slice_fonts(
                 [p_reg, p_bold],
                 out_dir=out_dir,
-                config=SliceConfig(rare_kanji_chunk_size=1),
+                config=SliceConfig(rare_chunk_size=1),
                 workers=1,
                 force=True,
             )

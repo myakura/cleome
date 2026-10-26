@@ -22,24 +22,35 @@ from helpers import create_synthetic_ttfont
 class TestCleomeCLI(unittest.TestCase):
     def test_cli_validation_and_plan(self) -> None:
         """
-        Verify CLI argument parsing for `cleome plan`, --drop-tables, --layout-features,
-        and validation errors for non-positive --freq-tiers / --rare-chunk-size or missing subcommand.
+        Verify CLI argument parsing for `cleome plan` and `cleome build`, `--freq-chunks none`,
+        `allow_abbrev=False`, mutually exclusive `--css-name`/`--css-out`, and validation errors.
         """
         sample_cps = [ord("A"), ord("あ"), ord("日")]
         with tempfile.TemporaryDirectory() as tmp:
             font_path = Path(tmp) / "CliTest.ttf"
             create_synthetic_ttfont(sample_cps, family_name="CLI Test").save(font_path, reorderTables=False)
 
-            # 1. --drop-tables before positional input must not swallow positional input
+            # 1. --freq-chunks none and --no-uvs-base-repair on `plan`
             buf = StringIO()
             with redirect_stdout(buf):
-                rc = cli_main(["plan", "--drop-tables", "DSIG,GPOS", "--layout-features", "kern,palt", str(font_path)])
+                rc = cli_main(["plan", "--freq-chunks", "none", "--no-uvs-base-repair", str(font_path)])
             self.assertEqual(rc, 0)
             self.assertIn("3 chars -> 3 slices", buf.getvalue())
 
-            # 2. Invalid --freq-tiers (0 or negative) must fail with SystemExit(2)
+            # 1b. Build-only flags (--drop-tables, --display, --slices-dir) are rejected on `plan` with SystemExit(2)
+            for build_only_flag in (["--drop-tables", "DSIG"], ["--display", "optional"], ["--slices-dir", "sub"]):
+                with redirect_stderr(StringIO()), self.assertRaises(SystemExit) as cm_bo:
+                    cli_main(["plan", *build_only_flag, str(font_path)])
+                self.assertEqual(cm_bo.exception.code, 2)
+
+            # 1c. Abbreviated flags (--freq-chunk) are rejected when allow_abbrev=False
+            with redirect_stderr(StringIO()), self.assertRaises(SystemExit) as cm_abbr:
+                cli_main(["plan", "--freq-chunk", "200x2", str(font_path)])
+            self.assertEqual(cm_abbr.exception.code, 2)
+
+            # 2. Invalid --freq-chunks (0 or negative) must fail with SystemExit(2)
             with redirect_stderr(StringIO()), self.assertRaises(SystemExit) as cm:
-                cli_main(["plan", "--freq-tiers", "200x0", str(font_path)])
+                cli_main(["plan", "--freq-chunks", "200x0", str(font_path)])
             self.assertEqual(cm.exception.code, 2)
 
             with redirect_stderr(StringIO()), self.assertRaises(SystemExit) as cm2:
@@ -54,11 +65,11 @@ class TestCleomeCLI(unittest.TestCase):
     def test_cli_plan_and_build_subcommands(self) -> None:
         """
         Verify agent-first CLI subcommands:
-        1. `cleome plan <inputs...> [--locale/--preset PRESET] [--json]` is strictly read-only
+        1. `cleome plan <inputs...> [--locale LOCALE] [--json]` is strictly read-only
            and never creates `./dist`.
         2. `cleome plan --json` returns a structured JSON envelope with Tier 1-4 slice counts,
            codepoint counts, `unicode-range` character lengths, and detected locale.
-        3. `cleome build <inputs...> -o <dir> [--locale/--preset PRESET] [--json]` writes
+        3. `cleome build <inputs...> -o <dir> [--locale LOCALE] [--json]` writes
            the CSS and `.woff2` slices and supports `--json`.
         """
         sample_cps = [ord("A"), ord("あ"), ord("日"), 0x4E02]
@@ -81,6 +92,12 @@ class TestCleomeCLI(unittest.TestCase):
                 self.assertFalse((tmp_path / "dist").exists(), "`cleome plan` must not create ./dist")
 
                 src_dir = Path(__file__).resolve().parent.parent / "src"
+                uvs_font_path = tmp_path / "SubcmdUvsTest.ttf"
+                create_synthetic_ttfont(
+                    sample_cps,
+                    family_name="Subcmd Test",
+                    uvs_only_cp=(0x908A, 0xE0100),
+                ).save(uvs_font_path, reorderTables=False)
                 plan_iso = subprocess.run(
                     [
                         sys.executable,
@@ -88,7 +105,7 @@ class TestCleomeCLI(unittest.TestCase):
                         (
                             f"import sys; sys.path.insert(0, {str(src_dir)!r}); "
                             f"from cleome.cli import main; "
-                            f"rc = main(['plan', {str(font_path)!r}]); "
+                            f"rc = main(['plan', {str(uvs_font_path)!r}]); "
                             f"assert rc == 0; "
                             f"assert 'cleome.css' not in sys.modules; "
                             f"assert 'cleome.subsetter' not in sys.modules; "
@@ -96,11 +113,9 @@ class TestCleomeCLI(unittest.TestCase):
                             f"from cleome.urange import compact_unicode_range, format_unicode_range, parse_unicode_range; "
                             f"from cleome.slicer import _compact_range_with_shadowing, format_unicode_range as s_fmt, parse_unicode_range as s_parse; "
                             f"assert _compact_range_with_shadowing is compact_unicode_range and s_fmt is format_unicode_range and s_parse is parse_unicode_range; "
-                            f"from cleome.css import SliceBundleResult, generate_css, slice_font, slice_fonts, validate_and_compute_variant_suffixes; "
-                            f"from cleome.pipeline import SliceBundleResult as PRes, slice_font as p_sf, slice_fonts as p_sfs; "
-                            f"from cleome.metadata import extract_font_face_descriptors, patch_uvs_missing_base_cmap, validate_and_compute_variant_suffixes as m_val; "
+                            f"from cleome.metadata import extract_font_face_descriptors, patch_uvs_missing_base_cmap, validate_and_compute_variant_suffixes; "
                             f"from cleome.subsetter import patch_uvs_missing_base_cmap as s_patch; "
-                            f"assert SliceBundleResult is PRes and slice_font is p_sf and slice_fonts is p_sfs and validate_and_compute_variant_suffixes is m_val and patch_uvs_missing_base_cmap is s_patch"
+                            f"assert patch_uvs_missing_base_cmap is s_patch"
                         ),
                     ],
                     capture_output=True,
@@ -109,11 +124,11 @@ class TestCleomeCLI(unittest.TestCase):
                 )
                 self.assertEqual(plan_iso.returncode, 0, f"Plan import isolation failed: {plan_iso.stderr}")
 
-                # 2. `cleome plan --json --preset kr`
+                # 2. `cleome plan --json --locale kr`
                 buf_plan_json = StringIO()
                 with redirect_stdout(buf_plan_json):
                     rc_plan_json = cli_main(
-                        ["plan", str(font_path), "--preset", "kr", "--rare-chunk-size", "120", "--json"]
+                        ["plan", str(font_path), "--locale", "kr", "--rare-chunk-size", "120", "--json"]
                     )
                 self.assertEqual(rc_plan_json, 0)
                 plan_data = json.loads(buf_plan_json.getvalue())
@@ -368,7 +383,7 @@ class TestCleomeCLI(unittest.TestCase):
                             "1",
                         ]
                     )
-                self.assertEqual(rc_xdrive, 1)
+                self.assertEqual(rc_xdrive, 2)
                 self.assertIn("pass an explicit --url-prefix", err_xdrive.getvalue())
 
                 # 3e. `cleome build --force` bypasses cache and rebuilds (`cached: false`)
@@ -391,20 +406,47 @@ class TestCleomeCLI(unittest.TestCase):
                 self.assertEqual(rc_force, 0)
                 force_data = json.loads(buf_force_json.getvalue())
                 self.assertFalse(force_data["cached"])
+                self.assertFalse(force_data["dry_run"])
 
-                # 4. Empty string or invalid CSS/path tokens return exit code 1 with error on stderr
-                empty_display_buf = StringIO()
-                with redirect_stderr(empty_display_buf):
-                    rc_empty_disp = cli_main(["plan", str(font_path), "--display", "   "])
-                self.assertEqual(rc_empty_disp, 1)
-                self.assertIn("font_display cannot be empty", empty_display_buf.getvalue())
+                # 3f. `cleome build --dry-run` validates inputs and paths without creating directories or files
+                dry_out = tmp_path / "never_created_dir"
+                dry_css = tmp_path / "never_created_css" / "fonts.css"
+                buf_dry_json = StringIO()
+                with redirect_stdout(buf_dry_json):
+                    rc_dry_json = cli_main(
+                        [
+                            "build",
+                            str(font_path),
+                            "-o",
+                            str(dry_out),
+                            "--css-out",
+                            str(dry_css),
+                            "--dry-run",
+                            "--json",
+                        ]
+                    )
+                self.assertEqual(rc_dry_json, 0)
+                self.assertFalse(dry_out.exists(), "build --dry-run must not create --out-dir")
+                self.assertFalse(dry_css.parent.exists(), "build --dry-run must not create --css-out parent")
+                dry_data = json.loads(buf_dry_json.getvalue())
+                self.assertTrue(dry_data["ok"])
+                self.assertTrue(dry_data["dry_run"])
+                self.assertEqual(dry_data["slice_count"], 4)
+                self.assertEqual(
+                    [p["filename"] for p in dry_data["preload_slices"]],
+                    ["subcmd-test-kana-core-<hash8>.woff2", "subcmd-test-latin-<hash8>.woff2"],
+                )
 
-                for bad_args, expected_err in (
-                    (["plan", str(font_path), "--slices-dir", "../outside"], "slices_subdir"),
-                    (["plan", str(font_path), "--slug", "../outside"], "slug"),
-                    (["plan", str(font_path), "--weight", "400; } @import url(x)"], "font-weight"),
-                    (["build", str(font_path), "-o", str(build_out), "--css-name", "../outside.css"], "css_filename"),
-                    (
+                buf_dry_txt = StringIO()
+                with redirect_stdout(buf_dry_txt):
+                    rc_dry_txt = cli_main(["build", str(font_path), "-o", str(dry_out), "--dry-run"])
+                self.assertEqual(rc_dry_txt, 0)
+                self.assertIn("Dry run: would build 4 WOFF2 slices", buf_dry_txt.getvalue())
+                self.assertFalse(dry_out.exists())
+
+                # 4. Exit codes: 2 for invalid arguments/CSS/path tokens, 3 for PermissionError, 4 for missing/corrupt input, 1 for runtime error
+                with redirect_stderr(StringIO()), self.assertRaises(SystemExit) as cm_mutex:
+                    cli_main(
                         [
                             "build",
                             str(font_path),
@@ -414,19 +456,95 @@ class TestCleomeCLI(unittest.TestCase):
                             "a.css",
                             "--css-out",
                             str(tmp_path / "b.css"),
-                        ],
-                        "Cannot specify both css_filename and css_out",
-                    ),
+                        ]
+                    )
+                self.assertEqual(cm_mutex.exception.code, 2)
+
+                blocker_file = tmp_path / "blocker_file"
+                blocker_file.write_text("file", encoding="utf-8")
+                slices_conflict_dir = tmp_path / "slices_conflict_out"
+                slices_conflict_dir.mkdir(exist_ok=True)
+                (slices_conflict_dir / "slices").write_text("not a dir", encoding="utf-8")
+                (build_out / "existing_dir.css").mkdir(exist_ok=True)
+
+                for bad_args, expected_err in (
+                    (["build", str(font_path), "-o", str(build_out), "--display", "   "], "font_display cannot be empty"),
+                    (["build", str(font_path), "-o", str(build_out), "--slices-dir", "../outside"], "slices_subdir"),
+                    (["plan", str(font_path), "--slug", "../outside"], "slug"),
+                    (["plan", str(font_path), "--weight", "400; } @import url(x)"], "font-weight"),
+                    (["build", str(font_path), "-o", str(build_out), "--css-name", "../outside.css"], "css_filename"),
                     (
                         ["build", str(font_path), "-o", str(build_out), "--css-out", str(build_out)],
-                        "css_out must be a file path, not an existing directory",
+                        "css_path must be a file path, not an existing directory",
+                    ),
+                    (
+                        ["build", str(font_path), "-o", str(build_out), "--css-out", str(build_out), "--dry-run"],
+                        "css_path must be a file path, not an existing directory",
+                    ),
+                    (
+                        ["build", str(font_path), "-o", str(blocker_file / "sub"), "--dry-run"],
+                        "Cannot create out_dir under existing file",
+                    ),
+                    (
+                        ["build", str(font_path), "-o", str(slices_conflict_dir), "--dry-run"],
+                        "slices_dir must be a directory path, not an existing file",
+                    ),
+                    (
+                        ["build", str(font_path), "-o", str(build_out), "--css-name", "existing_dir.css", "--dry-run"],
+                        "css_path must be a file path, not an existing directory",
+                    ),
+                    (
+                        [
+                            "build",
+                            str(font_path),
+                            "-o",
+                            str(dry_out),
+                            "--slices-dir",
+                            ".",
+                            "--no-filename-hash",
+                            "--css-name",
+                            "subcmd-test-latin.woff2",
+                            "--dry-run",
+                        ],
+                        "collides with planned slice output",
                     ),
                 ):
                     err_buf = StringIO()
                     with redirect_stderr(err_buf):
                         rc_bad = cli_main(bad_args)
-                    self.assertEqual(rc_bad, 1, f"Expected exit code 1 for {bad_args}")
+                    self.assertEqual(rc_bad, 2, f"Expected exit code 2 for {bad_args}")
                     self.assertIn(expected_err, err_buf.getvalue())
+
+                # Exit code 4: missing input file, directory passed as input, or corrupt font file
+                corrupt_font = tmp_path / "corrupt.ttf"
+                corrupt_font.write_bytes(b"not a valid opentype font")
+                for input_err_args in (
+                    ["plan", str(tmp_path / "missing.ttf")],
+                    ["build", str(tmp_path), "-o", str(build_out)],
+                    ["plan", str(corrupt_font)],
+                    ["build", str(corrupt_font), "-o", str(tmp_path / "corrupt_out")],
+                ):
+                    with redirect_stderr(StringIO()):
+                        self.assertEqual(cli_main(input_err_args), 4, f"Expected exit code 4 for {input_err_args}")
+                self.assertFalse((tmp_path / "corrupt_out").exists())
+
+                # Exit code 3: PermissionError
+                with (
+                    mock_patch("cleome.pipeline.slice_fonts", side_effect=PermissionError(13, "Denied", str(build_out))),
+                    redirect_stderr(StringIO()),
+                ):
+                    self.assertEqual(cli_main(["build", str(font_path), "-o", str(build_out)]), 3)
+
+                # Exit code 1: RuntimeError or output-side OSError (not input font)
+                for runtime_exc in (
+                    RuntimeError("worker pool failed"),
+                    FileNotFoundError(2, "No such file or directory", str(build_out / "missing_tmp.woff2")),
+                ):
+                    with (
+                        mock_patch("cleome.pipeline.slice_fonts", side_effect=runtime_exc),
+                        redirect_stderr(StringIO()),
+                    ):
+                        self.assertEqual(cli_main(["build", str(font_path), "-o", str(build_out)]), 1)
             finally:
                 os.chdir(orig_cwd)
 

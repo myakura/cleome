@@ -4,20 +4,81 @@ into Web-optimized `unicode-range` WOFF2 chunks and `@font-face` CSS.
 """
 
 import argparse
+from collections.abc import Sequence
 import json
+import os
 from pathlib import Path
 import re
+import struct
 import sys
 import time
-from fontTools.ttLib import TTFont
+from fontTools.ttLib import TTFont, TTLibError
 
 from cleome.locale import SUPPORTED_LOCALES, detect_font_locale
 from cleome.metadata import (
     FontMetadata,
     extract_font_metadata,
-    validate_and_compute_variant_suffixes,
 )
-from cleome.slicer import SliceConfig, SliceSpec, build_slice_plan
+from cleome.slicer import SliceConfig, SliceSpec, _prepare_font_bundle
+
+EXIT_OK = 0
+EXIT_RUNTIME_ERROR = 1
+EXIT_USAGE_ERROR = 2
+EXIT_PERMISSION_ERROR = 3
+EXIT_INPUT_ERROR = 4
+
+
+def _is_input_path_error(exc: OSError, input_paths: Sequence[Path]) -> bool:
+    err_file = getattr(exc, "filename", None)
+    if not err_file or not input_paths:
+        return False
+    err_str = os.fspath(err_file)
+    err_abs = os.path.abspath(err_str)
+    return any(
+        err_str == os.fspath(p) or err_abs == os.path.abspath(os.fspath(p))
+        for p in input_paths
+    )
+
+
+def _handle_cli_exception(exc: BaseException, *, input_paths: Sequence[Path] = ()) -> int:
+    """Format a concise stderr diagnostic and return the Gate 3 exit code (`1`, `2`, `3`, or `4`)."""
+    if isinstance(exc, PermissionError):
+        target = f": {exc.filename}" if getattr(exc, "filename", None) else f": {exc}"
+        print(f"Error: Permission denied{target}", file=sys.stderr)
+        return EXIT_PERMISSION_ERROR
+    if isinstance(exc, (FileNotFoundError, IsADirectoryError, NotADirectoryError)) and _is_input_path_error(
+        exc, input_paths
+    ):
+        target = f": {exc.filename}" if getattr(exc, "filename", None) else f": {exc}"
+        print(f"Error: Input font not found or is a directory{target}", file=sys.stderr)
+        return EXIT_INPUT_ERROR
+    if isinstance(exc, (TTLibError, EOFError, struct.error)):
+        print(f"Error: Invalid or unreadable font file: {exc}", file=sys.stderr)
+        return EXIT_INPUT_ERROR
+    if isinstance(exc, ValueError):
+        print(f"Error: {exc}", file=sys.stderr)
+        return EXIT_USAGE_ERROR
+    print(f"Error: {exc}", file=sys.stderr)
+    return EXIT_RUNTIME_ERROR
+
+
+def _load_cli_input_metas(args: argparse.Namespace, config: SliceConfig) -> list[FontMetadata]:
+    """Open input font files and extract `FontMetadata` with CLI overrides applied."""
+    metas: list[FontMetadata] = []
+    for p in args.inputs:
+        with TTFont(p, lazy=True, recalcTimestamp=False) as tt:
+            metas.append(
+                extract_font_metadata(
+                    tt,
+                    family_override=args.family,
+                    slug_override=args.slug,
+                    weight_override=args.weight,
+                    stretch_override=args.stretch,
+                    style_override=args.style,
+                    uvs_base_repair=config.uvs_base_repair,
+                )
+            )
+    return metas
 
 
 def _positive_int(val_str: str) -> int:
@@ -30,32 +91,35 @@ def _positive_int(val_str: str) -> int:
     return val
 
 
-def _parse_freq_tiers(spec_str: str) -> tuple[tuple[int, int], ...]:
-    """Parse a progressive tier spec string like `"200x2,80x10"` into `((200, 2), (80, 10))`."""
-    tiers: list[tuple[int, int]] = []
-    for item in spec_str.split(","):
+def _parse_freq_chunks(spec_str: str) -> tuple[tuple[int, int], ...]:
+    """Parse a progressive Tier 3 chunk spec like `"200x2,80x10"` or `"none"` into a tuple of `(size, count)` pairs."""
+    cleaned = spec_str.strip()
+    if cleaned.lower() == "none":
+        return ()
+    chunks: list[tuple[int, int]] = []
+    for item in cleaned.split(","):
         item = item.strip()
         if not item:
             continue
         if "x" not in item.lower():
             raise argparse.ArgumentTypeError(
-                f"Invalid --freq-tiers item '{item}'. Expected format 'SIZE'x'COUNT' (e.g. '200x2,80x10')."
+                f"Invalid --freq-chunks item '{item}'. Expected format 'SIZE'x'COUNT' (e.g. '200x2,80x10') or 'none'."
             )
         sz_s, cnt_s = item.lower().split("x", 1)
         try:
             sz, cnt = int(sz_s), int(cnt_s)
         except ValueError as exc:
             raise argparse.ArgumentTypeError(
-                f"Invalid --freq-tiers item '{item}'. Both SIZE and COUNT must be integers."
+                f"Invalid --freq-chunks item '{item}'. Both SIZE and COUNT must be integers."
             ) from exc
         if sz <= 0 or cnt <= 0:
             raise argparse.ArgumentTypeError(
-                f"Invalid --freq-tiers item '{item}'. Both SIZE and COUNT must be > 0."
+                f"Invalid --freq-chunks item '{item}'. Both SIZE and COUNT must be > 0."
             )
-        tiers.append((sz, cnt))
-    if not tiers:
-        raise argparse.ArgumentTypeError("--freq-tiers cannot be empty.")
-    return tuple(tiers)
+        chunks.append((sz, cnt))
+    if not chunks:
+        raise argparse.ArgumentTypeError("--freq-chunks cannot be empty (use 'none' for flat Tier 3 slicing).")
+    return tuple(chunks)
 
 
 def _parse_tag_list(spec_str: str) -> tuple[str, ...]:
@@ -70,135 +134,156 @@ def _add_shared_arguments(parser: argparse.ArgumentParser, *, is_build: bool) ->
         type=Path,
         help="Input font file(s) (.ttf / .otf). Pass multiple files to bundle static weight/style variants together.",
     )
+
+    slicing_group = parser.add_argument_group("Slicing options")
+    slicing_group.add_argument(
+        "--locale",
+        dest="locale",
+        choices=SUPPORTED_LOCALES,
+        default="auto",
+        help="Target CJK slicing profile: 'auto' (detect from family & cmap), 'jp', 'kr', 'sc', 'tc', or 'hk' (default: 'auto')",
+    )
+    slicing_group.add_argument(
+        "--freq-chunks",
+        type=_parse_freq_chunks,
+        default=((200, 2), (80, 10)),
+        help="Progressive Tier 3 chunk schedule from highest frequency downward, or 'none' (default: '200x2,80x10')",
+    )
+    slicing_group.add_argument(
+        "--freq-tail-chunk-size",
+        type=_positive_int,
+        default=70,
+        help="Target characters per slice for remaining Tier 3 characters (default: 70)",
+    )
+    slicing_group.add_argument(
+        "--rare-chunk-size",
+        type=_positive_int,
+        default=250,
+        help="Target characters per slice for Tier 4 rare/extended characters (default: 250)",
+    )
+    slicing_group.add_argument(
+        "--symbols-chunk-size",
+        type=_positive_int,
+        default=350,
+        help="Target characters per slice for Tier 2 extended symbols (default: 350)",
+    )
+    slicing_group.add_argument(
+        "--uvs-base-repair",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Repair characters mapped in cmap Format 14 (UVS/IVS) but omitted from Format 4/12 (default: enabled)",
+    )
+
+    descriptor_group = parser.add_argument_group("CSS descriptor overrides")
+    descriptor_group.add_argument(
+        "--family",
+        default=None,
+        help="Override CSS `font-family` name (auto-detected from font `name` table by default)",
+    )
+    descriptor_group.add_argument(
+        "--slug",
+        default=None,
+        help="Override filename slug prefix (default: kebab-case of font-family)",
+    )
+    descriptor_group.add_argument(
+        "--weight",
+        default=None,
+        help="Override CSS `font-weight` descriptor (e.g. '250 900' or '400')",
+    )
+    descriptor_group.add_argument(
+        "--stretch",
+        default=None,
+        help="Override CSS `font-stretch` descriptor (e.g. '70%% 100%%')",
+    )
+    descriptor_group.add_argument(
+        "--style",
+        default=None,
+        help="Override CSS `font-style` descriptor (e.g. 'normal' or 'italic')",
+    )
     if is_build:
-        parser.add_argument(
+        descriptor_group.add_argument(
+            "--display",
+            default="swap",
+            help="CSS `font-display` descriptor value (default: 'swap')",
+        )
+
+        output_group = parser.add_argument_group("Output options")
+        output_group.add_argument(
             "-o",
             "--out-dir",
             type=Path,
             default=Path("dist"),
             help="Output directory for generated CSS and slices (default: ./dist)",
         )
-    parser.add_argument(
-        "--locale",
-        "--preset",
-        dest="locale",
-        choices=SUPPORTED_LOCALES,
-        default="auto",
-        help="Target CJK slicing profile: 'auto' (detect from family & cmap), 'jp', 'kr', 'sc', 'tc', or 'hk' (default: 'auto')",
-    )
-    parser.add_argument(
-        "--slices-dir",
-        default="slices",
-        help="Subdirectory name under --out-dir for .woff2 files (default: 'slices'; use '.' for flat output)",
-    )
-    parser.add_argument(
-        "--url-prefix",
-        default=None,
-        help="Custom URL prefix in CSS `src: url('<prefix>/<file>.woff2')` (default: './<slices-dir>')",
-    )
-    parser.add_argument(
-        "--css-name",
-        default=None,
-        help="Custom filename for the output CSS file inside --out-dir (default: '<slug>.css')",
-    )
-    if is_build:
-        parser.add_argument(
+        output_group.add_argument(
+            "--slices-dir",
+            default="slices",
+            help="Subdirectory name under --out-dir for .woff2 files (default: 'slices'; use '.' for flat output)",
+        )
+        output_group.add_argument(
+            "--url-prefix",
+            default=None,
+            help="Custom URL prefix in CSS `src: url('<prefix>/<file>.woff2')` (default: relative path from CSS to <slices-dir>)",
+        )
+        css_dest_group = output_group.add_mutually_exclusive_group()
+        css_dest_group.add_argument(
+            "--css-name",
+            default=None,
+            help="Custom filename for the output CSS file inside --out-dir (default: '<slug>.css')",
+        )
+        css_dest_group.add_argument(
             "--css-out",
             type=Path,
             default=None,
             help="Write the output CSS file to an explicit path (e.g. 'src/styles/fonts.css' while -o is 'public/fonts')",
         )
-    parser.add_argument(
-        "--family",
-        default=None,
-        help="Override CSS `font-family` name (auto-detected from font `name` table by default)",
-    )
-    parser.add_argument(
-        "--slug",
-        default=None,
-        help="Override filename slug prefix (default: kebab-case of font-family)",
-    )
-    parser.add_argument(
-        "--weight",
-        default=None,
-        help="Override CSS `font-weight` descriptor (e.g. '250 900' or '400')",
-    )
-    parser.add_argument(
-        "--stretch",
-        default=None,
-        help="Override CSS `font-stretch` descriptor (e.g. '70%% 100%%')",
-    )
-    parser.add_argument(
-        "--style",
-        default=None,
-        help="Override CSS `font-style` descriptor (e.g. 'normal' or 'italic')",
-    )
-    parser.add_argument(
-        "--display",
-        default="swap",
-        help="CSS `font-display` descriptor value (default: 'swap')",
-    )
-    parser.add_argument(
-        "--freq-tiers",
-        type=_parse_freq_tiers,
-        default=((200, 2), (80, 10)),
-        help="Progressive Tier 3 chunk spec from highest frequency downward (default: '200x2,80x10')",
-    )
-    parser.add_argument(
-        "--freq-tail-chunk-size",
-        type=_positive_int,
-        default=70,
-        help="Target characters per slice for remaining Tier 3 characters (default: 70)",
-    )
-    parser.add_argument(
-        "--rare-chunk-size",
-        type=_positive_int,
-        default=250,
-        help="Target characters per slice for Tier 4 rare/extended characters (default: 250)",
-    )
-    parser.add_argument(
-        "--symbols-chunk-size",
-        type=_positive_int,
-        default=350,
-        help="Target characters per slice for Tier 2 extended symbols (default: 350)",
-    )
-    parser.add_argument(
-        "--layout-features",
-        type=_parse_tag_list,
-        default=("*",),
-        help="Comma-separated OpenType layout feature tags to retain (default: '*' keeps all features)",
-    )
-    parser.add_argument(
-        "--no-layout-closure",
-        action="store_true",
-        help="Do not expand glyph closure over GSUB substitution tables",
-    )
-    parser.add_argument(
-        "--drop-tables",
-        type=_parse_tag_list,
-        default=(),
-        help="Comma-separated OpenType table tags to drop during subsetting (e.g. 'GPOS,GSUB,vhea,vmtx')",
-    )
-    if is_build:
-        parser.add_argument(
+        output_group.add_argument(
             "--filename-hash",
             action=argparse.BooleanOptionalAction,
             default=True,
             help="Append an 8-character SHA-256 content hash to each .woff2 slice filename (default: enabled)",
         )
-        parser.add_argument(
+
+        subset_group = parser.add_argument_group("Subsetting options")
+        subset_group.add_argument(
+            "--layout-features",
+            type=_parse_tag_list,
+            default=("*",),
+            help="Comma-separated OpenType layout feature tags to retain (default: '*' keeps all features)",
+        )
+        subset_group.add_argument(
+            "--layout-closure",
+            action=argparse.BooleanOptionalAction,
+            default=True,
+            help="Expand glyph closure over GSUB substitution tables (default: enabled)",
+        )
+        subset_group.add_argument(
+            "--drop-tables",
+            type=_parse_tag_list,
+            default=(),
+            help="Comma-separated OpenType table tags to drop during subsetting (e.g. 'GPOS,GSUB,vhea,vmtx')",
+        )
+
+    exec_group = parser.add_argument_group("Execution & output format")
+    if is_build:
+        exec_group.add_argument(
             "-j",
             "--workers",
             type=_positive_int,
             default=None,
             help="Number of parallel worker processes for WOFF2 compression (default: CPU count)",
         )
-        parser.add_argument(
+        exec_group.add_argument(
             "--force",
             action="store_true",
             help="Rebuild all WOFF2 slices and CSS even if cached outputs are up to date",
         )
-    parser.add_argument(
+        exec_group.add_argument(
+            "--dry-run",
+            action="store_true",
+            help="Validate inputs, output paths, and planned slices without creating directories or writing files",
+        )
+    exec_group.add_argument(
         "--json",
         dest="json_output",
         action="store_true",
@@ -209,6 +294,7 @@ def _add_shared_arguments(parser: argparse.ArgumentParser, *, is_build: bool) ->
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="cleome",
+        allow_abbrev=False,
         description=(
             "Slice Japanese, Korean, or Chinese Variable and Static fonts (.ttf / .otf) into "
             "Web-optimized unicode-range WOFF2 chunks and @font-face CSS."
@@ -218,12 +304,14 @@ def build_parser() -> argparse.ArgumentParser:
 
     plan_parser = subparsers.add_parser(
         "plan",
+        allow_abbrev=False,
         help="Read-only inspection: compute and output the 4-tier unicode-range slice plan without writing files",
     )
     _add_shared_arguments(plan_parser, is_build=False)
 
     build_subparser = subparsers.add_parser(
         "build",
+        allow_abbrev=False,
         help="Write mode: slice input fonts into WOFF2 chunks and generate @font-face CSS",
     )
     _add_shared_arguments(build_subparser, is_build=True)
@@ -247,50 +335,40 @@ def _summarize_plan_tiers(plan: list[SliceSpec]) -> dict[int, tuple[int, int, in
 
 
 def _run_plan(args: argparse.Namespace, config: SliceConfig) -> int:
-    metas: list[FontMetadata] = []
     try:
-        for p in args.inputs:
-            with TTFont(p, lazy=True, recalcTimestamp=False) as tt:
-                metas.append(
-                    extract_font_metadata(
-                        tt,
-                        family_override=args.family,
-                        slug_override=args.slug,
-                        weight_override=args.weight,
-                        stretch_override=args.stretch,
-                        style_override=args.style,
-                        patch_uvs=config.patch_uvs_only_cmap,
-                    )
-                )
-        suffixes = validate_and_compute_variant_suffixes(metas, family_override=args.family)
-    except ValueError as exc:
-        print(f"Error: {exc}", file=sys.stderr)
-        return 1
+        raw_metas = _load_cli_input_metas(args, config)
+        prepared = _prepare_font_bundle(
+            raw_metas,
+            config,
+            family_override=args.family,
+            slug_override=args.slug,
+        )
+    except (ValueError, TTLibError, EOFError, struct.error, OSError) as exc:
+        return _handle_cli_exception(exc, input_paths=args.inputs)
 
-    first = metas[0]
+    first = prepared.metas[0]
     resolved_loc = (
-        detect_font_locale(first.codepoints, family_name=first.family_name)
+        detect_font_locale(first.codepoints, family_name=prepared.family_name)
         if config.locale == "auto"
         else config.locale
     )
-    plans = [build_slice_plan(m.codepoints, config=config, family_name=m.family_name) for m in metas]
 
     if args.json_output:
         payload = {
             "ok": True,
             "command": "plan",
-            "family_name": first.family_name,
-            "slug": first.slug,
+            "family_name": prepared.family_name,
+            "slug": prepared.slug,
             "locale": resolved_loc,
             "configured_locale": config.locale,
             "is_variable": first.is_variable,
-            "file_count": len(metas),
+            "file_count": len(prepared.metas),
             "variants": [
                 {
                     "weight": meta.weight_css,
                     "stretch": meta.stretch_css or "normal",
                     "styles": list(meta.styles_css or (meta.style_css,)),
-                    "variant_suffix": suf,
+                    "variant_suffix": meta.variant_suffix,
                     "codepoints": len(meta.codepoints),
                     "total_slices": len(plan),
                     "tiers": {
@@ -298,16 +376,16 @@ def _run_plan(args: argparse.Namespace, config: SliceConfig) -> int:
                         for t, (sc, cp_c, ur_c) in _summarize_plan_tiers(plan).items()
                     },
                 }
-                for meta, suf, plan in zip(metas, suffixes, plans)
+                for meta, plan in zip(prepared.metas, prepared.variant_plans)
             ],
         }
         print(json.dumps(payload, ensure_ascii=False))
-        return 0
+        return EXIT_OK
 
-    print(f"Font Family : {first.family_name} (slug: {first.slug})")
+    print(f"Font Family : {prepared.family_name} (slug: {prepared.slug})")
     print(f"Locale      : {resolved_loc} (config: {config.locale})")
-    print(f"Type        : {'Variable' if first.is_variable else 'Static'} ({len(metas)} file(s))")
-    for m, plan in zip(metas, plans):
+    print(f"Type        : {'Variable' if first.is_variable else 'Static'} ({len(prepared.metas)} file(s))")
+    for m, plan in zip(prepared.metas, prepared.variant_plans):
         style_label = " + ".join(m.styles_css or (m.style_css,))
         print(
             f"Variant     : weight={m.weight_css}, stretch={m.stretch_css or 'normal'}, "
@@ -318,10 +396,93 @@ def _run_plan(args: argparse.Namespace, config: SliceConfig) -> int:
                 f"  Tier {tier_num}: {sc:2d} slices | {t_chars:6,d} chars | "
                 f"unicode-range len: {t_ur_len:6,d} chars ({t_ur_len/1024:.1f} KB)"
             )
-    return 0
+    return EXIT_OK
+
+
+def _run_build_dry_run(args: argparse.Namespace, config: SliceConfig) -> int:
+    from cleome.css import _resolve_and_validate_outputs
+
+    try:
+        raw_metas = _load_cli_input_metas(args, config)
+        prepared = _prepare_font_bundle(
+            raw_metas,
+            config,
+            family_override=args.family,
+            slug_override=args.slug,
+        )
+        outputs = _resolve_and_validate_outputs(
+            args.out_dir,
+            config,
+            prepared.metas,
+            prepared.variant_plans,
+            css_filename=args.css_name,
+            css_path=args.css_out,
+        )
+    except (ValueError, TTLibError, EOFError, struct.error, OSError) as exc:
+        return _handle_cli_exception(exc, input_paths=args.inputs)
+
+    total_slices = 0
+    preload_slices: list[dict[str, str]] = []
+    hash_placeholder = "<hash8>" if config.filename_hash else ""
+    for m, plan in zip(prepared.metas, prepared.variant_plans):
+        for spec in plan:
+            if not (spec.binary_codepoints & m.codepoints):
+                continue
+            total_slices += 1
+            if spec.tier == 1:
+                preview_fname = spec.filename(m.slug, m.variant_suffix, hash_placeholder)
+                preload_slices.append(
+                    {
+                        "slice_id": spec.slice_id,
+                        "variant_suffix": m.variant_suffix,
+                        "filename": preview_fname,
+                        "url": f"{outputs.url_prefix}{preview_fname}",
+                    }
+                )
+
+    resolved_loc = (
+        detect_font_locale(prepared.metas[0].codepoints, family_name=prepared.family_name)
+        if config.locale == "auto"
+        else config.locale
+    )
+    if args.json_output:
+        payload = {
+            "ok": True,
+            "command": "build",
+            "dry_run": True,
+            "cached": False,
+            "family_name": prepared.family_name,
+            "slug": prepared.slug,
+            "locale": resolved_loc,
+            "filename_hash": config.filename_hash,
+            "css_path": str(outputs.css_path),
+            "slices_dir": str(outputs.slices_dir),
+            "slice_count": total_slices,
+            "preload_slices": preload_slices,
+        }
+        print(json.dumps(payload, ensure_ascii=False))
+        return EXIT_OK
+
+    print(
+        f"[cleome] Dry run: would build {total_slices} WOFF2 slices + "
+        f"{outputs.css_path.name} (no files written)"
+    )
+    print(f"         CSS   : {outputs.css_path}")
+    print(f"         Slices: {outputs.slices_dir}/")
+    if preload_slices:
+        print("         Preload (Tier 1):")
+        for item in preload_slices:
+            print(
+                f'           <link rel="preload" href="{item["url"]}" '
+                f'as="font" type="font/woff2" crossorigin>'
+            )
+    return EXIT_OK
 
 
 def _run_build(args: argparse.Namespace, config: SliceConfig) -> int:
+    if args.dry_run:
+        return _run_build_dry_run(args, config)
+
     from cleome.css import _resolve_url_prefix
     from cleome.pipeline import slice_fonts
 
@@ -333,7 +494,7 @@ def _run_build(args: argparse.Namespace, config: SliceConfig) -> int:
             family_name=args.family,
             slug=args.slug,
             css_filename=args.css_name,
-            css_out=args.css_out,
+            css_path=args.css_out,
             weight=args.weight,
             stretch=args.stretch,
             style=args.style,
@@ -341,9 +502,8 @@ def _run_build(args: argparse.Namespace, config: SliceConfig) -> int:
             workers=args.workers,
             force=args.force,
         )
-    except ValueError as exc:
-        print(f"Error: {exc}", file=sys.stderr)
-        return 1
+    except (ValueError, TTLibError, EOFError, struct.error, RuntimeError, OSError) as exc:
+        return _handle_cli_exception(exc, input_paths=args.inputs)
 
     elapsed = time.time() - t0
     url_prefix = _resolve_url_prefix(
@@ -369,6 +529,7 @@ def _run_build(args: argparse.Namespace, config: SliceConfig) -> int:
         payload = {
             "ok": True,
             "command": "build",
+            "dry_run": False,
             "cached": result.cached,
             "family_name": result.family_name,
             "slug": result.slug,
@@ -383,7 +544,7 @@ def _run_build(args: argparse.Namespace, config: SliceConfig) -> int:
             "elapsed_seconds": round(elapsed, 3),
         }
         print(json.dumps(payload, ensure_ascii=False))
-        return 0
+        return EXIT_OK
 
     action_label = "Cached" if result.cached else "Built"
     cache_suffix = " (up to date)" if result.cached else ""
@@ -401,7 +562,7 @@ def _run_build(args: argparse.Namespace, config: SliceConfig) -> int:
                 f'           <link rel="preload" href="{item["url"]}" '
                 f'as="font" type="font/woff2" crossorigin>'
             )
-    return 0
+    return EXIT_OK
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -410,26 +571,29 @@ def main(argv: list[str] | None = None) -> int:
     for p in args.inputs:
         if not p.exists():
             print(f"Error: Input font not found: {p}", file=sys.stderr)
-            return 1
+            return EXIT_INPUT_ERROR
+        if p.is_dir():
+            print(f"Error: Input path is a directory, expected a font file: {p}", file=sys.stderr)
+            return EXIT_INPUT_ERROR
 
     try:
         config = SliceConfig(
             locale=args.locale,
-            freq_tiers=args.freq_tiers,
+            freq_chunks=args.freq_chunks,
             freq_tail_chunk_size=args.freq_tail_chunk_size,
-            rare_kanji_chunk_size=args.rare_chunk_size,
+            rare_chunk_size=args.rare_chunk_size,
             symbols_ext_chunk_size=args.symbols_chunk_size,
-            retain_layout_closure=not args.no_layout_closure,
-            layout_features=tuple(args.layout_features),
-            drop_tables=tuple(args.drop_tables),
-            slices_subdir=args.slices_dir,
-            url_prefix=args.url_prefix,
-            font_display=args.display,
+            layout_closure=getattr(args, "layout_closure", True),
+            layout_features=tuple(getattr(args, "layout_features", ("*",))),
+            drop_tables=tuple(getattr(args, "drop_tables", ())),
+            uvs_base_repair=args.uvs_base_repair,
+            slices_subdir=getattr(args, "slices_dir", "slices"),
+            url_prefix=getattr(args, "url_prefix", None),
+            font_display=getattr(args, "display", "swap"),
             filename_hash=getattr(args, "filename_hash", True),
         )
     except ValueError as exc:
-        print(f"Error: {exc}", file=sys.stderr)
-        return 1
+        return _handle_cli_exception(exc)
 
     if args.subcommand == "plan":
         return _run_plan(args, config)

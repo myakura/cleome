@@ -15,65 +15,23 @@ import hashlib
 import io
 import os
 from pathlib import Path
-import re
 import secrets
 from typing import Iterator
 from fontTools.ttLib import TTFont
 from fontTools.subset import Subsetter, Options
 
+from cleome.css import _ensure_directory_creatable
 from cleome.metadata import (
     FontMetadata,
+    _split_hashed_stem,
+    _uvs_selector_sort_key,
     _validate_filename_token,
+    patch_uvs_missing_base_cmap,
 )
 from cleome.slicer import (
     SliceConfig,
     SliceSpec,
 )
-
-
-def _uvs_selector_sort_key(
-    item: tuple[int, list[tuple[int, str | None]]],
-) -> tuple[int, int]:
-    """Prioritize Ideographic Variation Selectors (U+E0100..U+E01EF) in ascending order before VS1..VS16."""
-    sel = item[0]
-    return (0 if 0xE0100 <= sel <= 0xE01EF else 1, sel)
-
-
-def patch_uvs_missing_base_cmap(font: TTFont) -> list[int]:
-    """
-    Detect characters that exist in cmap Format 14 (UVS) with a concrete variant glyph
-    but were accidentally omitted from Format 4/12 (such as U+553E '唾' in Adobe SourceHanSansJP-VF.otf v2.005)
-    and patch them into the base cmap tables in-memory.
-    Prioritizes IVS selectors (U+E0100..U+E01EF) in ascending order so U+E0100 (standard base form) always wins.
-    """
-    if "cmap" not in font:
-        return []
-    best_cmap = font.getBestCmap() or {}
-    uvs_additions: dict[int, str] = {}
-    for table in font["cmap"].tables:
-        if getattr(table, "format", None) == 14 and hasattr(table, "uvsDict"):
-            for _uvs_selector, records in sorted(
-                table.uvsDict.items(), key=_uvs_selector_sort_key
-            ):
-                for cp, gname in records:
-                    if (
-                        cp not in best_cmap
-                        and cp not in uvs_additions
-                        and gname is not None
-                    ):
-                        uvs_additions[cp] = gname
-    if not uvs_additions:
-        return []
-
-    patched: set[int] = set()
-    for table in font["cmap"].tables:
-        if getattr(table, "format", None) in (4, 12) and hasattr(table, "cmap"):
-            for cp, gname in uvs_additions.items():
-                if table.format == 4 and cp > 0xFFFF:
-                    continue
-                table.cmap[cp] = gname
-                patched.add(cp)
-    return sorted(patched)
 
 
 @dataclass(frozen=True, slots=True)
@@ -89,7 +47,7 @@ class BuiltSliceFile:
 
 
 def _create_subset_options(
-    retain_layout_closure: bool = True,
+    layout_closure: bool = True,
     layout_features: tuple[str, ...] = ("*",),
     drop_tables: tuple[str, ...] = (),
 ) -> Options:
@@ -102,7 +60,7 @@ def _create_subset_options(
     # when both base and mark reside in the same slice).
     options.layout_features = list(layout_features)
     options.layout_scripts = ["*"]
-    options.layout_closure = retain_layout_closure
+    options.layout_closure = layout_closure
     # Preserve Copyright (0), Family/Subfamily/Version/PS (1..6), License Description (13),
     # License Info URL (14), and Typographic Family/Subfamily (16, 17).
     options.name_IDs = [0, 1, 2, 3, 4, 5, 6, 13, 14, 16, 17]
@@ -135,7 +93,6 @@ _WORKER_SOURCES: tuple[tuple[bytes | Path, bool], ...] = ()
 _WORKER_CACHE: dict[int, _CachedFontState] = {}
 _WORKER_OPTIONS: Options | None = None
 _WORKER_FILENAME_HASH: bool = True
-_HASH_SUFFIX_RE = re.compile(r"^[0-9a-f]{8}$")
 
 
 def _clone_cmap(src_cmap: object) -> object:
@@ -213,7 +170,7 @@ def _load_cached_font_state(font_idx: int) -> _CachedFontState:
 
 def _init_subset_worker(
     sources: tuple[tuple[bytes | Path, bool], ...],
-    retain_closure: bool,
+    layout_closure: bool,
     layout_features: tuple[str, ...],
     drop_tables: tuple[str, ...],
     filename_hash: bool = True,
@@ -222,7 +179,7 @@ def _init_subset_worker(
     _WORKER_SOURCES = sources
     _WORKER_CACHE = {}
     _WORKER_OPTIONS = _create_subset_options(
-        retain_layout_closure=retain_closure,
+        layout_closure=layout_closure,
         layout_features=layout_features,
         drop_tables=drop_tables,
     )
@@ -338,6 +295,11 @@ def _subset_single_slice_worker(
     else:
         final_out_path = base_out_path
 
+    if final_out_path.exists() and final_out_path.is_dir():
+        raise ValueError(
+            f"Slice output path must be a file, not an existing directory: {final_out_path!r}"
+        )
+
     with _atomic_output_file(final_out_path, mode="wb") as tf:
         tf.write(woff2_bytes)
 
@@ -378,18 +340,18 @@ def _prepare_worker_source(
             is_woff = is_woff_hint
 
         if not is_woff:
-            needs_patch = bool(config.patch_uvs_only_cmap and meta.patched_uvs_codepoints)
+            needs_patch = bool(config.uvs_base_repair and meta.patched_uvs_codepoints)
             return p, needs_patch
 
         with TTFont(p, recalcTimestamp=False) as tmp_font:
-            if config.patch_uvs_only_cmap:
+            if config.uvs_base_repair:
                 patch_uvs_missing_base_cmap(tmp_font)
             return serialize_font_to_bytes(tmp_font), False
 
     if isinstance(font_or_bytes, TTFont):
-        return serialize_font_to_bytes(font_or_bytes), bool(config.patch_uvs_only_cmap)
+        return serialize_font_to_bytes(font_or_bytes), bool(config.uvs_base_repair)
 
-    return font_or_bytes, bool(config.patch_uvs_only_cmap and meta.patched_uvs_codepoints)
+    return font_or_bytes, bool(config.uvs_base_repair and meta.patched_uvs_codepoints)
 
 
 def _export_woff2_slices_batch(
@@ -404,12 +366,18 @@ def _export_woff2_slices_batch(
     Generate `.woff2` slice files in `slices_dir` for one or more font variants using a single
     shared worker pool and heavy-first task scheduling.
     """
+    if workers is not None and workers <= 0:
+        raise ValueError(f"workers must be >= 1, got {workers}")
+    if is_woff_hints is not None and len(is_woff_hints) != len(variants):
+        raise ValueError(
+            f"is_woff_hints length ({len(is_woff_hints)}) must match variants length ({len(variants)})"
+        )
     if not variants:
         return []
     if config is None:
         config = SliceConfig()
 
-    slices_dir.mkdir(parents=True, exist_ok=True)
+    _ensure_directory_creatable(slices_dir, "slices_dir")
     slices_dir_resolved = slices_dir.resolve()
     hints = is_woff_hints if is_woff_hints is not None else [None] * len(variants)
 
@@ -440,6 +408,10 @@ def _export_woff2_slices_batch(
                 raise ValueError(
                     f"Slice output path {out_path!r} resolves outside slices_dir {slices_dir!r}"
                 )
+            if not config.filename_hash and out_path.exists() and out_path.is_dir():
+                raise ValueError(
+                    f"Slice output path must be a file, not an existing directory: {out_path!r}"
+                )
             out_str = str(out_path)
             if out_str in seen_out_paths:
                 raise ValueError(f"Duplicate slice output path across variants: {out_str}")
@@ -450,6 +422,8 @@ def _export_woff2_slices_batch(
 
     if not sortable_tasks:
         return [[] for _ in variants]
+
+    slices_dir.mkdir(parents=True, exist_ok=True)
 
     # Schedule largest slices first with deterministic (font_idx, spec_idx) tie-breaking
     sortable_tasks.sort(key=lambda item: (item[0], item[1], item[2]))
@@ -467,7 +441,7 @@ def _export_woff2_slices_batch(
     if max_workers <= 1 or len(scheduled_tasks) <= 2:
         _init_subset_worker(
             tuple(sources),
-            config.retain_layout_closure,
+            config.layout_closure,
             config.layout_features,
             config.drop_tables,
             config.filename_hash,
@@ -485,7 +459,7 @@ def _export_woff2_slices_batch(
                 initializer=_init_subset_worker,
                 initargs=(
                     tuple(sources),
-                    config.retain_layout_closure,
+                    config.layout_closure,
                     config.layout_features,
                     config.drop_tables,
                     config.filename_hash,
@@ -532,12 +506,8 @@ def _export_woff2_slices_batch(
                 or existing.name in active_filenames
             ):
                 continue
-            parts = existing.stem.rsplit("-", 1)
-            if (
-                len(parts) == 2
-                and parts[0] in target_base_stems
-                and _HASH_SUFFIX_RE.match(parts[1])
-            ):
+            split_res = _split_hashed_stem(existing.stem)
+            if split_res is not None and split_res[0] in target_base_stems:
                 existing.unlink(missing_ok=True)
 
     return all_variant_files
