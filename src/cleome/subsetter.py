@@ -11,9 +11,11 @@ from concurrent.futures.process import BrokenProcessPool
 import contextlib
 import copy
 from dataclasses import dataclass
+import hashlib
 import io
 import os
 from pathlib import Path
+import re
 import secrets
 from typing import Iterator
 from fontTools.ttLib import TTFont
@@ -132,6 +134,8 @@ class _CachedFontState:
 _WORKER_SOURCES: tuple[tuple[bytes | Path, bool], ...] = ()
 _WORKER_CACHE: dict[int, _CachedFontState] = {}
 _WORKER_OPTIONS: Options | None = None
+_WORKER_FILENAME_HASH: bool = True
+_HASH_SUFFIX_RE = re.compile(r"^[0-9a-f]{8}$")
 
 
 def _clone_cmap(src_cmap: object) -> object:
@@ -212,8 +216,9 @@ def _init_subset_worker(
     retain_closure: bool,
     layout_features: tuple[str, ...],
     drop_tables: tuple[str, ...],
+    filename_hash: bool = True,
 ) -> None:
-    global _WORKER_SOURCES, _WORKER_CACHE, _WORKER_OPTIONS
+    global _WORKER_SOURCES, _WORKER_CACHE, _WORKER_OPTIONS, _WORKER_FILENAME_HASH
     _WORKER_SOURCES = sources
     _WORKER_CACHE = {}
     _WORKER_OPTIONS = _create_subset_options(
@@ -221,13 +226,15 @@ def _init_subset_worker(
         layout_features=layout_features,
         drop_tables=drop_tables,
     )
+    _WORKER_FILENAME_HASH = filename_hash
 
 
 def _clear_subset_worker() -> None:
-    global _WORKER_SOURCES, _WORKER_CACHE, _WORKER_OPTIONS
+    global _WORKER_SOURCES, _WORKER_CACHE, _WORKER_OPTIONS, _WORKER_FILENAME_HASH
     _WORKER_SOURCES = ()
     _WORKER_CACHE = {}
     _WORKER_OPTIONS = None
+    _WORKER_FILENAME_HASH = True
 
 
 def _prepare_uvs_for_slice(font: TTFont, codepoints: list[int]) -> list[int]:
@@ -290,40 +297,51 @@ def _atomic_output_file(
 
 def _subset_single_slice_worker(
     task: tuple[int, list[int], str],
-) -> tuple[str, int, int]:
+) -> tuple[str, str, int, int]:
     """Worker function: subset cached font `font_idx` to `codepoints` and atomically write WOFF2."""
-    font_idx, codepoints, out_path_str = task
+    font_idx, codepoints, base_out_path_str = task
     assert _WORKER_OPTIONS is not None
     state = _load_cached_font_state(font_idx)
-    out_path = Path(out_path_str)
-    with _atomic_output_file(out_path, mode="wb") as tf:
-        with TTFont(
-            io.BytesIO(state.font_bytes), lazy=True, recalcTimestamp=False
-        ) as font:
-            font.setGlyphOrder(list(state.glyph_order))
-            font._reverseGlyphOrderDict = dict(state.rev_glyph_order)
-            if state.cmap_table is not None:
-                font.tables["cmap"] = _clone_cmap(state.cmap_table)
-            if state.hmtx_table is not None:
-                font.tables["hmtx"] = _clone_metrics(state.hmtx_table)
-            if state.vmtx_table is not None:
-                font.tables["vmtx"] = _clone_metrics(state.vmtx_table)
+    base_out_path = Path(base_out_path_str)
+    buf = io.BytesIO()
+    with TTFont(
+        io.BytesIO(state.font_bytes), lazy=True, recalcTimestamp=False
+    ) as font:
+        font.setGlyphOrder(list(state.glyph_order))
+        font._reverseGlyphOrderDict = dict(state.rev_glyph_order)
+        if state.cmap_table is not None:
+            font.tables["cmap"] = _clone_cmap(state.cmap_table)
+        if state.hmtx_table is not None:
+            font.tables["hmtx"] = _clone_metrics(state.hmtx_table)
+        if state.vmtx_table is not None:
+            font.tables["vmtx"] = _clone_metrics(state.vmtx_table)
 
-            if state.has_format14:
-                populate_unicodes = _prepare_uvs_for_slice(font, codepoints)
-            else:
-                populate_unicodes = codepoints
+        if state.has_format14:
+            populate_unicodes = _prepare_uvs_for_slice(font, codepoints)
+        else:
+            populate_unicodes = codepoints
 
-            subsetter = Subsetter(options=_clone_subset_options(_WORKER_OPTIONS))
-            subsetter.populate(unicodes=populate_unicodes)
-            subsetter.subset(font)
+        subsetter = Subsetter(options=_clone_subset_options(_WORKER_OPTIONS))
+        subsetter.populate(unicodes=populate_unicodes)
+        subsetter.subset(font)
 
-            font.flavor = "woff2"
-            font.save(tf)
-            num_glyphs = len(font.getGlyphOrder())
+        font.flavor = "woff2"
+        font.save(buf)
+        num_glyphs = len(font.getGlyphOrder())
 
-    size_bytes = out_path.stat().st_size
-    return out_path_str, size_bytes, num_glyphs
+    woff2_bytes = buf.getvalue()
+    if _WORKER_FILENAME_HASH:
+        digest8 = hashlib.sha256(woff2_bytes).hexdigest()[:8]
+        final_out_path = base_out_path.with_name(
+            f"{base_out_path.stem}-{digest8}{base_out_path.suffix}"
+        )
+    else:
+        final_out_path = base_out_path
+
+    with _atomic_output_file(final_out_path, mode="wb") as tf:
+        tf.write(woff2_bytes)
+
+    return base_out_path_str, final_out_path.name, len(woff2_bytes), num_glyphs
 
 
 def serialize_font_to_bytes(font: TTFont) -> bytes:
@@ -444,7 +462,7 @@ def _export_woff2_slices_batch(
         if workers is not None
         else min(len(scheduled_tasks), os.process_cpu_count() or 4)
     )
-    results_map: dict[str, tuple[int, int]] = {}
+    results_map: dict[str, tuple[str, int, int]] = {}
 
     if max_workers <= 1 or len(scheduled_tasks) <= 2:
         _init_subset_worker(
@@ -452,11 +470,12 @@ def _export_woff2_slices_batch(
             config.retain_layout_closure,
             config.layout_features,
             config.drop_tables,
+            config.filename_hash,
         )
         try:
             for t in scheduled_tasks:
-                out_str, sz, ng = _subset_single_slice_worker(t)
-                results_map[out_str] = (sz, ng)
+                base_out_str, final_fname, sz, ng = _subset_single_slice_worker(t)
+                results_map[base_out_str] = (final_fname, sz, ng)
         finally:
             _clear_subset_worker()
     else:
@@ -469,12 +488,13 @@ def _export_woff2_slices_batch(
                     config.retain_layout_closure,
                     config.layout_features,
                     config.drop_tables,
+                    config.filename_hash,
                 ),
             ) as pool:
-                for out_str, sz, ng in pool.map(
+                for base_out_str, final_fname, sz, ng in pool.map(
                     _subset_single_slice_worker, scheduled_tasks, chunksize=1
                 ):
-                    results_map[out_str] = (sz, ng)
+                    results_map[base_out_str] = (final_fname, sz, ng)
         except (BrokenProcessPool, BrokenPipeError) as exc:
             raise RuntimeError(
                 "Failed to run parallel WOFF2 worker processes. When calling `slice_font()` "
@@ -483,21 +503,43 @@ def _export_woff2_slices_batch(
             ) from exc
 
     all_variant_files: list[list[BuiltSliceFile]] = []
+    active_filenames: set[str] = set()
+    target_base_stems: set[str] = set()
     for (_, meta, _), font_items in zip(variants, per_font_items):
         built_files: list[BuiltSliceFile] = []
-        for spec, fname, out_str in font_items:
-            sz, ng = results_map[out_str]
+        for spec, base_fname, base_out_str in font_items:
+            final_fname, sz, ng = results_map[base_out_str]
+            final_path = slices_dir / final_fname
+            active_filenames.add(final_fname)
+            target_base_stems.add(Path(base_fname).stem)
             built_files.append(
                 BuiltSliceFile(
                     spec=spec,
-                    filename=fname,
-                    path=Path(out_str),
+                    filename=final_fname,
+                    path=final_path,
                     size_bytes=sz,
                     glyph_count=ng,
                     variant_suffix=meta.variant_suffix,
                 )
             )
         all_variant_files.append(built_files)
+
+    if config.filename_hash and target_base_stems:
+        for existing in slices_dir.iterdir():
+            if (
+                not existing.is_file()
+                or existing.suffix != ".woff2"
+                or existing.name in active_filenames
+            ):
+                continue
+            parts = existing.stem.rsplit("-", 1)
+            if (
+                len(parts) == 2
+                and parts[0] in target_base_stems
+                and _HASH_SUFFIX_RE.match(parts[1])
+            ):
+                existing.unlink(missing_ok=True)
+
     return all_variant_files
 
 

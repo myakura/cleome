@@ -38,10 +38,39 @@ class _SliceFileLike(Protocol):
     def glyph_count(self) -> int: ...
 
 
-def _resolve_url_prefix(config: SliceConfig) -> str:
+def _resolve_url_prefix(
+    config: SliceConfig,
+    *,
+    css_path: Path | None = None,
+    slices_dir: Path | None = None,
+) -> str:
     if config.url_prefix is not None:
         prefix = config.url_prefix.rstrip("/")
         return f"{prefix}/" if prefix else ""
+    if css_path is not None and slices_dir is not None:
+        import os
+        from urllib.parse import quote
+
+        css_dir_abs = os.path.abspath(css_path.parent)
+        slices_dir_abs = os.path.abspath(slices_dir)
+        try:
+            rel_posix = Path(os.path.relpath(slices_dir_abs, css_dir_abs)).as_posix()
+        except ValueError as exc:
+            raise ValueError(
+                "Cannot compute a relative URL from css_out to slices_dir across different drives; "
+                "pass an explicit --url-prefix."
+            ) from exc
+        if rel_posix == ".":
+            return "./"
+        encoded_parts = [
+            part if part in (".", "..") else quote(part, safe="-._~:@!$&()*+,;=")
+            for part in rel_posix.split("/")
+            if part
+        ]
+        encoded_rel = "/".join(encoded_parts)
+        if not encoded_rel.startswith("."):
+            return f"./{encoded_rel}/"
+        return f"{encoded_rel}/"
     subdir = config.slices_subdir.strip().strip("/")
     if not subdir or subdir == ".":
         return "./"
@@ -54,6 +83,8 @@ def generate_css(
     *,
     cache_key: str | None = None,
     out_digest: str | None = None,
+    css_path: Path | None = None,
+    slices_dir: Path | None = None,
 ) -> str:
     """
     Generate the complete `@font-face` CSS text for one or more font variants.
@@ -64,7 +95,7 @@ def generate_css(
     if not fonts_and_files:
         return "\n"
 
-    url_prefix = _resolve_url_prefix(config)
+    url_prefix = _resolve_url_prefix(config, css_path=css_path, slices_dir=slices_dir)
     first_meta = fonts_and_files[0][0]
     all_files = [f for _, files in fonts_and_files for f in files]
     total_slices = len(all_files)
