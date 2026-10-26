@@ -1,12 +1,3 @@
----
-type: Reference
-title: WOFF2 subsetting, OpenType shaping, and slicing tiers
-description: Domain rules for 4-tier CSS cascade shadowing, intra-slice OpenType shaping, and cmap Format 14 UVS/IVS subsetting.
-status: stable
-updated: 2026-10-26
-stale_after: 2027-10-26T00:00:00+09:00
----
-
 # WOFF2 subsetting, OpenType shaping, and slicing tiers
 
 Domain rules for `unicode-range` formatting and compaction ([`cleome/urange.py`](../../src/cleome/urange.py)), the 4-tier slicing planner ([`cleome/slicer.py`](../../src/cleome/slicer.py)), and the WOFF2 subsetting pipeline ([`cleome/subsetter.py`](../../src/cleome/subsetter.py)).

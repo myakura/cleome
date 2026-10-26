@@ -1,12 +1,3 @@
----
-type: Reference
-title: "@font-face CSS generation, variable axes, and variant bundling"
-description: Domain rules for extracting variable and static font descriptors and bundling multi-file @font-face stylesheets.
-status: stable
-updated: 2026-10-26
-stale_after: 2027-10-26T00:00:00+09:00
----
-
 # `@font-face` CSS generation, variable axes, and variant bundling
 
 Domain rules for extracting font metadata ([`cleome/metadata.py`](../../src/cleome/metadata.py)), generating `@font-face` stylesheets ([`cleome/css.py`](../../src/cleome/css.py)), and orchestrating cached multi-variant builds ([`cleome/pipeline.py`](../../src/cleome/pipeline.py)) across variable and static fonts.
