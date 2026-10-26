@@ -55,25 +55,25 @@ class SliceConfig:
     # Target CJK slicing profile: "auto" (detect from family name & cmap), "jp", "kr", "sc", "tc", or "hk".
     locale: str = "auto"
 
-    # Progressive (Inverted-Pyramid) tiers for Tier 3 (frequency-ranked Kanji/Hanzi/Hangul):
+    # Progressive (Inverted-Pyramid) chunk schedule for Tier 3 (frequency-ranked Kanji/Hanzi/Hangul):
     # List of (chunk_size, num_chunks) from highest frequency (rank 1) downward.
-    # Any remaining frequency-ranked characters in the font's cmap after these tiers
+    # Any remaining frequency-ranked characters in the font's cmap after these chunks
     # are sliced using `freq_tail_chunk_size`.
-    freq_tiers: tuple[tuple[int, int], ...] = (
+    freq_chunks: tuple[tuple[int, int], ...] = (
         (200, 2),  # Rank 1..400: 200 chars x 2 slices
         (80, 10),  # Rank 401..1200: 80 chars x 10 slices
     )
     freq_tail_chunk_size: int = 70  # Rank 1201..N: ~70 chars/slice
 
-    # Target character count per slice for Tier 4 (rare Kanji/Hanzi/Hangul) and Tier 2 (`symbols-ext`):
-    rare_kanji_chunk_size: int = 250
+    # Target character count per slice for Tier 4 (rare Kanji/Hanzi/Hanja/Hangul) and Tier 2 (`symbols-ext`):
+    rare_chunk_size: int = 250
     symbols_ext_chunk_size: int = 350
 
     # Subsetting & WOFF2 options:
-    retain_layout_closure: bool = True
+    layout_closure: bool = True
     layout_features: tuple[str, ...] = ("*",)
     drop_tables: tuple[str, ...] = ()
-    patch_uvs_only_cmap: bool = True
+    uvs_base_repair: bool = True
 
     # CSS generation options:
     slices_subdir: str = "slices"
@@ -88,15 +88,15 @@ class SliceConfig:
                 f"Unsupported locale {self.locale!r}; expected one of {SUPPORTED_LOCALES}"
             )
         object.__setattr__(self, "locale", norm_locale)
-        for chunk_size, num_chunks in self.freq_tiers:
+        for chunk_size, num_chunks in self.freq_chunks:
             if chunk_size <= 0 or num_chunks <= 0:
                 raise ValueError(
-                    f"freq_tiers entries must have positive (chunk_size, num_chunks), got {(chunk_size, num_chunks)}"
+                    f"freq_chunks entries must have positive (chunk_size, num_chunks), got {(chunk_size, num_chunks)}"
                 )
         if self.freq_tail_chunk_size <= 0:
             raise ValueError(f"freq_tail_chunk_size must be > 0, got {self.freq_tail_chunk_size}")
-        if self.rare_kanji_chunk_size <= 0:
-            raise ValueError(f"rare_kanji_chunk_size must be > 0, got {self.rare_kanji_chunk_size}")
+        if self.rare_chunk_size <= 0:
+            raise ValueError(f"rare_chunk_size must be > 0, got {self.rare_chunk_size}")
         if self.symbols_ext_chunk_size <= 0:
             raise ValueError(f"symbols_ext_chunk_size must be > 0, got {self.symbols_ext_chunk_size}")
         subdir_str = self.slices_subdir.strip()
@@ -173,10 +173,10 @@ def _build_progressive_freq_chunks(
     available_freq_cps: list[int],
     config: SliceConfig,
 ) -> list[tuple[int, int, frozenset[int]]]:
-    """Slice frequency-ranked codepoints using `config.freq_tiers` and `config.freq_tail_chunk_size`."""
+    """Slice frequency-ranked codepoints using `config.freq_chunks` and `config.freq_tail_chunk_size`."""
     freq_chunks: list[tuple[int, int, frozenset[int]]] = []
     cursor = 0
-    for chunk_size, num_chunks in config.freq_tiers:
+    for chunk_size, num_chunks in config.freq_chunks:
         for _ in range(num_chunks):
             if cursor >= len(available_freq_cps):
                 break
@@ -209,7 +209,7 @@ def _build_rare_ideograph_slices(
         reg_cps = rare_ideographs_sorted[lo_idx:hi_idx]
         if not reg_cps:
             continue
-        reg_chunks = _chunk_sorted_codepoints(reg_cps, config.rare_kanji_chunk_size)
+        reg_chunks = _chunk_sorted_codepoints(reg_cps, config.rare_chunk_size)
         for ch_cps in reg_chunks:
             rare_chunk_tuples.append((reg_name, ch_cps, ch_cps[0], ch_cps[-1]))
 
@@ -432,7 +432,7 @@ def _build_kr_slice_plan(all_cps: set[int], config: SliceConfig) -> list[SliceSp
 
     # Tier 4b: Rare Hangul Syllables (U+AC00..D7A3, 1-token hex range, shadowed by Tier 3 hangul-freq)
     rare_hangul_chunks = _chunk_sorted_codepoints(
-        rare_hangul_sorted, config.rare_kanji_chunk_size
+        rare_hangul_sorted, config.rare_chunk_size
     )
     total_rare_hangul = len(rare_hangul_chunks)
     for i, ch_cps in enumerate(rare_hangul_chunks, start=1):

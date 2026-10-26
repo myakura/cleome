@@ -89,7 +89,7 @@ class BuiltSliceFile:
 
 
 def _create_subset_options(
-    retain_layout_closure: bool = True,
+    layout_closure: bool = True,
     layout_features: tuple[str, ...] = ("*",),
     drop_tables: tuple[str, ...] = (),
 ) -> Options:
@@ -102,7 +102,7 @@ def _create_subset_options(
     # when both base and mark reside in the same slice).
     options.layout_features = list(layout_features)
     options.layout_scripts = ["*"]
-    options.layout_closure = retain_layout_closure
+    options.layout_closure = layout_closure
     # Preserve Copyright (0), Family/Subfamily/Version/PS (1..6), License Description (13),
     # License Info URL (14), and Typographic Family/Subfamily (16, 17).
     options.name_IDs = [0, 1, 2, 3, 4, 5, 6, 13, 14, 16, 17]
@@ -213,7 +213,7 @@ def _load_cached_font_state(font_idx: int) -> _CachedFontState:
 
 def _init_subset_worker(
     sources: tuple[tuple[bytes | Path, bool], ...],
-    retain_closure: bool,
+    layout_closure: bool,
     layout_features: tuple[str, ...],
     drop_tables: tuple[str, ...],
     filename_hash: bool = True,
@@ -222,7 +222,7 @@ def _init_subset_worker(
     _WORKER_SOURCES = sources
     _WORKER_CACHE = {}
     _WORKER_OPTIONS = _create_subset_options(
-        retain_layout_closure=retain_closure,
+        layout_closure=layout_closure,
         layout_features=layout_features,
         drop_tables=drop_tables,
     )
@@ -378,18 +378,18 @@ def _prepare_worker_source(
             is_woff = is_woff_hint
 
         if not is_woff:
-            needs_patch = bool(config.patch_uvs_only_cmap and meta.patched_uvs_codepoints)
+            needs_patch = bool(config.uvs_base_repair and meta.patched_uvs_codepoints)
             return p, needs_patch
 
         with TTFont(p, recalcTimestamp=False) as tmp_font:
-            if config.patch_uvs_only_cmap:
+            if config.uvs_base_repair:
                 patch_uvs_missing_base_cmap(tmp_font)
             return serialize_font_to_bytes(tmp_font), False
 
     if isinstance(font_or_bytes, TTFont):
-        return serialize_font_to_bytes(font_or_bytes), bool(config.patch_uvs_only_cmap)
+        return serialize_font_to_bytes(font_or_bytes), bool(config.uvs_base_repair)
 
-    return font_or_bytes, bool(config.patch_uvs_only_cmap and meta.patched_uvs_codepoints)
+    return font_or_bytes, bool(config.uvs_base_repair and meta.patched_uvs_codepoints)
 
 
 def _export_woff2_slices_batch(
@@ -404,6 +404,8 @@ def _export_woff2_slices_batch(
     Generate `.woff2` slice files in `slices_dir` for one or more font variants using a single
     shared worker pool and heavy-first task scheduling.
     """
+    if workers is not None and workers <= 0:
+        raise ValueError(f"workers must be >= 1, got {workers}")
     if not variants:
         return []
     if config is None:
@@ -467,7 +469,7 @@ def _export_woff2_slices_batch(
     if max_workers <= 1 or len(scheduled_tasks) <= 2:
         _init_subset_worker(
             tuple(sources),
-            config.retain_layout_closure,
+            config.layout_closure,
             config.layout_features,
             config.drop_tables,
             config.filename_hash,
@@ -485,7 +487,7 @@ def _export_woff2_slices_batch(
                 initializer=_init_subset_worker,
                 initargs=(
                     tuple(sources),
-                    config.retain_layout_closure,
+                    config.layout_closure,
                     config.layout_features,
                     config.drop_tables,
                     config.filename_hash,

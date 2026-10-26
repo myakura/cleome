@@ -285,10 +285,10 @@ def extract_font_metadata(
     stretch_override: str | None = None,
     style_override: str | None = None,
     variant_suffix: str = "",
-    patch_uvs: bool = True,
+    uvs_base_repair: bool = True,
 ) -> FontMetadata:
     """Inspect TTFont tables (`name`, `fvar`, `OS/2`, `post`, `cmap`) to build FontMetadata."""
-    if patch_uvs and _has_missing_uvs_base_cmap(font):
+    if uvs_base_repair and _has_missing_uvs_base_cmap(font):
         from cleome.subsetter import patch_uvs_missing_base_cmap
 
         patched_uvs = tuple(patch_uvs_missing_base_cmap(font))

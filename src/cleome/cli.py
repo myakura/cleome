@@ -30,32 +30,35 @@ def _positive_int(val_str: str) -> int:
     return val
 
 
-def _parse_freq_tiers(spec_str: str) -> tuple[tuple[int, int], ...]:
-    """Parse a progressive tier spec string like `"200x2,80x10"` into `((200, 2), (80, 10))`."""
-    tiers: list[tuple[int, int]] = []
-    for item in spec_str.split(","):
+def _parse_freq_chunks(spec_str: str) -> tuple[tuple[int, int], ...]:
+    """Parse a progressive Tier 3 chunk spec like `"200x2,80x10"` or `"none"` into a tuple of `(size, count)` pairs."""
+    cleaned = spec_str.strip()
+    if cleaned.lower() == "none":
+        return ()
+    chunks: list[tuple[int, int]] = []
+    for item in cleaned.split(","):
         item = item.strip()
         if not item:
             continue
         if "x" not in item.lower():
             raise argparse.ArgumentTypeError(
-                f"Invalid --freq-tiers item '{item}'. Expected format 'SIZE'x'COUNT' (e.g. '200x2,80x10')."
+                f"Invalid --freq-chunks item '{item}'. Expected format 'SIZE'x'COUNT' (e.g. '200x2,80x10') or 'none'."
             )
         sz_s, cnt_s = item.lower().split("x", 1)
         try:
             sz, cnt = int(sz_s), int(cnt_s)
         except ValueError as exc:
             raise argparse.ArgumentTypeError(
-                f"Invalid --freq-tiers item '{item}'. Both SIZE and COUNT must be integers."
+                f"Invalid --freq-chunks item '{item}'. Both SIZE and COUNT must be integers."
             ) from exc
         if sz <= 0 or cnt <= 0:
             raise argparse.ArgumentTypeError(
-                f"Invalid --freq-tiers item '{item}'. Both SIZE and COUNT must be > 0."
+                f"Invalid --freq-chunks item '{item}'. Both SIZE and COUNT must be > 0."
             )
-        tiers.append((sz, cnt))
-    if not tiers:
-        raise argparse.ArgumentTypeError("--freq-tiers cannot be empty.")
-    return tuple(tiers)
+        chunks.append((sz, cnt))
+    if not chunks:
+        raise argparse.ArgumentTypeError("--freq-chunks cannot be empty (use 'none' for flat Tier 3 slicing).")
+    return tuple(chunks)
 
 
 def _parse_tag_list(spec_str: str) -> tuple[str, ...]:
@@ -70,135 +73,151 @@ def _add_shared_arguments(parser: argparse.ArgumentParser, *, is_build: bool) ->
         type=Path,
         help="Input font file(s) (.ttf / .otf). Pass multiple files to bundle static weight/style variants together.",
     )
+
+    slicing_group = parser.add_argument_group("Slicing options")
+    slicing_group.add_argument(
+        "--locale",
+        dest="locale",
+        choices=SUPPORTED_LOCALES,
+        default="auto",
+        help="Target CJK slicing profile: 'auto' (detect from family & cmap), 'jp', 'kr', 'sc', 'tc', or 'hk' (default: 'auto')",
+    )
+    slicing_group.add_argument(
+        "--freq-chunks",
+        type=_parse_freq_chunks,
+        default=((200, 2), (80, 10)),
+        help="Progressive Tier 3 chunk schedule from highest frequency downward, or 'none' (default: '200x2,80x10')",
+    )
+    slicing_group.add_argument(
+        "--freq-tail-chunk-size",
+        type=_positive_int,
+        default=70,
+        help="Target characters per slice for remaining Tier 3 characters (default: 70)",
+    )
+    slicing_group.add_argument(
+        "--rare-chunk-size",
+        type=_positive_int,
+        default=250,
+        help="Target characters per slice for Tier 4 rare/extended characters (default: 250)",
+    )
+    slicing_group.add_argument(
+        "--symbols-chunk-size",
+        type=_positive_int,
+        default=350,
+        help="Target characters per slice for Tier 2 extended symbols (default: 350)",
+    )
+    slicing_group.add_argument(
+        "--uvs-base-repair",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Repair characters mapped in cmap Format 14 (UVS/IVS) but omitted from Format 4/12 (default: enabled)",
+    )
+
+    descriptor_group = parser.add_argument_group("CSS descriptor overrides")
+    descriptor_group.add_argument(
+        "--family",
+        default=None,
+        help="Override CSS `font-family` name (auto-detected from font `name` table by default)",
+    )
+    descriptor_group.add_argument(
+        "--slug",
+        default=None,
+        help="Override filename slug prefix (default: kebab-case of font-family)",
+    )
+    descriptor_group.add_argument(
+        "--weight",
+        default=None,
+        help="Override CSS `font-weight` descriptor (e.g. '250 900' or '400')",
+    )
+    descriptor_group.add_argument(
+        "--stretch",
+        default=None,
+        help="Override CSS `font-stretch` descriptor (e.g. '70%% 100%%')",
+    )
+    descriptor_group.add_argument(
+        "--style",
+        default=None,
+        help="Override CSS `font-style` descriptor (e.g. 'normal' or 'italic')",
+    )
     if is_build:
-        parser.add_argument(
+        descriptor_group.add_argument(
+            "--display",
+            default="swap",
+            help="CSS `font-display` descriptor value (default: 'swap')",
+        )
+
+        output_group = parser.add_argument_group("Output options")
+        output_group.add_argument(
             "-o",
             "--out-dir",
             type=Path,
             default=Path("dist"),
             help="Output directory for generated CSS and slices (default: ./dist)",
         )
-    parser.add_argument(
-        "--locale",
-        "--preset",
-        dest="locale",
-        choices=SUPPORTED_LOCALES,
-        default="auto",
-        help="Target CJK slicing profile: 'auto' (detect from family & cmap), 'jp', 'kr', 'sc', 'tc', or 'hk' (default: 'auto')",
-    )
-    parser.add_argument(
-        "--slices-dir",
-        default="slices",
-        help="Subdirectory name under --out-dir for .woff2 files (default: 'slices'; use '.' for flat output)",
-    )
-    parser.add_argument(
-        "--url-prefix",
-        default=None,
-        help="Custom URL prefix in CSS `src: url('<prefix>/<file>.woff2')` (default: './<slices-dir>')",
-    )
-    parser.add_argument(
-        "--css-name",
-        default=None,
-        help="Custom filename for the output CSS file inside --out-dir (default: '<slug>.css')",
-    )
-    if is_build:
-        parser.add_argument(
+        output_group.add_argument(
+            "--slices-dir",
+            default="slices",
+            help="Subdirectory name under --out-dir for .woff2 files (default: 'slices'; use '.' for flat output)",
+        )
+        output_group.add_argument(
+            "--url-prefix",
+            default=None,
+            help="Custom URL prefix in CSS `src: url('<prefix>/<file>.woff2')` (default: relative path from CSS to <slices-dir>)",
+        )
+        css_dest_group = output_group.add_mutually_exclusive_group()
+        css_dest_group.add_argument(
+            "--css-name",
+            default=None,
+            help="Custom filename for the output CSS file inside --out-dir (default: '<slug>.css')",
+        )
+        css_dest_group.add_argument(
             "--css-out",
             type=Path,
             default=None,
             help="Write the output CSS file to an explicit path (e.g. 'src/styles/fonts.css' while -o is 'public/fonts')",
         )
-    parser.add_argument(
-        "--family",
-        default=None,
-        help="Override CSS `font-family` name (auto-detected from font `name` table by default)",
-    )
-    parser.add_argument(
-        "--slug",
-        default=None,
-        help="Override filename slug prefix (default: kebab-case of font-family)",
-    )
-    parser.add_argument(
-        "--weight",
-        default=None,
-        help="Override CSS `font-weight` descriptor (e.g. '250 900' or '400')",
-    )
-    parser.add_argument(
-        "--stretch",
-        default=None,
-        help="Override CSS `font-stretch` descriptor (e.g. '70%% 100%%')",
-    )
-    parser.add_argument(
-        "--style",
-        default=None,
-        help="Override CSS `font-style` descriptor (e.g. 'normal' or 'italic')",
-    )
-    parser.add_argument(
-        "--display",
-        default="swap",
-        help="CSS `font-display` descriptor value (default: 'swap')",
-    )
-    parser.add_argument(
-        "--freq-tiers",
-        type=_parse_freq_tiers,
-        default=((200, 2), (80, 10)),
-        help="Progressive Tier 3 chunk spec from highest frequency downward (default: '200x2,80x10')",
-    )
-    parser.add_argument(
-        "--freq-tail-chunk-size",
-        type=_positive_int,
-        default=70,
-        help="Target characters per slice for remaining Tier 3 characters (default: 70)",
-    )
-    parser.add_argument(
-        "--rare-chunk-size",
-        type=_positive_int,
-        default=250,
-        help="Target characters per slice for Tier 4 rare/extended characters (default: 250)",
-    )
-    parser.add_argument(
-        "--symbols-chunk-size",
-        type=_positive_int,
-        default=350,
-        help="Target characters per slice for Tier 2 extended symbols (default: 350)",
-    )
-    parser.add_argument(
-        "--layout-features",
-        type=_parse_tag_list,
-        default=("*",),
-        help="Comma-separated OpenType layout feature tags to retain (default: '*' keeps all features)",
-    )
-    parser.add_argument(
-        "--no-layout-closure",
-        action="store_true",
-        help="Do not expand glyph closure over GSUB substitution tables",
-    )
-    parser.add_argument(
-        "--drop-tables",
-        type=_parse_tag_list,
-        default=(),
-        help="Comma-separated OpenType table tags to drop during subsetting (e.g. 'GPOS,GSUB,vhea,vmtx')",
-    )
-    if is_build:
-        parser.add_argument(
+        output_group.add_argument(
             "--filename-hash",
             action=argparse.BooleanOptionalAction,
             default=True,
             help="Append an 8-character SHA-256 content hash to each .woff2 slice filename (default: enabled)",
         )
-        parser.add_argument(
+
+        subset_group = parser.add_argument_group("Subsetting options")
+        subset_group.add_argument(
+            "--layout-features",
+            type=_parse_tag_list,
+            default=("*",),
+            help="Comma-separated OpenType layout feature tags to retain (default: '*' keeps all features)",
+        )
+        subset_group.add_argument(
+            "--layout-closure",
+            action=argparse.BooleanOptionalAction,
+            default=True,
+            help="Expand glyph closure over GSUB substitution tables (default: enabled)",
+        )
+        subset_group.add_argument(
+            "--drop-tables",
+            type=_parse_tag_list,
+            default=(),
+            help="Comma-separated OpenType table tags to drop during subsetting (e.g. 'GPOS,GSUB,vhea,vmtx')",
+        )
+
+    exec_group = parser.add_argument_group("Execution & output format")
+    if is_build:
+        exec_group.add_argument(
             "-j",
             "--workers",
             type=_positive_int,
             default=None,
             help="Number of parallel worker processes for WOFF2 compression (default: CPU count)",
         )
-        parser.add_argument(
+        exec_group.add_argument(
             "--force",
             action="store_true",
             help="Rebuild all WOFF2 slices and CSS even if cached outputs are up to date",
         )
-    parser.add_argument(
+    exec_group.add_argument(
         "--json",
         dest="json_output",
         action="store_true",
@@ -209,6 +228,7 @@ def _add_shared_arguments(parser: argparse.ArgumentParser, *, is_build: bool) ->
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="cleome",
+        allow_abbrev=False,
         description=(
             "Slice Japanese, Korean, or Chinese Variable and Static fonts (.ttf / .otf) into "
             "Web-optimized unicode-range WOFF2 chunks and @font-face CSS."
@@ -218,12 +238,14 @@ def build_parser() -> argparse.ArgumentParser:
 
     plan_parser = subparsers.add_parser(
         "plan",
+        allow_abbrev=False,
         help="Read-only inspection: compute and output the 4-tier unicode-range slice plan without writing files",
     )
     _add_shared_arguments(plan_parser, is_build=False)
 
     build_subparser = subparsers.add_parser(
         "build",
+        allow_abbrev=False,
         help="Write mode: slice input fonts into WOFF2 chunks and generate @font-face CSS",
     )
     _add_shared_arguments(build_subparser, is_build=True)
@@ -259,7 +281,7 @@ def _run_plan(args: argparse.Namespace, config: SliceConfig) -> int:
                         weight_override=args.weight,
                         stretch_override=args.stretch,
                         style_override=args.style,
-                        patch_uvs=config.patch_uvs_only_cmap,
+                        uvs_base_repair=config.uvs_base_repair,
                     )
                 )
         suffixes = validate_and_compute_variant_suffixes(metas, family_override=args.family)
@@ -333,7 +355,7 @@ def _run_build(args: argparse.Namespace, config: SliceConfig) -> int:
             family_name=args.family,
             slug=args.slug,
             css_filename=args.css_name,
-            css_out=args.css_out,
+            css_path=args.css_out,
             weight=args.weight,
             stretch=args.stretch,
             style=args.style,
@@ -415,16 +437,17 @@ def main(argv: list[str] | None = None) -> int:
     try:
         config = SliceConfig(
             locale=args.locale,
-            freq_tiers=args.freq_tiers,
+            freq_chunks=args.freq_chunks,
             freq_tail_chunk_size=args.freq_tail_chunk_size,
-            rare_kanji_chunk_size=args.rare_chunk_size,
+            rare_chunk_size=args.rare_chunk_size,
             symbols_ext_chunk_size=args.symbols_chunk_size,
-            retain_layout_closure=not args.no_layout_closure,
-            layout_features=tuple(args.layout_features),
-            drop_tables=tuple(args.drop_tables),
-            slices_subdir=args.slices_dir,
-            url_prefix=args.url_prefix,
-            font_display=args.display,
+            layout_closure=getattr(args, "layout_closure", True),
+            layout_features=tuple(getattr(args, "layout_features", ("*",))),
+            drop_tables=tuple(getattr(args, "drop_tables", ())),
+            uvs_base_repair=args.uvs_base_repair,
+            slices_subdir=getattr(args, "slices_dir", "slices"),
+            url_prefix=getattr(args, "url_prefix", None),
+            font_display=getattr(args, "display", "swap"),
             filename_hash=getattr(args, "filename_hash", True),
         )
     except ValueError as exc:

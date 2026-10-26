@@ -2,6 +2,7 @@
 High-level font slicing pipeline (`slice_font` / `slice_fonts`) and bundle cache verification for Cleome.
 """
 
+from collections.abc import Sequence
 from dataclasses import asdict, dataclass, field
 import hashlib
 import io
@@ -323,13 +324,13 @@ def _try_load_cached_bundle(
 
 
 def slice_fonts(
-    fonts: list[Path | str | TTFont],
+    fonts: Sequence[Path | str | TTFont],
     out_dir: Path | str,
     *,
     family_name: str | None = None,
     slug: str | None = None,
     css_filename: str | None = None,
-    css_out: Path | str | None = None,
+    css_path: Path | str | None = None,
     weight: str | None = None,
     stretch: str | None = None,
     style: str | None = None,
@@ -349,30 +350,38 @@ def slice_fonts(
     When calling this function from a script on macOS/Windows/Linux (`spawn`/`forkserver`), guard
     the script's entry point with `if __name__ == "__main__":` (or pass `workers=1`).
     """
-    if not fonts:
-        raise ValueError("At least one input font must be provided.")
+    if isinstance(fonts, (str, bytes, Path, TTFont)) or not fonts:
+        raise ValueError("At least one input font must be provided in a sequence.")
+    if workers is not None and workers <= 0:
+        raise ValueError(f"workers must be >= 1, got {workers}")
     if config is None:
         config = SliceConfig()
-    if css_filename is not None and css_out is not None:
-        raise ValueError("Cannot specify both css_filename and css_out.")
+    if css_filename is not None and css_path is not None:
+        raise ValueError("Cannot specify both css_filename and css_path.")
     if css_filename is not None:
         css_filename = _validate_filename_token(css_filename, "css_filename")
-    if css_out is not None:
-        css_out_str = str(css_out).strip()
-        if not css_out_str or "\x00" in css_out_str:
-            raise ValueError(f"Invalid css_out path: {css_out!r}")
-        css_out_path = Path(css_out_str)
-        if not css_out_path.name or css_out_path.name in (".", ".."):
-            raise ValueError(f"css_out must point to a file path, got {css_out!r}")
+    if css_path is not None:
+        css_path_str = str(css_path).strip()
+        if not css_path_str or "\x00" in css_path_str:
+            raise ValueError(f"Invalid css_path: {css_path!r}")
+        explicit_css_path = Path(css_path_str)
+        if not explicit_css_path.name or explicit_css_path.name in (".", ".."):
+            raise ValueError(f"css_path must point to a file path, got {css_path!r}")
+        if explicit_css_path.exists() and explicit_css_path.is_dir():
+            raise ValueError(
+                f"css_path must be a file path, not an existing directory: {css_path!r}"
+            )
+    else:
+        explicit_css_path = None
 
     out_path = Path(out_dir)
+    if out_path.exists() and not out_path.is_dir():
+        raise ValueError(f"out_dir must be a directory path, not an existing file: {out_dir!r}")
     out_resolved = out_path.resolve()
     subdir = config.slices_subdir.strip().rstrip("/")
     slices_dir = out_path if (not subdir or subdir == ".") else (out_path / subdir)
     if not slices_dir.resolve().is_relative_to(out_resolved):
         raise ValueError(f"slices_dir {slices_dir!r} resolves outside out_dir {out_path!r}")
-
-    out_path.mkdir(parents=True, exist_ok=True)
 
     # Tuple of (probe_tt, source_for_export, is_woff_hint, should_close, sha256_hex)
     loaded_fonts: list[tuple[TTFont, Path | bytes, bool | None, bool, str]] = []
@@ -401,7 +410,7 @@ def slice_fonts(
                 weight_override=weight,
                 stretch_override=stretch,
                 style_override=style,
-                patch_uvs=config.patch_uvs_only_cmap,
+                uvs_base_repair=config.uvs_base_repair,
             )
             raw_metas.append(m)
 
@@ -444,23 +453,22 @@ def slice_fonts(
             union_codepoints, config=config, family_name=unified_family
         )
 
-        if css_out is not None:
-            css_path = Path(str(css_out).strip())
-            if css_path.exists() and css_path.is_dir():
-                raise ValueError(f"css_out must be a file path, not an existing directory: {css_out!r}")
-            css_path.parent.mkdir(parents=True, exist_ok=True)
-            resolved_css_name = css_path.name
+        if explicit_css_path is not None:
+            resolved_css_path = explicit_css_path
+            resolved_css_name = resolved_css_path.name
         else:
             resolved_css_name = _validate_filename_token(
                 css_filename or f"{unified_slug}.css", "css_filename"
             )
-            css_path = out_path / resolved_css_name
-            if not css_path.resolve().is_relative_to(out_resolved):
-                raise ValueError(f"css_path {css_path!r} resolves outside out_dir {out_path!r}")
+            resolved_css_path = out_path / resolved_css_name
+            if not resolved_css_path.resolve().is_relative_to(out_resolved):
+                raise ValueError(
+                    f"css_path {resolved_css_path!r} resolves outside out_dir {out_path!r}"
+                )
 
         font_digests = [d for _, _, _, _, d in loaded_fonts]
         effective_prefix = _resolve_url_prefix(
-            config, css_path=css_path, slices_dir=slices_dir
+            config, css_path=resolved_css_path, slices_dir=slices_dir
         )
         cache_key = _compute_cache_key(
             font_digests,
@@ -478,7 +486,7 @@ def slice_fonts(
 
         if not force:
             cached_res = _try_load_cached_bundle(
-                css_path,
+                resolved_css_path,
                 slices_dir,
                 cache_key,
                 metas,
@@ -488,6 +496,10 @@ def slice_fonts(
             )
             if cached_res is not None:
                 return cached_res
+
+        out_path.mkdir(parents=True, exist_ok=True)
+        if explicit_css_path is not None:
+            resolved_css_path.parent.mkdir(parents=True, exist_ok=True)
 
         # 3. Export WOFF2 slices across all input fonts in a single batch
         batch_variants: list[tuple[TTFont | bytes | Path | str, FontMetadata, list[SliceSpec]]] = [
@@ -516,16 +528,16 @@ def slice_fonts(
             config=config,
             cache_key=cache_key,
             out_digest=out_digest,
-            css_path=css_path,
+            css_path=resolved_css_path,
             slices_dir=slices_dir,
         )
-        with _atomic_output_file(css_path, mode="w", encoding="utf-8") as tf:
+        with _atomic_output_file(resolved_css_path, mode="w", encoding="utf-8") as tf:
             tf.write(css_text)
 
         return SliceBundleResult(
             family_name=unified_family,
             slug=unified_slug,
-            css_path=css_path,
+            css_path=resolved_css_path,
             css_text=css_text,
             slices_dir=slices_dir,
             slice_specs=slice_specs,
@@ -547,7 +559,7 @@ def slice_font(
     family_name: str | None = None,
     slug: str | None = None,
     css_filename: str | None = None,
-    css_out: Path | str | None = None,
+    css_path: Path | str | None = None,
     weight: str | None = None,
     stretch: str | None = None,
     style: str | None = None,
@@ -569,7 +581,7 @@ def slice_font(
         family_name=family_name,
         slug=slug,
         css_filename=css_filename,
-        css_out=css_out,
+        css_path=css_path,
         weight=weight,
         stretch=stretch,
         style=style,

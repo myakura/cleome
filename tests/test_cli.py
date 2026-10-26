@@ -22,24 +22,35 @@ from helpers import create_synthetic_ttfont
 class TestCleomeCLI(unittest.TestCase):
     def test_cli_validation_and_plan(self) -> None:
         """
-        Verify CLI argument parsing for `cleome plan`, --drop-tables, --layout-features,
-        and validation errors for non-positive --freq-tiers / --rare-chunk-size or missing subcommand.
+        Verify CLI argument parsing for `cleome plan` and `cleome build`, `--freq-chunks none`,
+        `allow_abbrev=False`, mutually exclusive `--css-name`/`--css-out`, and validation errors.
         """
         sample_cps = [ord("A"), ord("あ"), ord("日")]
         with tempfile.TemporaryDirectory() as tmp:
             font_path = Path(tmp) / "CliTest.ttf"
             create_synthetic_ttfont(sample_cps, family_name="CLI Test").save(font_path, reorderTables=False)
 
-            # 1. --drop-tables before positional input must not swallow positional input
+            # 1. --freq-chunks none and --no-uvs-base-repair on `plan`
             buf = StringIO()
             with redirect_stdout(buf):
-                rc = cli_main(["plan", "--drop-tables", "DSIG,GPOS", "--layout-features", "kern,palt", str(font_path)])
+                rc = cli_main(["plan", "--freq-chunks", "none", "--no-uvs-base-repair", str(font_path)])
             self.assertEqual(rc, 0)
             self.assertIn("3 chars -> 3 slices", buf.getvalue())
 
-            # 2. Invalid --freq-tiers (0 or negative) must fail with SystemExit(2)
+            # 1b. Build-only flags (--drop-tables, --display, --slices-dir) are rejected on `plan` with SystemExit(2)
+            for build_only_flag in (["--drop-tables", "DSIG"], ["--display", "optional"], ["--slices-dir", "sub"]):
+                with redirect_stderr(StringIO()), self.assertRaises(SystemExit) as cm_bo:
+                    cli_main(["plan", *build_only_flag, str(font_path)])
+                self.assertEqual(cm_bo.exception.code, 2)
+
+            # 1c. Abbreviated flags (--freq-chunk) are rejected when allow_abbrev=False
+            with redirect_stderr(StringIO()), self.assertRaises(SystemExit) as cm_abbr:
+                cli_main(["plan", "--freq-chunk", "200x2", str(font_path)])
+            self.assertEqual(cm_abbr.exception.code, 2)
+
+            # 2. Invalid --freq-chunks (0 or negative) must fail with SystemExit(2)
             with redirect_stderr(StringIO()), self.assertRaises(SystemExit) as cm:
-                cli_main(["plan", "--freq-tiers", "200x0", str(font_path)])
+                cli_main(["plan", "--freq-chunks", "200x0", str(font_path)])
             self.assertEqual(cm.exception.code, 2)
 
             with redirect_stderr(StringIO()), self.assertRaises(SystemExit) as cm2:
@@ -54,11 +65,11 @@ class TestCleomeCLI(unittest.TestCase):
     def test_cli_plan_and_build_subcommands(self) -> None:
         """
         Verify agent-first CLI subcommands:
-        1. `cleome plan <inputs...> [--locale/--preset PRESET] [--json]` is strictly read-only
+        1. `cleome plan <inputs...> [--locale LOCALE] [--json]` is strictly read-only
            and never creates `./dist`.
         2. `cleome plan --json` returns a structured JSON envelope with Tier 1-4 slice counts,
            codepoint counts, `unicode-range` character lengths, and detected locale.
-        3. `cleome build <inputs...> -o <dir> [--locale/--preset PRESET] [--json]` writes
+        3. `cleome build <inputs...> -o <dir> [--locale LOCALE] [--json]` writes
            the CSS and `.woff2` slices and supports `--json`.
         """
         sample_cps = [ord("A"), ord("あ"), ord("日"), 0x4E02]
@@ -109,11 +120,11 @@ class TestCleomeCLI(unittest.TestCase):
                 )
                 self.assertEqual(plan_iso.returncode, 0, f"Plan import isolation failed: {plan_iso.stderr}")
 
-                # 2. `cleome plan --json --preset kr`
+                # 2. `cleome plan --json --locale kr`
                 buf_plan_json = StringIO()
                 with redirect_stdout(buf_plan_json):
                     rc_plan_json = cli_main(
-                        ["plan", str(font_path), "--preset", "kr", "--rare-chunk-size", "120", "--json"]
+                        ["plan", str(font_path), "--locale", "kr", "--rare-chunk-size", "120", "--json"]
                     )
                 self.assertEqual(rc_plan_json, 0)
                 plan_data = json.loads(buf_plan_json.getvalue())
@@ -392,19 +403,9 @@ class TestCleomeCLI(unittest.TestCase):
                 force_data = json.loads(buf_force_json.getvalue())
                 self.assertFalse(force_data["cached"])
 
-                # 4. Empty string or invalid CSS/path tokens return exit code 1 with error on stderr
-                empty_display_buf = StringIO()
-                with redirect_stderr(empty_display_buf):
-                    rc_empty_disp = cli_main(["plan", str(font_path), "--display", "   "])
-                self.assertEqual(rc_empty_disp, 1)
-                self.assertIn("font_display cannot be empty", empty_display_buf.getvalue())
-
-                for bad_args, expected_err in (
-                    (["plan", str(font_path), "--slices-dir", "../outside"], "slices_subdir"),
-                    (["plan", str(font_path), "--slug", "../outside"], "slug"),
-                    (["plan", str(font_path), "--weight", "400; } @import url(x)"], "font-weight"),
-                    (["build", str(font_path), "-o", str(build_out), "--css-name", "../outside.css"], "css_filename"),
-                    (
+                # 4. Empty string or invalid CSS/path tokens return error on stderr, and mutually exclusive --css-name / --css-out raises SystemExit(2)
+                with redirect_stderr(StringIO()), self.assertRaises(SystemExit) as cm_mutex:
+                    cli_main(
                         [
                             "build",
                             str(font_path),
@@ -414,12 +415,19 @@ class TestCleomeCLI(unittest.TestCase):
                             "a.css",
                             "--css-out",
                             str(tmp_path / "b.css"),
-                        ],
-                        "Cannot specify both css_filename and css_out",
-                    ),
+                        ]
+                    )
+                self.assertEqual(cm_mutex.exception.code, 2)
+
+                for bad_args, expected_err in (
+                    (["build", str(font_path), "-o", str(build_out), "--display", "   "], "font_display cannot be empty"),
+                    (["build", str(font_path), "-o", str(build_out), "--slices-dir", "../outside"], "slices_subdir"),
+                    (["plan", str(font_path), "--slug", "../outside"], "slug"),
+                    (["plan", str(font_path), "--weight", "400; } @import url(x)"], "font-weight"),
+                    (["build", str(font_path), "-o", str(build_out), "--css-name", "../outside.css"], "css_filename"),
                     (
                         ["build", str(font_path), "-o", str(build_out), "--css-out", str(build_out)],
-                        "css_out must be a file path, not an existing directory",
+                        "css_path must be a file path, not an existing directory",
                     ),
                 ):
                     err_buf = StringIO()

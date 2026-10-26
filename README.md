@@ -81,7 +81,7 @@ if __name__ == "__main__":
         config=SliceConfig(
             locale="auto",  # "auto", "jp", "kr", "sc", "tc", or "hk"
             slices_subdir="slices",
-            rare_kanji_chunk_size=250,
+            rare_chunk_size=250,
         ),
     )
     print(f"Generated {result.css_path} and {len(result.built_files)} WOFF2 slices")

@@ -57,7 +57,7 @@ def _resolve_url_prefix(
             rel_posix = Path(os.path.relpath(slices_dir_abs, css_dir_abs)).as_posix()
         except ValueError as exc:
             raise ValueError(
-                "Cannot compute a relative URL from css_out to slices_dir across different drives; "
+                "Cannot compute a relative URL from css_path to slices_dir across different drives; "
                 "pass an explicit --url-prefix."
             ) from exc
         if rel_posix == ".":
