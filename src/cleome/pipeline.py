@@ -216,6 +216,23 @@ def _try_load_cached_bundle(
         return None
 
     slices_dir_resolved = slices_dir.resolve()
+    hashed_by_stem: dict[str, str] = {}
+    if config.filename_hash:
+        try:
+            for existing in slices_dir.iterdir():
+                if not existing.is_file() or existing.suffix != ".woff2":
+                    continue
+                parts = existing.stem.rsplit("-", 1)
+                if len(parts) == 2 and len(parts[1]) == 8 and all(c in "0123456789abcdef" for c in parts[1]):
+                    base_stem = parts[0]
+                    if base_stem in hashed_by_stem:
+                        # Ambiguous multiple hashed files for the same stem
+                        hashed_by_stem[base_stem] = ""
+                    else:
+                        hashed_by_stem[base_stem] = existing.name
+        except OSError:
+            return None
+
     per_meta_files: dict[int, list[BuiltSliceFile]] = {i: [] for i in range(len(metas))}
     all_built_files: list[BuiltSliceFile] = []
     out_hasher = hashlib.sha256()
@@ -232,9 +249,16 @@ def _try_load_cached_bundle(
         for spec, glyph_count in zip(active_specs, variant_glyph_counts):
             if glyph_count <= 0:
                 return None
-            expected_fname = _validate_filename_token(
+            base_fname = _validate_filename_token(
                 spec.filename(m.slug, m.variant_suffix), "slice filename"
             )
+            if config.filename_hash:
+                expected_fname = hashed_by_stem.get(Path(base_fname).stem, "")
+                if not expected_fname:
+                    return None
+                expected_fname = _validate_filename_token(expected_fname, "slice filename")
+            else:
+                expected_fname = base_fname
             slice_path = slices_dir / expected_fname
             try:
                 if not slice_path.resolve().is_relative_to(slices_dir_resolved):
@@ -245,6 +269,10 @@ def _try_load_cached_bundle(
             size_bytes = len(raw_slice)
             if size_bytes <= 0:
                 return None
+            if config.filename_hash:
+                actual_hash8 = hashlib.sha256(raw_slice).hexdigest()[:8]
+                if not expected_fname.endswith(f"-{actual_hash8}.woff2"):
+                    return None
 
             out_hasher.update(
                 f"{expected_fname}:{size_bytes}:{glyph_count}\n".encode("utf-8")

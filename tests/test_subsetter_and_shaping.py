@@ -918,6 +918,28 @@ class TestSubsetterAndShaping(unittest.TestCase):
                 self.assertFalse(r1.cached)
                 self.assertTrue(r2.cached, f"Expected cache hit for slug={special_slug!r}")
 
+            # 9. Stale hashed slice cleanup: updating only one tier keeps unchanged hashes and prunes old hash
+            stale_out = tmp_path / "stale_hash_out"
+            font_v1 = tmp_path / "Stale-v1.ttf"
+            font_v2 = tmp_path / "Stale-v2.ttf"
+            create_synthetic_ttfont([ord("A"), ord("あ"), 0x4E02], family_name="Stale Test").save(
+                font_v1, reorderTables=False
+            )
+            create_synthetic_ttfont([ord("A"), ord("あ"), 0x4E02, 0x4E04], family_name="Stale Test").save(
+                font_v2, reorderTables=False
+            )
+            res_v1 = slice_font(font_v1, out_dir=stale_out, workers=1)
+            v1_by_id = {bf.spec.slice_id: bf for bf in res_v1.built_files}
+            res_v2 = slice_font(font_v2, out_dir=stale_out, workers=1)
+            v2_by_id = {bf.spec.slice_id: bf for bf in res_v2.built_files}
+            # Unchanged latin and kana-core keep identical content hash and filename
+            self.assertEqual(v1_by_id["latin"].filename, v2_by_id["latin"].filename)
+            self.assertEqual(v1_by_id["kana-core"].filename, v2_by_id["kana-core"].filename)
+            # Modified kanji-rare-01 gets a new hash, and the old file is pruned from slices_dir
+            self.assertNotEqual(v1_by_id["kanji-rare-01"].filename, v2_by_id["kanji-rare-01"].filename)
+            self.assertFalse(v1_by_id["kanji-rare-01"].path.exists(), "Superseded hashed slice must be pruned")
+            self.assertTrue(v2_by_id["kanji-rare-01"].path.exists())
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -32,10 +32,12 @@ uv add git+https://github.com/myakura/cleome
 cleome plan SourceHanSansJP-VF.otf
 cleome plan SourceHanSansJP-VF.otf --json
 
-# Slice a Variable Font (auto-detects CJK profile; outputs <out-dir>/<slug>.css and <out-dir>/slices/<slug>-*.woff2)
+# Slice a Variable Font (auto-detects CJK profile; outputs <out-dir>/<slug>.css and <out-dir>/slices/<slug>-*-<hash8>.woff2)
 # Subsequent builds with unchanged inputs/config skip WOFF2 subsetting automatically; pass --force to rebuild
+# Pass --no-filename-hash when placing slices in a bundler-managed directory that adds its own asset hash
 cleome build SourceHanSansJP-VF.otf -o dist/web
 cleome build SourceHanSansJP-VF.otf -o dist/web --force
+cleome build SourceHanSansJP-VF.otf -o src/assets/fonts --no-filename-hash
 
 # Explicitly select a CJK slicing profile (auto, jp, kr, sc, tc, hk)
 cleome build SourceHanSansJP-VF.otf --locale jp -o dist/web-jp

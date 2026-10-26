@@ -174,6 +174,12 @@ def _add_shared_arguments(parser: argparse.ArgumentParser, *, is_build: bool) ->
     )
     if is_build:
         parser.add_argument(
+            "--filename-hash",
+            action=argparse.BooleanOptionalAction,
+            default=True,
+            help="Append an 8-character SHA-256 content hash to each .woff2 slice filename (default: enabled)",
+        )
+        parser.add_argument(
             "-j",
             "--workers",
             type=_positive_int,
@@ -309,6 +315,7 @@ def _run_plan(args: argparse.Namespace, config: SliceConfig) -> int:
 
 
 def _run_build(args: argparse.Namespace, config: SliceConfig) -> int:
+    from cleome.css import _resolve_url_prefix
     from cleome.pipeline import slice_fonts
 
     t0 = time.time()
@@ -331,6 +338,17 @@ def _run_build(args: argparse.Namespace, config: SliceConfig) -> int:
         return 1
 
     elapsed = time.time() - t0
+    url_prefix = _resolve_url_prefix(config)
+    preload_slices = [
+        {
+            "slice_id": bf.spec.slice_id,
+            "variant_suffix": bf.variant_suffix,
+            "filename": bf.filename,
+            "url": f"{url_prefix}{bf.filename}",
+        }
+        for bf in result.built_files
+        if bf.spec.tier == 1
+    ]
     if args.json_output:
         first_meta = result.fonts_metadata[0]
         resolved_loc = (
@@ -345,11 +363,13 @@ def _run_build(args: argparse.Namespace, config: SliceConfig) -> int:
             "family_name": result.family_name,
             "slug": result.slug,
             "locale": resolved_loc,
+            "filename_hash": config.filename_hash,
             "css_path": str(result.css_path),
             "css_bytes": result.css_bytes,
             "slices_dir": str(result.slices_dir),
             "slice_count": len(result.built_files),
             "total_woff2_bytes": result.total_woff2_bytes,
+            "preload_slices": preload_slices,
             "elapsed_seconds": round(elapsed, 3),
         }
         print(json.dumps(payload, ensure_ascii=False))
@@ -364,6 +384,13 @@ def _run_build(args: argparse.Namespace, config: SliceConfig) -> int:
     )
     print(f"         CSS   : {result.css_path}")
     print(f"         Slices: {result.slices_dir}/")
+    if preload_slices:
+        print("         Preload (Tier 1):")
+        for item in preload_slices:
+            print(
+                f'           <link rel="preload" href="{item["url"]}" '
+                f'as="font" type="font/woff2" crossorigin>'
+            )
     return 0
 
 
@@ -388,6 +415,7 @@ def main(argv: list[str] | None = None) -> int:
             slices_subdir=args.slices_dir,
             url_prefix=args.url_prefix,
             font_display=args.display,
+            filename_hash=getattr(args, "filename_hash", True),
         )
     except ValueError as exc:
         print(f"Error: {exc}", file=sys.stderr)

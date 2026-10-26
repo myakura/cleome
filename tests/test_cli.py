@@ -131,7 +131,7 @@ class TestCleomeCLI(unittest.TestCase):
                     self.assertIn("unicode_range_chars", variant_info["tiers"][tier_key])
                 self.assertFalse((tmp_path / "dist").exists(), "`cleome plan --json` must not create ./dist")
 
-                # 3. `cleome build <input> -o <dir> --json`
+                # 3. `cleome build <input> -o <dir> --json` (content-hashed filenames by default + preload_slices)
                 build_out = tmp_path / "built_subcmd"
                 buf_build_json = StringIO()
                 with redirect_stdout(buf_build_json):
@@ -144,7 +144,15 @@ class TestCleomeCLI(unittest.TestCase):
                 self.assertEqual(build_data["command"], "build")
                 self.assertFalse(build_data["cached"])
                 self.assertEqual(build_data["locale"], "jp")
+                self.assertTrue(build_data["filename_hash"])
                 self.assertEqual(build_data["slice_count"], 4)
+                self.assertEqual(
+                    [p["slice_id"] for p in build_data["preload_slices"]],
+                    ["kana-core", "latin"],
+                )
+                for p in build_data["preload_slices"]:
+                    self.assertRegex(p["filename"], r"^subcmd-test-(kana-core|latin)-[0-9a-f]{8}\.woff2$")
+                    self.assertEqual(p["url"], f"./slices/{p['filename']}")
                 self.assertTrue((build_out / "subcmd-test.css").exists())
                 self.assertEqual(len(list((build_out / "slices").glob("*.woff2"))), 4)
 
@@ -168,6 +176,52 @@ class TestCleomeCLI(unittest.TestCase):
                 self.assertEqual(rc_cached_txt, 0)
                 self.assertIn("[cleome] Cached 4 WOFF2 slices", buf_cached_text.getvalue())
                 self.assertIn("(up to date)", buf_cached_text.getvalue())
+                self.assertIn('Preload (Tier 1):', buf_cached_text.getvalue())
+                self.assertIn('as="font" type="font/woff2" crossorigin>', buf_cached_text.getvalue())
+
+                # 3c. `cleome build --no-filename-hash` writes unhashed filenames and hits cache on repeat
+                unhashed_out = tmp_path / "built_unhashed"
+                buf_unhashed_json = StringIO()
+                with redirect_stdout(buf_unhashed_json):
+                    rc_unhashed = cli_main(
+                        [
+                            "build",
+                            str(font_path),
+                            "-o",
+                            str(unhashed_out),
+                            "--locale",
+                            "jp",
+                            "--no-filename-hash",
+                            "-j",
+                            "1",
+                            "--json",
+                        ]
+                    )
+                self.assertEqual(rc_unhashed, 0)
+                unhashed_data = json.loads(buf_unhashed_json.getvalue())
+                self.assertFalse(unhashed_data["filename_hash"])
+                self.assertEqual(
+                    [p["filename"] for p in unhashed_data["preload_slices"]],
+                    ["subcmd-test-kana-core.woff2", "subcmd-test-latin.woff2"],
+                )
+                buf_unhashed_cached = StringIO()
+                with redirect_stdout(buf_unhashed_cached):
+                    rc_unhashed_2 = cli_main(
+                        [
+                            "build",
+                            str(font_path),
+                            "-o",
+                            str(unhashed_out),
+                            "--locale",
+                            "jp",
+                            "--no-filename-hash",
+                            "-j",
+                            "1",
+                            "--json",
+                        ]
+                    )
+                self.assertEqual(rc_unhashed_2, 0)
+                self.assertTrue(json.loads(buf_unhashed_cached.getvalue())["cached"])
 
                 # 3c. `cleome build --force` bypasses cache and rebuilds (`cached: false`)
                 buf_force_json = StringIO()

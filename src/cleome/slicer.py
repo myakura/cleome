@@ -79,6 +79,7 @@ class SliceConfig:
     slices_subdir: str = "slices"
     url_prefix: str | None = None
     font_display: str = "swap"
+    filename_hash: bool = True
 
     def __post_init__(self) -> None:
         norm_locale = self.locale.strip().lower()
@@ -139,10 +140,11 @@ class SliceSpec:
     css_unicode_range: str
     uses_cascade_shadowing: bool = False
 
-    def filename(self, slug: str, variant_suffix: str = "") -> str:
-        if variant_suffix:
-            return f"{slug}-{variant_suffix}-{self.slice_id}.woff2"
-        return f"{slug}-{self.slice_id}.woff2"
+    def filename(self, slug: str, variant_suffix: str = "", content_hash: str = "") -> str:
+        stem = f"{slug}-{variant_suffix}-{self.slice_id}" if variant_suffix else f"{slug}-{self.slice_id}"
+        if content_hash:
+            return f"{stem}-{content_hash}.woff2"
+        return f"{stem}.woff2"
 
 
 def _chunk_sorted_codepoints(

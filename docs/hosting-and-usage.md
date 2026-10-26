@@ -5,19 +5,19 @@ This guide explains how to deploy and use the `@font-face` stylesheet (`<slug>.c
 
 ## 1. Output layout and URL resolution
 
-Running `cleome build` writes a stylesheet and a slice directory under `--out-dir` (`dist` by default):
+Running `cleome build` writes a stylesheet and a slice directory under `--out-dir` (`dist` by default), appending an 8-character SHA-256 content hash to each `.woff2` filename by default (`--no-filename-hash` disables the hash):
 
 ```text
 dist/web/
 ├── source-han-sans-jp.css
 └── slices/
-    ├── source-han-sans-jp-kanji-rare-01.woff2
+    ├── source-han-sans-jp-kanji-rare-01-4c91e0a2.woff2
     ├── ...
-    ├── source-han-sans-jp-kanji-freq-01.woff2
-    ├── source-han-sans-jp-symbols-ext-01.woff2
-    ├── source-han-sans-jp-symbols-ui.woff2
-    ├── source-han-sans-jp-kana-core.woff2
-    └── source-han-sans-jp-latin.woff2
+    ├── source-han-sans-jp-kanji-freq-01-9b120f84.woff2
+    ├── source-han-sans-jp-symbols-ext-01-7d3e11c0.woff2
+    ├── source-han-sans-jp-symbols-ui-1f8a92d3.woff2
+    ├── source-han-sans-jp-kana-core-3a7f91bc.woff2
+    └── source-han-sans-jp-latin-8f02e1a4.woff2
 ```
 
 Inside `<slug>.css`, each `@font-face` rule points to `./slices/<filename>.woff2` by default:
@@ -29,16 +29,16 @@ Inside `<slug>.css`, each `@font-face` rule points to `./slices/<filename>.woff2
   font-style: normal;
   font-weight: 250 900;
   font-display: swap;
-  src: url('./slices/source-han-sans-jp-kana-core.woff2') format('woff2');
+  src: url('./slices/source-han-sans-jp-kana-core-3a7f91bc.woff2') format('woff2');
   unicode-range: U+3000-303F, U+3041-3096, U+3099-30FF, U+31F0-31FF, U+FF01-FF60, U+FFE0-FFE6;
 }
 ```
 
 When bundling multiple static font files (`cleome build Regular.ttf Bold.ttf -o dist/web`), Cleome inserts a variant token into each slice filename so all variants share one `slices/` directory without collisions:
 
-* **Multiple weights (`400`, `700`).** `<slug>-400-<slice_id>.woff2`, `<slug>-700-<slice_id>.woff2`
-* **Multiple widths and weights (`75%`, `100%`).** `<slug>-w75-400-<slice_id>.woff2`, `<slug>-w100-400-<slice_id>.woff2`
-* **Multiple styles (`normal`, `italic`).** `<slug>-400-<slice_id>.woff2`, `<slug>-400-italic-<slice_id>.woff2`
+* **Multiple weights (`400`, `700`).** `<slug>-400-<slice_id>-<hash8>.woff2`, `<slug>-700-<slice_id>-<hash8>.woff2`
+* **Multiple widths and weights (`75%`, `100%`).** `<slug>-w75-400-<slice_id>-<hash8>.woff2`, `<slug>-w100-400-<slice_id>-<hash8>.woff2`
+* **Multiple styles (`normal`, `italic`).** `<slug>-400-<slice_id>-<hash8>.woff2`, `<slug>-400-italic-<slice_id>-<hash8>.woff2`
 
 
 ### Choose `--slices-dir` and `--url-prefix`
@@ -187,22 +187,16 @@ Without `Access-Control-Allow-Origin`, browsers reject cross-origin `@font-face`
 * **`<slug>.css` (`Content-Type: text/css; charset=utf-8`).** Compress `.css` responses with HTTP Brotli (`br`) or `gzip`. Cleome's 1-token Tier 4 cascade ranges compress a single-variant CJK stylesheet to 6.0-7.5 KB over Brotli.
 
 
-### Cache invalidation and versioned paths (`Cache-Control`)
+### Cache invalidation and content hashes (`Cache-Control`)
 
-Cleome generates deterministic slice filenames (`<slug>-<slice_id>.woff2`) instead of embedding content hashes in filenames. If you update the font file, change `SliceConfig` parameters, or upgrade Cleome, building into the same directory overwrites `<slug>.css` and `<slug>-*.woff2` in place.
+By default (`--filename-hash` / `SliceConfig(filename_hash=True)`), Cleome appends an 8-character SHA-256 content digest of each built `.woff2` binary to its filename (`<slug>(-<variant>)-<slice_id>-<hash8>.woff2`) and automatically removes superseded `<slug>(-<variant>)-<slice_id>-[0-9a-f]{8}.woff2` files on rebuild:
 
-If a browser or CDN caches an old `<slug>-kanji-freq-01.woff2` while serving a new `<slug>.css` (or the reverse), codepoints that moved between slices fail to match the cached `.woff2` binary. To cache `.woff2` slices with `immutable`:
-
-1. **Include a version segment in your hosting directory path** (such as `/fonts/source-han-sans-jp/v1/`):
-
-   ```bash
-   cleome build SourceHanSansJP-VF.otf -o public/fonts/source-han-sans-jp/v1
-   ```
-
-2. **Serve `.woff2` slices under that versioned path with immutable caching**:
+1. **Serve `.woff2` slices directly with immutable caching**:
 
    ```http
    Cache-Control: public, max-age=31536000, immutable
    ```
 
-3. **When updating the font or slicing configuration**, deploy to a new versioned directory (`/fonts/source-han-sans-jp/v2/`) and update the `<link rel="stylesheet">` URL so `<slug>.css` and all `.woff2` slices switch together.
+2. **When updating the font or slicing configuration**, re-run `cleome build` into the same directory. Unchanged slices (such as `latin` or `kana-core`) keep their exact filename and remain cached in browsers and CDN edge nodes, while slices whose `.woff2` bytes changed receive a new `<hash8>` filename in `<slug>.css`.
+
+3. **When `--no-filename-hash` is used**, include a version segment in your hosting directory path (such as `/fonts/source-han-sans-jp/v1/` -> `/v2/`) whenever you set `Cache-Control: public, max-age=31536000, immutable` so `<slug>.css` and all `.woff2` slices rotate together.
