@@ -603,22 +603,28 @@ def _prepare_font_bundle(
         for m, v_suf in zip(raw_metas, variant_suffixes)
     ]
 
+    resolved_locale = (
+        detect_font_locale(metas[0].codepoints, family_name=unified_family)
+        if config.locale == "auto"
+        else config.locale
+    )
+    resolved_config = (
+        config
+        if config.locale == resolved_locale
+        else replace(config, locale=resolved_locale)
+    )
+
     plan_cache: dict[frozenset[int], list[SliceSpec]] = {}
     for m in metas:
         if m.codepoints not in plan_cache:
             plan_cache[m.codepoints] = build_slice_plan(
-                m.codepoints, config=config, family_name=unified_family
+                m.codepoints, config=resolved_config, family_name=unified_family
             )
 
     variant_plans = [plan_cache[m.codepoints] for m in metas]
     union_codepoints = frozenset({*m.codepoints for m in metas})
     union_plan = plan_cache.get(union_codepoints) or build_slice_plan(
-        union_codepoints, config=config, family_name=unified_family
-    )
-    resolved_locale = (
-        detect_font_locale(metas[0].codepoints, family_name=unified_family)
-        if config.locale == "auto"
-        else config.locale
+        union_codepoints, config=resolved_config, family_name=unified_family
     )
     return _PreparedBundle(
         family_name=unified_family,
