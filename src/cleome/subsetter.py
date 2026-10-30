@@ -88,11 +88,18 @@ class _CachedFontState:
     has_format14: bool
 
 
-# Per-worker state initialized via ProcessPoolExecutor(initializer=...)
-_WORKER_SOURCES: tuple[tuple[bytes | Path, bool], ...] = ()
-_WORKER_CACHE: dict[int, _CachedFontState] = {}
-_WORKER_OPTIONS: Options | None = None
-_WORKER_FILENAME_HASH: bool = True
+@dataclass(slots=True)
+class _SubsetWorkerContext:
+    """Worker state holding input font sources, cached table templates, and subsetter options."""
+
+    sources: tuple[tuple[bytes | Path, bool], ...]
+    cache: dict[int, _CachedFontState]
+    options: Options
+    filename_hash: bool = True
+
+
+# Per-worker state initialized inside child processes via ProcessPoolExecutor(initializer=...)
+_WORKER_CONTEXT: _SubsetWorkerContext | None = None
 
 
 def _clone_cmap(src_cmap: object) -> object:
@@ -134,12 +141,14 @@ def _clone_subset_options(src_options: Options) -> Options:
     return opts
 
 
-def _load_cached_font_state(font_idx: int) -> _CachedFontState:
-    state = _WORKER_CACHE.get(font_idx)
+def _load_cached_font_state(
+    ctx: _SubsetWorkerContext, font_idx: int
+) -> _CachedFontState:
+    state = ctx.cache.get(font_idx)
     if state is not None:
         return state
 
-    src, patch_uvs = _WORKER_SOURCES[font_idx]
+    src, patch_uvs = ctx.sources[font_idx]
     font_bytes = src.read_bytes() if isinstance(src, Path) else src
     with TTFont(io.BytesIO(font_bytes), lazy=True, recalcTimestamp=False) as tpl:
         glyph_order = list(tpl.getGlyphOrder())
@@ -164,8 +173,27 @@ def _load_cached_font_state(font_idx: int) -> _CachedFontState:
         vmtx_table=vmtx_table,
         has_format14=has_format14,
     )
-    _WORKER_CACHE[font_idx] = state
+    ctx.cache[font_idx] = state
     return state
+
+
+def _create_worker_context(
+    sources: tuple[tuple[bytes | Path, bool], ...],
+    layout_closure: bool,
+    layout_features: tuple[str, ...],
+    drop_tables: tuple[str, ...],
+    filename_hash: bool = True,
+) -> _SubsetWorkerContext:
+    return _SubsetWorkerContext(
+        sources=sources,
+        cache={},
+        options=_create_subset_options(
+            layout_closure=layout_closure,
+            layout_features=layout_features,
+            drop_tables=drop_tables,
+        ),
+        filename_hash=filename_hash,
+    )
 
 
 def _init_subset_worker(
@@ -175,23 +203,14 @@ def _init_subset_worker(
     drop_tables: tuple[str, ...],
     filename_hash: bool = True,
 ) -> None:
-    global _WORKER_SOURCES, _WORKER_CACHE, _WORKER_OPTIONS, _WORKER_FILENAME_HASH
-    _WORKER_SOURCES = sources
-    _WORKER_CACHE = {}
-    _WORKER_OPTIONS = _create_subset_options(
-        layout_closure=layout_closure,
-        layout_features=layout_features,
-        drop_tables=drop_tables,
+    global _WORKER_CONTEXT
+    _WORKER_CONTEXT = _create_worker_context(
+        sources,
+        layout_closure,
+        layout_features,
+        drop_tables,
+        filename_hash,
     )
-    _WORKER_FILENAME_HASH = filename_hash
-
-
-def _clear_subset_worker() -> None:
-    global _WORKER_SOURCES, _WORKER_CACHE, _WORKER_OPTIONS, _WORKER_FILENAME_HASH
-    _WORKER_SOURCES = ()
-    _WORKER_CACHE = {}
-    _WORKER_OPTIONS = None
-    _WORKER_FILENAME_HASH = True
 
 
 def _prepare_uvs_for_slice(font: TTFont, codepoints: list[int]) -> list[int]:
@@ -254,11 +273,13 @@ def _atomic_output_file(
 
 def _subset_single_slice_worker(
     task: tuple[int, list[int], str],
+    ctx: _SubsetWorkerContext | None = None,
 ) -> tuple[str, str, int, int]:
     """Worker function: subset cached font `font_idx` to `codepoints` and atomically write WOFF2."""
     font_idx, codepoints, base_out_path_str = task
-    assert _WORKER_OPTIONS is not None
-    state = _load_cached_font_state(font_idx)
+    active_ctx = ctx if ctx is not None else _WORKER_CONTEXT
+    assert active_ctx is not None
+    state = _load_cached_font_state(active_ctx, font_idx)
     base_out_path = Path(base_out_path_str)
     buf = io.BytesIO()
     with TTFont(
@@ -278,7 +299,7 @@ def _subset_single_slice_worker(
         else:
             populate_unicodes = codepoints
 
-        subsetter = Subsetter(options=_clone_subset_options(_WORKER_OPTIONS))
+        subsetter = Subsetter(options=_clone_subset_options(active_ctx.options))
         subsetter.populate(unicodes=populate_unicodes)
         subsetter.subset(font)
 
@@ -287,7 +308,7 @@ def _subset_single_slice_worker(
         num_glyphs = len(font.getGlyphOrder())
 
     woff2_bytes = buf.getvalue()
-    if _WORKER_FILENAME_HASH:
+    if active_ctx.filename_hash:
         digest8 = hashlib.sha256(woff2_bytes).hexdigest()[:8]
         final_out_path = base_out_path.with_name(
             f"{base_out_path.stem}-{digest8}{base_out_path.suffix}"
@@ -474,19 +495,18 @@ def _export_woff2_slices_batch(
     results_map: dict[str, tuple[str, int, int]] = {}
 
     if max_workers <= 1 or len(scheduled_tasks) <= 2:
-        _init_subset_worker(
+        serial_ctx = _create_worker_context(
             tuple(sources),
             config.layout_closure,
             config.layout_features,
             config.drop_tables,
             config.filename_hash,
         )
-        try:
-            for t in scheduled_tasks:
-                base_out_str, final_fname, sz, ng = _subset_single_slice_worker(t)
-                results_map[base_out_str] = (final_fname, sz, ng)
-        finally:
-            _clear_subset_worker()
+        for t in scheduled_tasks:
+            base_out_str, final_fname, sz, ng = _subset_single_slice_worker(
+                t, serial_ctx
+            )
+            results_map[base_out_str] = (final_fname, sz, ng)
     else:
         try:
             with ProcessPoolExecutor(
