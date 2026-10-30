@@ -37,7 +37,9 @@ jobs:
       - name: Install dependencies and verify test suite
         run: |
           uv sync --frozen
-          uv run python -m unittest discover -s tests -v -f
+          uv run ruff check
+          uv run ruff format --check
+          uv run pytest
 
       - name: Build wheel and sdist
         run: uv build
