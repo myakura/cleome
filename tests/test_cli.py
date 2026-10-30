@@ -2,21 +2,22 @@
 Tests for the `cleome` CLI (`plan` and `build` subcommands, JSON output, and multiprocessing guards).
 """
 
-from contextlib import redirect_stderr, redirect_stdout
-from io import StringIO
 import json
 import os
-from pathlib import Path
 import subprocess
 import sys
 import tempfile
 import unittest
+from contextlib import redirect_stderr, redirect_stdout
+from io import StringIO
+from pathlib import Path
+
 from fontTools.ttLib.tables.DefaultTable import DefaultTable
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
-from cleome.cli import main as cli_main
-
 from helpers import create_synthetic_ttfont
+
+from cleome.cli import main as cli_main
 
 
 class TestCleomeCLI(unittest.TestCase):
@@ -637,6 +638,7 @@ class TestCleomeCLI(unittest.TestCase):
         import ast
         import inspect
         import re
+
         import cleome
 
         repo_root = Path(__file__).resolve().parent.parent

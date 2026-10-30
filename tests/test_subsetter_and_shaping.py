@@ -6,17 +6,20 @@ Variable Font (`ital`/`slnt`/`wght`/`wdth`) CSS generation, TTFont immutability,
 import copy
 import io
 import os
-from pathlib import Path
 import sys
 import tempfile
 import unittest
+from pathlib import Path
+
+import uharfbuzz as hb
 from fontTools.feaLib.builder import addOpenTypeFeaturesFromString
 from fontTools.ttLib import TTFont
 from fontTools.ttLib.tables._c_m_a_p import CmapSubtable
 from fontTools.ttLib.tables._f_v_a_r import Axis
-import uharfbuzz as hb
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
+from helpers import create_synthetic_ttfont
+
 from cleome import (
     SliceConfig,
     build_slice_plan,
@@ -27,8 +30,6 @@ from cleome import (
     slice_fonts,
 )
 from cleome.subsetter import _export_woff2_slices_batch, serialize_font_to_bytes
-
-from helpers import create_synthetic_ttfont
 
 
 class TestSubsetterAndShaping(unittest.TestCase):
@@ -680,7 +681,7 @@ class TestSubsetterAndShaping(unittest.TestCase):
         )
         self.assertEqual(tt["maxp"].numGlyphs, 0)
         self.assertEqual(tt["maxp"].maxPoints, 0)
-        snapshot_tables = {tag: _structural_snapshot(tt[tag]) for tag in tt.keys() if tag != "GlyphOrder"}
+        snapshot_tables = {tag: _structural_snapshot(tt[tag]) for tag in tt.keys() if tag != "GlyphOrder"}  # noqa: SIM118 - TTFont does not implement __iter__
         snapshot_glyph_order = list(tt.getGlyphOrder())
         snapshot_flavor = tt.flavor
         snapshot_recalc = tt.recalcTimestamp
@@ -824,7 +825,7 @@ class TestSubsetterAndShaping(unittest.TestCase):
                     self.assertTrue(stripped.endswith("*/"), f"Unclosed comment line: {line!r}")
                     inner = stripped[2:-2]
                     self.assertNotIn("*/", inner, f"Unescaped comment closer inside comment: {line!r}")
-                if stripped.startswith("font-family:") or stripped.startswith("src:"):
+                if stripped.startswith(("font-family:", "src:")):
                     self.assertNotIn("\n", stripped)
                     self.assertNotIn("\r", stripped)
                     self.assertNotIn("\f", stripped)
@@ -1158,6 +1159,7 @@ class TestSubsetterAndShaping(unittest.TestCase):
         threads must not collide on module globals or read another thread's font source.
         """
         from concurrent.futures import ThreadPoolExecutor
+
         from fontTools.fontBuilder import FontBuilder
         from fontTools.pens.ttGlyphPen import TTGlyphPen
 

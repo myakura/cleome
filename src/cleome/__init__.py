@@ -43,10 +43,10 @@ if TYPE_CHECKING:
 __version__ = _metadata_version("cleome")
 
 __all__ = [
+    "SUPPORTED_LOCALES",
     "BuiltSliceFile",
     "FontFaceDescriptors",
     "FontMetadata",
-    "SUPPORTED_LOCALES",
     "SliceBundleResult",
     "SliceConfig",
     "SliceSpec",

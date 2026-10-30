@@ -3,9 +3,10 @@ OpenType table inspection (`name`, `fvar`, `OS/2`, `post`, `cmap`) and CSS `@fon
 descriptor extraction for Cleome.
 """
 
+import re
 from collections.abc import Sequence
 from dataclasses import dataclass, field
-import re
+
 from fontTools.ttLib import TTFont
 from stixis import SerializationOptions, canonicalize
 
@@ -118,7 +119,7 @@ def slugify_family(name: str) -> str:
 
 def _fmt_num(val: float) -> str:
     if abs(val - round(val)) < 1e-4:
-        return str(int(round(val)))
+        return str(round(val))
     return f"{val:.2f}".rstrip("0").rstrip(".")
 
 
@@ -423,9 +424,9 @@ def validate_and_compute_variant_suffixes(
 
 
 __all__ = [
+    "OS2_WIDTH_CLASS_TO_CSS",
     "FontFaceDescriptors",
     "FontMetadata",
-    "OS2_WIDTH_CLASS_TO_CSS",
     "extract_font_face_descriptors",
     "extract_font_metadata",
     "patch_uvs_missing_base_cmap",

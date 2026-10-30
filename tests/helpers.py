@@ -2,9 +2,10 @@
 Shared synthetic font builders and CSS Cascade Shadowing invariant assertions for the Cleome test suite.
 """
 
-from pathlib import Path
 import sys
 import unittest
+from pathlib import Path
+
 from fontTools.fontBuilder import FontBuilder
 from fontTools.pens.ttGlyphPen import TTGlyphPen
 from fontTools.ttLib import TTFont

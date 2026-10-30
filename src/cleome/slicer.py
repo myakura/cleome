@@ -16,6 +16,7 @@ from bisect import bisect_left, bisect_right
 from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
+
 from stixis import canonicalize
 
 from cleome.data.kanji_freq import KANJI_FREQ_RANK

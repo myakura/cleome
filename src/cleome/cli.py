@@ -4,14 +4,15 @@ into Web-optimized `unicode-range` WOFF2 chunks and `@font-face` CSS.
 """
 
 import argparse
-from collections.abc import Sequence
 import json
 import os
-from pathlib import Path
 import re
 import struct
 import sys
 import time
+from collections.abc import Sequence
+from pathlib import Path
+
 from fontTools.ttLib import TTFont, TTLibError
 
 from cleome.locale import SUPPORTED_LOCALES, detect_font_locale

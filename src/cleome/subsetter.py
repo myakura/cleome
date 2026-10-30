@@ -6,19 +6,20 @@ OFL/license metadata (`nameID` 0, 13, 14), source `head.modified` timestamps, an
 Variable Font tables (`fvar`, `gvar`, `CFF2`, `HVAR`, `VVAR`, `MVAR`, `STAT`, `avar`).
 """
 
-from concurrent.futures import ProcessPoolExecutor
-from concurrent.futures.process import BrokenProcessPool
 import contextlib
 import copy
-from dataclasses import dataclass
 import hashlib
 import io
 import os
-from pathlib import Path
 import secrets
-from typing import Iterator
+from collections.abc import Iterator
+from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures.process import BrokenProcessPool
+from dataclasses import dataclass
+from pathlib import Path
+
+from fontTools.subset import Options, Subsetter
 from fontTools.ttLib import TTFont
-from fontTools.subset import Subsetter, Options
 
 from cleome.css import _ensure_directory_creatable
 from cleome.metadata import (

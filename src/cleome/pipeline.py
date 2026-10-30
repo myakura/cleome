@@ -2,13 +2,14 @@
 High-level font slicing pipeline (`slice_font` / `slice_fonts`) and bundle cache verification for Cleome.
 """
 
-from collections.abc import Sequence
-from contextlib import ExitStack
-from dataclasses import asdict, dataclass, field
 import hashlib
 import io
 import json
+from collections.abc import Sequence
+from contextlib import ExitStack
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
+
 from fontTools.ttLib import TTFont
 
 from cleome.css import (
@@ -16,7 +17,6 @@ from cleome.css import (
     _CACHE_COMMENT_RE,
     _CACHE_FORMAT_VERSION,
     _compute_slices_output_digest,
-    _format_cache_comment,
     _resolve_and_validate_outputs,
     generate_css,
 )
@@ -90,7 +90,8 @@ class SliceBundleResult:
 
 
 def _get_toolchain_versions() -> dict[str, str]:
-    from importlib.metadata import PackageNotFoundError, version as pkg_version
+    from importlib.metadata import PackageNotFoundError
+    from importlib.metadata import version as pkg_version
 
     versions: dict[str, str] = {}
     for dist_name in ("cleome", "fonttools", "brotli", "stixis"):
@@ -263,7 +264,7 @@ def _try_load_cached_bundle(
                     return None
 
             out_hasher.update(
-                f"{expected_fname}:{size_bytes}:{glyph_count}\n".encode("utf-8")
+                f"{expected_fname}:{size_bytes}:{glyph_count}\n".encode()
             )
             out_hasher.update(raw_slice)
 

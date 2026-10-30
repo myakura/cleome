@@ -5,15 +5,23 @@ SIP/TIP plane separation, and CJK locale (`jp`, `kr`, `sc`, `tc`, `hk`) profiles
 
 import copy
 import io
-from pathlib import Path
 import sys
 import tempfile
 import unittest
+from pathlib import Path
+
+import uharfbuzz as hb
 from fontTools.feaLib.builder import addOpenTypeFeaturesFromString
 from fontTools.ttLib import TTFont
-import uharfbuzz as hb
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
+from helpers import (
+    assert_generic_cascade_invariants,
+    assert_jp_plan_invariants,
+    build_synthetic_charset,
+    create_synthetic_ttfont,
+)
+
 from cleome import (
     FontMetadata,
     SliceConfig,
@@ -32,13 +40,6 @@ from cleome.data.tc_freq import (
 )
 from cleome.locale import _SC_ONLY_FREQ
 from cleome.slicer import _prepare_font_bundle
-
-from helpers import (
-    assert_generic_cascade_invariants,
-    assert_jp_plan_invariants,
-    build_synthetic_charset,
-    create_synthetic_ttfont,
-)
 
 
 class TestSlicerAndLocales(unittest.TestCase):

@@ -2,14 +2,15 @@
 CSS `@font-face` stylesheet generator for Cleome.
 """
 
-from collections.abc import Sequence
-from dataclasses import dataclass
 import hashlib
 import os
-from pathlib import Path
 import re
+from collections.abc import Sequence
+from dataclasses import dataclass
+from pathlib import Path
 from typing import Protocol
 from urllib.parse import quote
+
 from stixis import (
     CommentNode,
     FontFace,
@@ -59,7 +60,7 @@ def _compute_slices_output_digest(built_files: Sequence[_SliceFileLike]) -> str:
     hasher = hashlib.sha256()
     for bf in built_files:
         raw = bf.path.read_bytes()
-        hasher.update(f"{bf.filename}:{len(raw)}:{bf.glyph_count}\n".encode("utf-8"))
+        hasher.update(f"{bf.filename}:{len(raw)}:{bf.glyph_count}\n".encode())
         hasher.update(raw)
     return hasher.hexdigest()[:32]
 
