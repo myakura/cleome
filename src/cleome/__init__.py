@@ -18,6 +18,7 @@ from cleome.metadata import (
     FontMetadata,
     extract_font_face_descriptors,
     extract_font_metadata,
+    patch_uvs_missing_base_cmap,
     slugify_family,
 )
 from cleome.slicer import (
@@ -37,7 +38,6 @@ if TYPE_CHECKING:
     from cleome.subsetter import (
         BuiltSliceFile,
         export_woff2_slices,
-        patch_uvs_missing_base_cmap,
     )
 
 __version__ = _metadata_version("cleome")
@@ -67,7 +67,7 @@ __all__ = [
 
 
 def __getattr__(name: str) -> Any:
-    if name in ("BuiltSliceFile", "export_woff2_slices", "patch_uvs_missing_base_cmap"):
+    if name in ("BuiltSliceFile", "export_woff2_slices"):
         from cleome import subsetter as _subsetter
 
         return getattr(_subsetter, name)

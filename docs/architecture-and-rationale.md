@@ -90,7 +90,7 @@ A variable font shares one set of 124 `.woff2` URLs across `font-weight: 400` an
 
 ## How Cleome slices a font
 
-Cleome replaces static templates with a 4-tier slicing planner ([`cleome/slicer.py`](../src/cleome/slicer.py)) and `unicode-range` compaction helpers ([`cleome/urange.py`](../src/cleome/urange.py)) that read each input font's `cmap`. It orders `@font-face` rules from lowest priority (Tier 4, at the top of the stylesheet) to highest priority (Tier 1, at the bottom of the stylesheet):
+Cleome replaces static templates with a 4-tier slicing planner ([`cleome/slicer.py`](../src/cleome/slicer.py)) and `stixis` `unicode-range` formatting and compaction (`stixis.format_urange` and `stixis.compact_urange`, wrapped by [`cleome/urange.py`](../src/cleome/urange.py)) that read each input font's `cmap`. It orders `@font-face` rules from lowest priority (Tier 4, at the top of the stylesheet) to highest priority (Tier 1, at the bottom of the stylesheet):
 
 | Tier (CSS order) | Slice ID pattern | Target characters | `unicode-range` strategy |
 | :--- | :--- | :--- | :--- |
@@ -123,7 +123,7 @@ Cleome separates non-Kanji characters from Kanji slices and groups them into fou
 * Tier 2 `symbols-ui` holds common UI and article symbols (~16 KB VF, ~7-9 KB Static), including `℃` (`U+2103`), Roman numerals (`U+2160-216B`: `Ⅰ-Ⅻ`), arrows (`U+2190-21FF`: `←↑→↓↔⇒`), CJK math and comparison symbols (`∞`, `≒`, `≠`, `≦`, `≧`), circled numbers (`①-⑳`, `⓪`, `❶-❿`), geometric shapes (`■□▲△▶▷▼▽◀◁◆◇◈○◎●`), and stars, notes, and marks (`★☆♪♫♡♥⚠✓✔✕✖`).
 * Tier 2 `symbols-ext` (`symbols-ext-01..NN`) holds the remaining non-Kanji characters in the font's `cmap` (Greek, Cyrillic, box drawing, math symbols, enclosed CJK letters and ideographs, halfwidth katakana), split into chunks of ~350 characters.
 
-Because Cleome builds every slice from the input font's `cmap`, smaller-charset fonts (~7,000- to 9,300-character JIS Level 1+2 static fonts) scale down from 91 slices to 55-65 slices and never emit ghost `unicode-range` declarations for characters outside their repertoire. In Tiers 1, 2, and 3, Cleome compacts only the codepoints present in the font, bridging small unmapped gaps (`<= 0x80`) in Tiers 1 and 2 via binary search only when the gap contains zero codepoints from any lower-priority slice.
+Because Cleome builds every slice from the input font's `cmap`, smaller-charset fonts (~7,000- to 9,300-character JIS Level 1+2 static fonts) scale down from 91 slices to 55-65 slices and never emit ghost `unicode-range` declarations for characters outside their repertoire. In Tiers 1, 2, and 3, Cleome compacts only the codepoints present in the font via `stixis.compact_urange` (wrapped by `compact_unicode_range` in [`cleome/urange.py`](../src/cleome/urange.py)), bridging small unmapped gaps (`<= 0x80`) in Tiers 1 and 2 only when the gap contains zero codepoints from any lower-priority slice.
 
 
 ### 3. Inverted-pyramid Kanji granularity (Tier 3)
@@ -157,7 +157,7 @@ Combining 1-token Tier 4 cascade shadowing with Tier 3 inverted-pyramid Kanji gr
 
 ## OpenType shaping and subsetting details
 
-Slicing arbitrary Japanese `.ttf` and `.otf` fonts surfaced several OpenType and CSS edge cases handled in [`cleome/urange.py`](../src/cleome/urange.py), [`cleome/metadata.py`](../src/cleome/metadata.py), [`cleome/subsetter.py`](../src/cleome/subsetter.py), [`cleome/css.py`](../src/cleome/css.py), and [`cleome/pipeline.py`](../src/cleome/pipeline.py).
+Slicing arbitrary Japanese `.ttf` and `.otf` fonts surfaced several OpenType and CSS edge cases handled in [`cleome/metadata.py`](../src/cleome/metadata.py), [`cleome/subsetter.py`](../src/cleome/subsetter.py), [`cleome/css.py`](../src/cleome/css.py), and [`cleome/pipeline.py`](../src/cleome/pipeline.py).
 
 
 ### 1. Intra-slice OpenType shaping and cross-slice lookup pruning
@@ -187,7 +187,7 @@ Before planning or subsetting, `patch_uvs_missing_base_cmap` checks `cmap` Forma
 
 * `extract_font_metadata` reads `fvar` in variable fonts to emit continuous CSS ranges (`font-weight: 250 900`, `font-stretch: 70% 100%`), and reads `OS/2` (`usWeightClass`, `usWidthClass`, `fsSelection`) and `post` (`italicAngle`) in static fonts. When a variable font has an `ital` axis spanning upright (`< 0.5`) and italic (`>= 0.5`) or a `slnt` axis, Cleome emits `@font-face` rules for each supported style (`normal`, `italic`, `oblique <min>deg <max>deg`) pointing to the same `.woff2` slice files. It omits `normal` when the font's axis ranges do not include an upright form.
 * When bundling multiple static font files into one stylesheet, Cleome checks that all inputs share the same `font-family` (unless overridden) and have unique `(font-weight, font-stretch, font-style)` descriptors. It computes each variant's slices from its own mapped codepoints (`variant_slice_specs`) so a subsetted italic or condensed weight never emits ghost `unicode-range` rules for glyphs that exist only in the regular weight.
-* Public Python APIs (`slice_font`, `slice_fonts`, `export_woff2_slices`) serialize in-memory `TTFont` inputs without mutating the caller's object, keep `head.modified` (`recalcTimestamp=False`) so repeated builds produce byte-identical `.woff2` files, and retain license records (`nameID` 0, 13, 14) in every slice. By default (`filename_hash=True`), Cleome includes an 8-character SHA-256 content digest in each `.woff2` filename and prunes superseded hashes for the built stems without deleting unrelated `.woff2` files from other font families.
+* Public inspection and slicing APIs (`extract_font_face_descriptors`, `extract_font_metadata`, `export_woff2_slices`, `slice_font`, `slice_fonts`) operate on in-memory `TTFont` inputs without mutating the caller's object (only `patch_uvs_missing_base_cmap` mutates in place), keep `head.modified` (`recalcTimestamp=False`) so repeated builds produce byte-identical `.woff2` files, and retain license records (`nameID` 0, 13, 14) in every slice. See [`skills/cleome/SKILL.md`](../skills/cleome/SKILL.md) for the public API contract and [`docs/hosting-and-usage.md`](hosting-and-usage.md) for content-hashed filenames and cache invalidation.
 
 
 ---

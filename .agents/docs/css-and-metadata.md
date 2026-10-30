@@ -1,16 +1,15 @@
 # `@font-face` CSS generation, variable axes, and variant bundling
 
-Domain rules for extracting font metadata ([`cleome/metadata.py`](../../src/cleome/metadata.py)), generating `@font-face` stylesheets ([`cleome/css.py`](../../src/cleome/css.py)), and orchestrating cached multi-variant builds ([`cleome/pipeline.py`](../../src/cleome/pipeline.py)) across variable and static fonts.
+Editing rules for [`cleome/metadata.py`](../../src/cleome/metadata.py), [`cleome/css.py`](../../src/cleome/css.py), and [`cleome/pipeline.py`](../../src/cleome/pipeline.py). See [`docs/architecture-and-rationale.md`](../../docs/architecture-and-rationale.md) for background rationale, [`docs/hosting-and-usage.md`](../../docs/hosting-and-usage.md) for output layout and caching behavior, and [`skills/cleome/SKILL.md`](../../skills/cleome/SKILL.md) for the public API contract.
 
 ## Variable and static axis mapping
 
-* `extract_font_face_descriptors` and `extract_font_metadata` (`cleome/metadata.py`) extract `font-weight`, `font-stretch`, and `font-style` descriptors from `fvar` axes (`wght`, `wdth`, `ital`, `slnt`) for variable fonts, and from `OS/2` (`usWeightClass`, `usWidthClass`, `fsSelection`) and `post` (`italicAngle`) tables for static fonts.
-* When a variable font includes `ital`, `slnt`, or both axes, `generate_css` (`cleome/css.py`) emits `@font-face` rules for each supported style (`normal`, `italic`, `oblique ...`) pointing to the same `.woff2` slice files. Emit `font-style: normal` only when the font's axis ranges include an upright form (`ital < 0.5` and `0deg` within `slnt`).
+* Extract `font-weight`, `font-stretch`, and `font-style` from `fvar` (`wght`, `wdth`, `ital`, `slnt`) for variable fonts and from `OS/2` and `post` for static fonts (`cleome/metadata.py`).
+* In `generate_css` (`cleome/css.py`), emit `font-style: normal` only when the font's axis ranges include an upright form (`ital < 0.5` and `0deg` within `slnt`).
 
-## Multi-font variant bundling and content-hashed filenames
+## Multi-font variant bundling and output integrity
 
-* `validate_and_compute_variant_suffixes` (`cleome/metadata.py`) validates that bundling multiple font files into one stylesheet shares a common `font-family` name (unless overridden) and a unique `(font-weight, font-stretch, font-style)` descriptor tuple for every emitted rule.
-* Raise a `ValueError` on family mismatches or descriptor collisions rather than auto-numbering colliding variants or filenames (`-2`, `-3`).
-* When bundled variants have different `cmap` coverage, `slice_fonts` (`cleome/pipeline.py`) builds and exports each variant's slices from its own mapped codepoints rather than the cross-font union.
-* When `SliceConfig.filename_hash` is `True` (default), `_subset_single_slice_worker` (`cleome/subsetter.py`) appends an 8-character SHA-256 hex digest of the built `.woff2` bytes (`<slug>(-<variant>)-<slice_id>-<hash8>.woff2`), `slice_fonts` prunes superseded hashes for the built stems via `_prune_superseded_hashed_slices` only after the new CSS file is written atomically (`export_woff2_slices` prunes at the end of export), and `_try_load_cached_bundle` (`cleome/pipeline.py`) verifies the on-disk filename hash against the `.woff2` content.
-* `slice_font` and `slice_fonts` (`cleome/pipeline.py`, `--css-out` in `cleome/cli.py`) accept an explicit `css_path` file path so consumers can write the `@font-face` stylesheet outside `out_dir` (such as `src/styles/fonts.css` while `out_dir` is `public/fonts`); `css_filename` and `css_path` are mutually exclusive.
+* Raise a `ValueError` in `validate_and_compute_variant_suffixes` (`cleome/metadata.py`) on `font-family` mismatches (unless overridden) or `(font-weight, font-stretch, font-style)` collisions rather than auto-numbering colliding variants (`-2`, `-3`).
+* Build and export each bundled variant's slices from its own mapped codepoints (`variant_slice_specs`) rather than the cross-font union.
+* In `slice_fonts` (`cleome/pipeline.py`), prune superseded content-hashed `.woff2` files via `_prune_superseded_hashed_slices` only after the new CSS file has been written atomically, and verify on-disk filename hashes in `_try_load_cached_bundle`.
+* Keep `css_filename` and `css_path` mutually exclusive across `slice_font`, `slice_fonts`, and `cleome/cli.py`.

@@ -5,7 +5,7 @@ description: Slice Japanese, Korean, and Chinese (JP / KR / SC / TC / HK) variab
 
 # Cleome (`cleome`) consumer guide
 
-Cleome (`cleome`) is a Python 3.15+ CLI tool and library that inspects a font's `cmap` and OpenType tables (`name`, `fvar`, `OS/2`, `post`, `GSUB`, `GPOS`) and generates 4-tier `unicode-range` `.woff2` slices and `@font-face` CSS. It preserves OpenType layout features, `cmap` Format 14 UVS/IVS variation sequences, license records (`nameID` `0`, `13`, `14`), and variable font axes without mutating caller-supplied `TTFont` instances.
+Cleome (`cleome`) is a Python 3.15+ CLI tool and library that inspects a font's `cmap` and OpenType tables (`name`, `fvar`, `OS/2`, `post`, `GSUB`, `GPOS`) and generates 4-tier `unicode-range` `.woff2` slices and `@font-face` CSS. It preserves OpenType layout features, `cmap` Format 14 UVS/IVS variation sequences, license records (`nameID` `0`, `13`, `14`), and variable font axes without mutating caller-supplied `TTFont` instances in public inspection or slicing APIs (only `patch_uvs_missing_base_cmap` mutates in place).
 
 ## Core API signatures
 
@@ -56,11 +56,9 @@ if __name__ == "__main__":
 
 ## Slicing tiers and runtime rules
 
-* **Four-tier CSS cascade shadowing (`Tier 4` -> `Tier 3` -> `Tier 2` -> `Tier 1`).**
-  * `Tier 4` (`kanji-rare-XX`, `hanzi-rare-XX`, `hangul-rare-XX`, `hanja-rare-XX`) sits at the top of the stylesheet with a 1-token contiguous hex range (`U+XXXX-YYYY`) per Unicode block (`Ext-A`, `BMP`, `Compat`, `SIP`, `TIP`, never bridging across planes). Its `.woff2` binary excludes `Tier 3` frequent characters, which `Tier 3` through `Tier 1` rules declared later in the stylesheet shadow.
-  * `Tier 3` (`kanji-freq-XX`, `hanzi-freq-XX`, `hangul-freq-XX`) uses inverted-pyramid frequency chunks (`200x2` top 400, `80x10` ranks 401..1,200, and `~70` tail).
-  * `Tier 2` separates `symbols-ext` from `symbols-ui` (`→`, `▶`, `①`, `✓`, `℃`, `Ⅰ-Ⅻ`, `≒`).
-  * `Tier 1` places base characters with their combining marks and paired punctuation (`kana-core` in `jp`, `hangul-core` in `kr`, `cjk-core` with Bopomofo and tone marks in `sc`, `tc`, and `hk`, and `latin` with `U+0300-036F` combining marks) so intra-slice `GSUB` and `GPOS` lookups (`ccmp`, `mark`, `mkmk`, `chws`, `vchw`, `ljmo`, `vjmo`, `tjmo`) survive `fontTools.subset`.
+See [`docs/architecture-and-rationale.md`](../../docs/architecture-and-rationale.md) for the full 4-tier cascade shadowing design and OpenType shaping rationale.
+
+* **Four-tier CSS cascade shadowing (`Tier 4` -> `Tier 3` -> `Tier 2` -> `Tier 1`).** `Tier 4` rare ideograph/syllable slices sit at the top of the stylesheet with 1-token hex ranges (`U+XXXX-YYYY`) per Unicode block (never bridging across planes), shadowed by `Tier 3` inverted-pyramid frequency chunks (`200x2`, `80x10`, `~70` tail), `Tier 2` symbols (`symbols-ext`, `symbols-ui`), and `Tier 1` core phonetic and Latin slices (`kana-core`, `hangul-core`, `cjk-core`, `latin`) declared below.
 * **Multiprocessing guard.** When `workers > 1` (or `workers=None` on multi-core systems), `slice_font`, `slice_fonts`, and `export_woff2_slices` spawn a `ProcessPoolExecutor`. Guard top-level scripts with `if __name__ == "__main__":` or pass `workers=1`.
 * **Layout feature overrides.** `SliceConfig(layout_features=("*",))` keeps all OpenType layout features by default. Passing specific tags via `layout_features` or `--layout-features` replaces the entire list, so include vertical and composition tags (`ccmp,locl,kern,mark,mkmk,liga,palt,halt,vpal,vhal,vkrn,vert,vrt2,ruby`) when needed.
 
@@ -75,20 +73,10 @@ if __name__ == "__main__":
 
 ## Host and consume generated CSS and slices
 
-* **URL resolution (`--slices-dir`, `--url-prefix`, `--css-out`, and `--filename-hash`).**
-  * By default, `<out-dir>/<slug>.css` references `url('./slices/<slug>-<slice_id>-<hash8>.woff2') format('woff2')`, which resolves relative to the `.css` file URL. When serving both `<slug>.css` and `slices/*.woff2` from a static directory (such as `public/fonts/<slug>/`), keep the defaults and link `<link rel="stylesheet" href="/fonts/<slug>/<slug>.css">`.
-  * When importing `<slug>.css` into a bundler (Vite, Astro, Next.js) while serving slices from `public/` or a separate CDN origin, pass `--css-out src/styles/<slug>.css` alongside `-o public/fonts/<slug> --url-prefix "/fonts/<slug>/slices"` (or `--url-prefix "https://cdn.example.com/fonts/<slug>/slices"`) so `.woff2` slices go directly to `public/` while the stylesheet goes to `src/`. When placing both CSS and `.woff2` slices inside a bundler-managed `src/assets/` folder where the bundler adds its own asset hash, pass `--no-filename-hash`.
-  * Pass `--slices-dir .` (or `SliceConfig(slices_subdir=".")`) to write `.woff2` files into the same directory as `<slug>.css`.
-* **HTML `<head>` placement and preloading.**
-  * Place `<link>` tags in `<head>` **after** `<meta charset="utf-8">`, viewport `<meta>` tags, `<title>`, and any synchronous inline `<script>` or `<script type="importmap">`, and **before** external `<script>` tags (`defer` or `type="module"`):
-    1. `<link rel="preconnect" href="https://cdn.example.com" crossorigin>` (only when serving slices from a separate origin)
-    2. `<link rel="preload" href=".../<slug>-kana-core-<hash8>.woff2" as="font" type="font/woff2" crossorigin>` (optional; at most Tier 1 core slices, printed by `cleome build`)
-    3. `<link rel="stylesheet" href=".../<slug>.css">`
-  * **Do not** preload all `.woff2` slices or Tier 2-4 Kanji, Hanzi, or Hangul chunks; browsers use `unicode-range` to download only the slices needed by rendered text. When preloading above-the-fold text, preload at most the Tier 1 core slices (`latin` and `kana-core`, `hangul-core`, or `cjk-core`) and include `as="font" type="font/woff2" crossorigin` (even on same-origin hosts) to match `@font-face`'s anonymous CORS mode.
-  * **Do not** load `<slug>.css` via CSS `@import url(...)` (which hides `<slug>.css` from browser preload scanners), **do not** place blocking `<script src="...">` before `<link rel="preconnect">` or `<link rel="stylesheet">` (or synchronous inline `<script>` after `<link rel="stylesheet">`), and **do not** place `<link rel="stylesheet">` inside `<body>`.
-* **HTTP headers and cache invalidation.**
-  * Cross-origin CDN responses for `.woff2` files must include `Access-Control-Allow-Origin` and `Content-Type: font/woff2` without HTTP `Content-Encoding` re-compression, because WOFF2 streams are already Brotli-compressed. Compress `<slug>.css` with HTTP Brotli or gzip.
-  * Because built slice filenames (`<slug>-<slice_id>-<hash8>.woff2`) include an 8-character SHA-256 content hash by default, you can serve `.woff2` files with `Cache-Control: public, max-age=31536000, immutable` without rotating directory paths. When using `--no-filename-hash`, host under a versioned directory path (such as `/fonts/<slug>/v1/`) when setting `immutable`.
+See [`docs/hosting-and-usage.md`](../../docs/hosting-and-usage.md) for complete deployment examples, HTML `<head>` ordering, preloading rules, CORS headers, and `Cache-Control` setup.
+
+* **URL resolution (`--slices-dir`, `--url-prefix`, `--css-out`, and `--filename-hash`).** Keep defaults when serving `<slug>.css` and `slices/*.woff2` together from a static folder. Pass `--css-out` and `--url-prefix` when importing CSS into a bundler while serving `.woff2` slices from `public/` or a CDN, or pass `--no-filename-hash` when a bundler adds its own asset hash.
+* **Preloading and HTTP headers.** Preload at most the Tier 1 core slices (`latin` and `kana-core`, `hangul-core`, or `cjk-core`) with `as="font" type="font/woff2" crossorigin`. Serve `.woff2` files with `Content-Type: font/woff2` (and `Access-Control-Allow-Origin` on cross-origin CDNs) without HTTP `Content-Encoding` re-compression, and use `Cache-Control: public, max-age=31536000, immutable` when content hashes are enabled.
 
 ## File Issues from consumer projects
 
