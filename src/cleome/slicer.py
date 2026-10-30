@@ -16,7 +16,7 @@ from bisect import bisect_left, bisect_right
 from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
-from stixis import canonicalize, format_urange
+from stixis import canonicalize
 
 from cleome.data.kanji_freq import KANJI_FREQ_RANK
 from cleome.data.kr_freq import KR_HANGUL_FREQ_RANK
@@ -213,7 +213,7 @@ def _build_rare_ideograph_slices(
     slices: list[SliceSpec] = []
     total_rare = len(rare_chunk_tuples)
     for i, (reg_name, ch_cps, s_hex, e_hex) in enumerate(rare_chunk_tuples, start=1):
-        ur_token = format_urange((s_hex, e_hex))
+        ur_token = format_unicode_range((s_hex, e_hex))
         slices.append(
             SliceSpec(
                 slice_id=f"{category}-{i:02d}",
@@ -434,7 +434,7 @@ def _build_kr_slice_plan(all_cps: set[int], config: SliceConfig) -> list[SliceSp
     total_rare_hangul = len(rare_hangul_chunks)
     for i, ch_cps in enumerate(rare_hangul_chunks, start=1):
         s_hex, e_hex = ch_cps[0], ch_cps[-1]
-        ur_token = format_urange((s_hex, e_hex))
+        ur_token = format_unicode_range((s_hex, e_hex))
         slices.append(
             SliceSpec(
                 slice_id=f"hangul-rare-{i:02d}",
