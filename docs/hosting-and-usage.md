@@ -140,22 +140,16 @@ cleome plan SourceHanSansJP-VF.otf
 
 ### Variable font axes and static font bundles
 
-* **Variable fonts (`fvar`).** Cleome extracts continuous descriptor ranges (`font-weight: 250 900`, `font-stretch: 70% 100%`) from `fvar`. All weights and widths share the same `.woff2` slices, so using `font-weight: 400` in body text and `font-weight: 700` in headings downloads each required slice once. When a variable font includes an `ital` or `slnt` axis, Cleome emits `@font-face` rules for each supported style (`normal`, `italic`, `oblique <min>deg <max>deg`) pointing to the same `.woff2` slice files.
-* **Static font bundles.** When you pass multiple static `.ttf` or `.otf` files (`cleome build Regular.ttf Bold.ttf -o dist/web`), Cleome emits a separate set of `@font-face` rules and `.woff2` slice files per variant. Bundle only the static weights used on the page so headings and body text do not download unused weight files.
+* **Variable fonts (`fvar`).** A variable font shares one set of `.woff2` slices across all weights and widths (`font-weight: 250 900`, `font-stretch: 70% 100%`), and across `@font-face` style rules (`normal`, `italic`, `oblique <min>deg <max>deg`) when the font has `ital` or `slnt` axes. Using `font-weight: 400` in body text and `font-weight: 700` in headings downloads each required slice once.
+* **Static font bundles.** Passing multiple static `.ttf` or `.otf` files (`cleome build Regular.ttf Bold.ttf -o dist/web`) emits a separate set of `@font-face` rules and `.woff2` slice files per variant. Bundle only the static weights used on the page so headings and body text do not download unused weight files. See [`docs/architecture-and-rationale.md`](architecture-and-rationale.md) for how Cleome extracts axis descriptors and per-variant slices.
 
 
 ### OpenType layout features and UVS/IVS sequences
 
-Cleome keeps all OpenType layout features (`layout_features=('*',)` with forward `GSUB` glyph closure) and `cmap` Format 14 variation sequences by default:
+See [`docs/architecture-and-rationale.md`](architecture-and-rationale.md) for the full rationale behind Tier 1 co-location, `GSUB` and `GPOS` lookup retention, and `cmap` Format 14 variation sequences, and [`skills/cleome/SKILL.md`](../skills/cleome/SKILL.md) for `--layout-features` (`SliceConfig.layout_features`) configuration.
 
-* **Single-glyph substitutions work in every slice.** Every `.woff2` slice keeps vertical writing alternates (`vert`, `vrt2`), proportional and halfwidth metrics (`palt`, `vpal`, `halt`, `vhal`, `fwid`, `pwid`), JIS glyph set variants (`jp78`, `jp83`, `jp90`, `nlck`), and `ruby` glyphs.
-* **Intra-slice multi-glyph lookups (`ccmp`, `mark`, `mkmk`, `chws`, `vchw`, `kern`, `liga`, `ljmo`, `vjmo`, `tjmo`).** Browsers do not apply `GSUB` or `GPOS` lookups across separate `@font-face` slice files. Cleome places base characters with their combining marks and paired punctuation in Tier 1 so intra-slice shaping works:
-  * **`latin` (all locales).** ASCII and Latin base letters with Combining Diacritical Marks (`U+0300-036F`, `U+1AB0-1AFF`, `U+1DC0-1DFF`, `U+FE20-FE2F`).
-  * **`kana-core` (`jp`).** Hiragana, Katakana, combining voiced marks (`U+3099-309A`), CJK punctuation (`U+3000-303F`: `「」`, `『』`, `【】`, `、`, `。`), and fullwidth forms (`U+FF01-FF60`), preserving `chws` and `vchw` contextual spacing between consecutive brackets and punctuation.
-  * **`hangul-core` (`kr`).** CJK punctuation (`《》`, `「」`), Hangul Compatibility Jamo (`U+3130-318F`), and Conjoining Hangul Jamo (`U+1100-11FF`, `U+A960-A97F`, `U+D7B0-D7FF`).
-  * **`cjk-core` (`sc`, `tc`, `hk`).** CJK punctuation (`〈〉`, `『』`, `「」`, `《》`), Bopomofo (`U+3100-312F`, `U+31A0-31BF`), and Mandarin tone marks (`U+02C7`, `U+02C9-02CB`, `U+02D9`), preserving `GPOS` `mark` and `mkmk` tone attachment and `chws` and `vchw` bracket spacing.
-* **Cross-slice limit.** `fontTools.subset` prunes multi-glyph lookups whose input glyphs belong to different slices, such as pair kerning between a Latin character in `latin` and a Kana character in `kana-core`, or a `U+0300-036F` combining mark applied to a symbol in `symbols-ext`. Browsers cannot shape those lookups across `@font-face` boundaries.
-* **Ideographic Variation Sequences (`cmap` Format 14).** Each slice retains standard IVS (`U+E0100..U+E01EF`) and Standardized Variants (`VS1..VS16`, `U+FE00..U+FE0F`) for its base characters without leaking standalone selector codepoints into the Format 4 or Format 12 base `cmap`.
+* **What works in CSS.** Single-glyph OpenType features (`vert`, `vrt2`, `palt`, `vpal`, `halt`, `vhal`, `fwid`, `pwid`, `jp78`, `jp83`, `jp90`, `nlck`, `ruby`) and `cmap` Format 14 variation sequences (`IVS` `U+E0100..U+E01EF` and `VS1..VS16`) work in every slice. Multi-glyph lookups (`ccmp`, `mark`, `mkmk`, `chws`, `vchw`, `kern`, `liga`, `ljmo`, `vjmo`, `tjmo`) work within each Tier 1 core slice (`latin`, `kana-core`, `hangul-core`, `cjk-core`).
+* **Cross-slice limit.** Browsers do not apply `GSUB` or `GPOS` lookups across separate `@font-face` slice files, so multi-glyph lookups whose input glyphs belong to different slices (such as pair kerning between `latin` and `kana-core`, or a `U+0300-036F` combining mark applied to a symbol in `symbols-ext`) are not shaped across slice boundaries.
 
 
 ---
@@ -197,7 +191,7 @@ Without `Access-Control-Allow-Origin`, browsers reject cross-origin `@font-face`
 
 ### Cache invalidation and content hashes (`Cache-Control`)
 
-By default (`--filename-hash` / `SliceConfig(filename_hash=True)`), Cleome includes an 8-character SHA-256 content digest of each `.woff2` binary in its filename (`<slug>(-<variant>)-<slice_id>-<hash8>.woff2`) and removes superseded `<slug>(-<variant>)-<slice_id>-[0-9a-f]{8}.woff2` files on rebuild:
+When content hashes are enabled (the default; see section 1 and [`skills/cleome/SKILL.md`](../skills/cleome/SKILL.md) for `SliceConfig.filename_hash`), Cleome removes superseded `<slug>(-<variant>)-<slice_id>-[0-9a-f]{8}.woff2` files on rebuild:
 
 1. **Serve `.woff2` slices with immutable caching**:
 

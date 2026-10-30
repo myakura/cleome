@@ -30,16 +30,14 @@ uv tool install git+https://github.com/myakura/cleome
 
 ## CLI usage
 
+See the [Hosting and usage guide](docs/hosting-and-usage.md) for deployment layouts (`--slices-dir`, `--url-prefix`, `--css-out`, `--no-filename-hash`) and [`skills/cleome/SKILL.md`](skills/cleome/SKILL.md) for the full CLI and Python API contract.
+
 ```bash
 # Preview the dynamic 4-tier slice plan without writing files (read-only)
 cleome plan SourceHanSansJP-VF.otf
 cleome plan SourceHanSansJP-VF.otf --json
 
-# Slice a Variable Font (auto-detects CJK profile; outputs <out-dir>/<slug>.css and <out-dir>/slices/<slug>-*-<hash8>.woff2)
-# Subsequent builds with unchanged inputs/config skip WOFF2 subsetting automatically; pass --force to rebuild
-# Pass --dry-run to validate inputs and output paths without creating directories or writing files
-# Pass --css-out to write the stylesheet to src/styles/ while keeping .woff2 slices in public/fonts/
-# Pass --no-filename-hash when placing slices in a bundler-managed directory that adds its own asset hash
+# Slice a Variable Font (outputs <out-dir>/<slug>.css and <out-dir>/slices/<slug>-*-<hash8>.woff2)
 cleome build SourceHanSansJP-VF.otf -o dist/web
 cleome build SourceHanSansJP-VF.otf -o dist/web --dry-run
 cleome build SourceHanSansJP-VF.otf -o dist/web --force
@@ -54,8 +52,6 @@ cleome build NotoSansKR-VF.ttf --locale kr -o dist/web-kr
 cleome build MyFontJP-Regular.ttf MyFontJP-Bold.ttf -o dist/web-static
 
 # Customize CSS font-family, URL prefix, chunk sizes, or retained OpenType layout features
-# Note: --layout-features replaces the entire feature list (default is '*' for all features),
-# so include vertical writing (vert,vrt2,vpal,vhal,vkrn) and composition (ccmp,locl) tags if needed.
 cleome build MyFont-VF.otf -o dist/web \
   --locale jp \
   --family "My Font JP" \
@@ -70,9 +66,7 @@ cleome build MyFont-VF.otf -o dist/web \
 
 ## Python API usage
 
-Call `slice_font` or `slice_fonts` from a build script with either file paths or in-memory `fontTools.ttLib.TTFont` objects. Cleome does not mutate caller-supplied `TTFont` instances.
-
-When `workers > 1` (the default), Cleome runs subsetting in a `ProcessPoolExecutor`. On platforms that use `spawn` or `forkserver` (`macOS`, `Windows`, and `Linux` on Python 3.14+), guard top-level scripts with `if __name__ == "__main__":` or pass `workers=1`.
+See [`skills/cleome/SKILL.md`](skills/cleome/SKILL.md) for all exported functions, dataclasses, non-mutation guarantees, and `ProcessPoolExecutor` entrypoint rules.
 
 ```python
 from pathlib import Path
