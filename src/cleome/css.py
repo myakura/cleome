@@ -24,7 +24,6 @@ from stixis import (
 from cleome.metadata import (
     FontMetadata,
     _validate_filename_token,
-    validate_and_compute_variant_suffixes,
 )
 from cleome.slicer import SliceConfig, SliceSpec
 
@@ -338,14 +337,5 @@ def generate_css(
 
 
 __all__ = [
-    "_BLOCK_GLYPHS_RE",
-    "_CACHE_COMMENT_RE",
-    "_CACHE_FORMAT_VERSION",
-    "_ResolvedOutputs",
-    "_compute_slices_output_digest",
-    "_ensure_directory_creatable",
-    "_format_cache_comment",
-    "_resolve_and_validate_outputs",
-    "_resolve_url_prefix",
     "generate_css",
 ]

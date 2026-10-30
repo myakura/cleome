@@ -24,7 +24,6 @@ from cleome.css import _ensure_directory_creatable
 from cleome.metadata import (
     FontMetadata,
     _split_hashed_stem,
-    _uvs_selector_sort_key,
     _validate_filename_token,
     patch_uvs_missing_base_cmap,
 )

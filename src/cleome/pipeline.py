@@ -41,14 +41,6 @@ from cleome.subsetter import (
 
 __all__ = [
     "SliceBundleResult",
-    "_BLOCK_GLYPHS_RE",
-    "_CACHE_COMMENT_RE",
-    "_CACHE_FORMAT_VERSION",
-    "_compute_cache_key",
-    "_compute_slices_output_digest",
-    "_format_cache_comment",
-    "_get_toolchain_versions",
-    "_try_load_cached_bundle",
     "slice_font",
     "slice_fonts",
 ]
