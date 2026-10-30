@@ -621,6 +621,16 @@ class TestCleomeCLI(unittest.TestCase):
                 f"Final stderr line did not contain wrapped RuntimeError. Got:\n{proc_bad.stderr}",
             )
 
+    def test_package_version_matches_metadata(self) -> None:
+        """
+        Verify that `cleome.__version__` matches the installed package metadata version.
+        """
+        import importlib.metadata
+
+        import cleome
+
+        self.assertEqual(cleome.__version__, importlib.metadata.version("cleome"))
+
     def test_consumer_skill_and_readme_stay_in_sync_with_public_api(self) -> None:
         """
         Verify that `skills/cleome/SKILL.md` and `README.md` stay synchronized with `cleome.__all__`,
