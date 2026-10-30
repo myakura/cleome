@@ -30,7 +30,7 @@ uv tool install git+https://github.com/myakura/cleome
 
 ## CLI usage
 
-See the [Hosting and usage guide](docs/hosting-and-usage.md) for deployment layouts (`--slices-dir`, `--url-prefix`, `--css-out`, `--no-filename-hash`) and [`skills/cleome/SKILL.md`](skills/cleome/SKILL.md) for the full CLI and Python API contract.
+See the [Hosting and usage guide](https://github.com/myakura/cleome/blob/main/docs/hosting-and-usage.md) for deployment layouts (`--slices-dir`, `--url-prefix`, `--css-out`, `--no-filename-hash`) and [`skills/cleome/SKILL.md`](https://github.com/myakura/cleome/blob/main/skills/cleome/SKILL.md) for the full CLI and Python API contract.
 
 ```bash
 # Preview the dynamic 4-tier slice plan without writing files (read-only)
@@ -66,7 +66,7 @@ cleome build MyFont-VF.otf -o dist/web \
 
 ## Python API usage
 
-See [`skills/cleome/SKILL.md`](skills/cleome/SKILL.md) for all exported functions, dataclasses, non-mutation guarantees, and `ProcessPoolExecutor` entrypoint rules.
+See [`skills/cleome/SKILL.md`](https://github.com/myakura/cleome/blob/main/skills/cleome/SKILL.md) for all exported functions, dataclasses, non-mutation guarantees, and `ProcessPoolExecutor` entrypoint rules.
 
 ```python
 from pathlib import Path
@@ -121,9 +121,9 @@ uv run python -m unittest discover -s tests -v -f
 
 ## Documentation
 
-* [Hosting and usage guide](docs/hosting-and-usage.md) explains how to deploy generated `<slug>.css` and `.woff2` slices on static hosts, bundlers, and CDNs, configure `--url-prefix` and `--slices-dir`, and set preload, CORS, and `Cache-Control` headers.
-* [Architecture and rationale](docs/architecture-and-rationale.md) explains the 4-tier cascade shadowing design, inverted-pyramid Kanji granularity simulations, OpenType subsetting details, and the issues found in Google Fonts' Japanese delivery.
-* [Chinese and Korean (`KR` / `SC` / `TC` / `HK`) slicing analysis](docs/cjk-slicing-analysis.md) covers Google Fonts' Korean and Chinese (`SC`, `TC`, `HK`) slice templates, ghost `unicode-range` rules, punctuation, Jamo, and Bopomofo splits, and 4-tier simulation results.
+* [Hosting and usage guide](https://github.com/myakura/cleome/blob/main/docs/hosting-and-usage.md) explains how to deploy generated `<slug>.css` and `.woff2` slices on static hosts, bundlers, and CDNs, configure `--url-prefix` and `--slices-dir`, and set preload, CORS, and `Cache-Control` headers.
+* [Architecture and rationale](https://github.com/myakura/cleome/blob/main/docs/architecture-and-rationale.md) explains the 4-tier cascade shadowing design, inverted-pyramid Kanji granularity simulations, OpenType subsetting details, and the issues found in Google Fonts' Japanese delivery.
+* [Chinese and Korean (`KR` / `SC` / `TC` / `HK`) slicing analysis](https://github.com/myakura/cleome/blob/main/docs/cjk-slicing-analysis.md) covers Google Fonts' Korean and Chinese (`SC`, `TC`, `HK`) slice templates, ghost `unicode-range` rules, punctuation, Jamo, and Bopomofo splits, and 4-tier simulation results.
 
 ---
 
@@ -142,4 +142,4 @@ uv run python -m unittest discover -s tests -v -f
 
 ## License
 
-[MIT License](LICENSE)
+[MIT License](https://github.com/myakura/cleome/blob/main/LICENSE)
