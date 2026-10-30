@@ -78,7 +78,10 @@ class TestSlicerAndLocales(unittest.TestCase):
             ur_cps = parse_unicode_range(s.css_unicode_range)
             has_sip = any(0x20000 <= c <= 0x2FA1F for c in ur_cps)
             has_tip = any(0x30000 <= c <= 0x3347F for c in ur_cps)
-            self.assertFalse(has_sip and has_tip, f"Slice {s.slice_id} bridged SIP and TIP: {s.css_unicode_range}")
+            self.assertFalse(
+                has_sip and has_tip,
+                f"Slice {s.slice_id} bridged SIP and TIP: {s.css_unicode_range}",
+            )
 
     def test_cjk_locale_auto_detection_and_validation(self) -> None:
         """
@@ -110,14 +113,18 @@ class TestSlicerAndLocales(unittest.TestCase):
         kr_cps = set(KR_HANGUL_FREQ_CODEPOINTS[:1500]) | set(range(0x0020, 0x007F))
         self.assertEqual(detect_font_locale(kr_cps, "Custom Display"), "kr")
         self.assertEqual(
-            detect_font_locale(set(KR_HANGUL_FREQ_CODEPOINTS[:500]) | kana_block, "Custom Display"),
+            detect_font_locale(
+                set(KR_HANGUL_FREQ_CODEPOINTS[:500]) | kana_block, "Custom Display"
+            ),
             "kr",
         )
 
         sc_cps = set(SC_HANZI_FREQ_CODEPOINTS) | set(range(0x0020, 0x007F))
         self.assertEqual(detect_font_locale(sc_cps, "Custom Sans"), "sc")
         self.assertEqual(
-            detect_font_locale(set(SC_HANZI_FREQ_CODEPOINTS[:2000]) | kana_block, "Custom Sans"),
+            detect_font_locale(
+                set(SC_HANZI_FREQ_CODEPOINTS[:2000]) | kana_block, "Custom Sans"
+            ),
             "sc",
         )
         self.assertEqual(
@@ -133,7 +140,9 @@ class TestSlicerAndLocales(unittest.TestCase):
         tc_cps = set(TC_HANZI_FREQ_CODEPOINTS) | set(range(0x3105, 0x312A))
         self.assertEqual(detect_font_locale(tc_cps, "Custom Serif"), "tc")
         self.assertEqual(
-            detect_font_locale(set(TC_HANZI_FREQ_CODEPOINTS[:2000]) | kana_block, "Custom Serif"),
+            detect_font_locale(
+                set(TC_HANZI_FREQ_CODEPOINTS[:2000]) | kana_block, "Custom Serif"
+            ),
             "tc",
         )
 
@@ -188,11 +197,18 @@ class TestSlicerAndLocales(unittest.TestCase):
 
         self.assertEqual(b1.resolved_locale, "sc")
         self.assertEqual(b2.resolved_locale, "sc")
-        self.assertEqual([s.slice_id for s in b1.variant_plans[0]], ["hanzi-freq-01", "cjk-core", "latin"])
-        self.assertEqual([s.slice_id for s in b1.variant_plans[1]], ["cjk-core", "latin"])
+        self.assertEqual(
+            [s.slice_id for s in b1.variant_plans[0]],
+            ["hanzi-freq-01", "cjk-core", "latin"],
+        )
+        self.assertEqual(
+            [s.slice_id for s in b1.variant_plans[1]], ["cjk-core", "latin"]
+        )
         self.assertEqual(b2.variant_plans, [b1.variant_plans[1], b1.variant_plans[0]])
         self.assertEqual(b1.union_plan, b2.union_plan)
-        self.assertEqual([s.slice_id for s in b2.union_plan], ["hanzi-freq-01", "cjk-core", "latin"])
+        self.assertEqual(
+            [s.slice_id for s in b2.union_plan], ["hanzi-freq-01", "cjk-core", "latin"]
+        )
 
     def test_korean_profile_cascade_shadowing_and_jamo_colocation(self) -> None:
         """
@@ -206,7 +222,9 @@ class TestSlicerAndLocales(unittest.TestCase):
         ksx_only_cps: set[int] = set(range(0x0020, 0x007F))
         ksx_only_cps.update(range(0x3000, 0x3040))  # 《》, 「」, 『』, 【】
         ksx_only_cps.update(range(0x3131, 0x3164))  # Compatibility Jamo ㄱ..ㅎ, ㅏ..ㅣ
-        ksx_only_cps.update((0x1100, 0x1161, 0xA960, 0xD7B0))  # Conjoining Jamo + Ext-A/B
+        ksx_only_cps.update(
+            (0x1100, 0x1161, 0xA960, 0xD7B0)
+        )  # Conjoining Jamo + Ext-A/B
         ksx_only_cps.update(range(0x2190, 0x21A0))  # UI arrows
         ksx_only_cps.update(KR_HANGUL_FREQ_CODEPOINTS)
 
@@ -216,21 +234,39 @@ class TestSlicerAndLocales(unittest.TestCase):
         self.assertEqual([s for s in plan_ksx if s.tier == 4], [])
 
         hangul_core = next(s for s in plan_ksx if s.slice_id == "hangul-core")
-        for ch in "《》「」『』【】ㅋㅎㅜㅠ\u1100\u1161\uA960\uD7B0":
-            self.assertIn(ord(ch), hangul_core.binary_codepoints, f"{ch!r} missing from hangul-core")
+        for ch in "《》「」『』【】ㅋㅎㅜㅠ\u1100\u1161\ua960\ud7b0":
+            self.assertIn(
+                ord(ch),
+                hangul_core.binary_codepoints,
+                f"{ch!r} missing from hangul-core",
+            )
 
         # Full Korean font with rare Hangul syllables and Hanja
         full_kr_cps = set(ksx_only_cps)
-        full_kr_cps.update(range(0xAC00, 0xB800))  # Includes rare non-KS X 1001 syllables
+        full_kr_cps.update(
+            range(0xAC00, 0xB800)
+        )  # Includes rare non-KS X 1001 syllables
         full_kr_cps.update(range(0x4E00, 0x5100))  # Rare Hanja
-        plan_full_kr = build_slice_plan(frozenset(full_kr_cps), SliceConfig(locale="auto"), family_name="Noto Sans KR")
+        plan_full_kr = build_slice_plan(
+            frozenset(full_kr_cps),
+            SliceConfig(locale="auto"),
+            family_name="Noto Sans KR",
+        )
         assert_generic_cascade_invariants(self, plan_full_kr, frozenset(full_kr_cps))
         self.assertTrue(any(s.category == "hanja-rare" for s in plan_full_kr))
         self.assertTrue(any(s.category == "hangul-rare" for s in plan_full_kr))
         self.assertTrue(any(s.category == "hangul-freq" for s in plan_full_kr))
 
         # Verify Conjoining Jamo GSUB ccmp shaping survives WOFF2 subsetting in hangul-core
-        jamo_cps = [ord("A"), 0x1100, 0x1161, ord("ㅋ"), ord("《"), ord("》"), ord("가")]
+        jamo_cps = [
+            ord("A"),
+            0x1100,
+            0x1161,
+            ord("ㅋ"),
+            ord("《"),
+            ord("》"),
+            ord("가"),
+        ]
         tt_kr = create_synthetic_ttfont(jamo_cps, family_name="Test Sans KR")
         tt_kr.setGlyphOrder(tt_kr.getGlyphOrder() + ["jamo_ga_comp"])
         tt_kr["glyf"]["jamo_ga_comp"] = tt_kr["glyf"]["uni0041"]
@@ -248,12 +284,18 @@ class TestSlicerAndLocales(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmp:
             res_kr = slice_font(tt_kr, out_dir=Path(tmp) / "kr_out", workers=1)
-            hc_bf = next(bf for bf in res_kr.built_files if bf.spec.slice_id == "hangul-core")
+            hc_bf = next(
+                bf for bf in res_kr.built_files if bf.spec.slice_id == "hangul-core"
+            )
             with TTFont(hc_bf.path) as hc_tt:
                 cmap_hc = hc_tt.getBestCmap()
                 gsub_hc = hc_tt["GSUB"].table
                 self.assertEqual(len(gsub_hc.LookupList.Lookup), 1)
-                lig_hc = gsub_hc.LookupList.Lookup[0].SubTable[0].ligatures[cmap_hc[0x1100]][0]
+                lig_hc = (
+                    gsub_hc.LookupList.Lookup[0]
+                    .SubTable[0]
+                    .ligatures[cmap_hc[0x1100]][0]
+                )
                 self.assertEqual(lig_hc.Component, [cmap_hc[0x1161]])
 
                 buf_io = io.BytesIO()
@@ -283,15 +325,23 @@ class TestSlicerAndLocales(unittest.TestCase):
            characters (`嘅`, `啲`, `𨋢` `U+282E2`) in `hk` Tier 3 (`hanzi-freq-*`).
         3. Preserves Bopomofo + tone mark `GSUB`/`GPOS` shaping in `cjk-core` `.woff2`.
         """
-        base_cjk_cps: set[int] = set(range(0x0020, 0x0250))  # ASCII + Latin-Ext surrounding tone marks
+        base_cjk_cps: set[int] = set(
+            range(0x0020, 0x0250)
+        )  # ASCII + Latin-Ext surrounding tone marks
         base_cjk_cps.update(range(0x0300, 0x0330))  # Combining diacritics in latin
         base_cjk_cps.update((0x1D3A, 0x207F))  # Pe̍h-ōe-jī superscripts ᴺ, ⁿ
-        base_cjk_cps.update((0x02C7, 0x02C9, 0x02CA, 0x02CB, 0x02D9))  # Bopomofo tone marks ˇ ˉ ˊ ˋ ˙
-        base_cjk_cps.update((0x2103, 0x2160, 0x216B, 0x221E, 0x2252, 0x2260, 0x2266, 0x2267))  # ℃, Ⅰ, Ⅻ, ∞, ≒, ≠, ≦, ≧
+        base_cjk_cps.update(
+            (0x02C7, 0x02C9, 0x02CA, 0x02CB, 0x02D9)
+        )  # Bopomofo tone marks ˇ ˉ ˊ ˋ ˙
+        base_cjk_cps.update(
+            (0x2103, 0x2160, 0x216B, 0x221E, 0x2252, 0x2260, 0x2266, 0x2267)
+        )  # ℃, Ⅰ, Ⅻ, ∞, ≒, ≠, ≦, ≧
         base_cjk_cps.update(range(0x3000, 0x3040))  # 〈〉, 『』, 「」, 《》
         base_cjk_cps.update(range(0x3105, 0x312A))  # Bopomofo ㄅ..ㄩ
         base_cjk_cps.update(range(0x4E00, 0x5300))  # BMP Hanzi (mix of freq & rare)
-        base_cjk_cps.update((0x3400, 0x3410, 0x20001, 0x282E2, 0x30001))  # Ext-A, SIP (𨋢), TIP
+        base_cjk_cps.update(
+            (0x3400, 0x3410, 0x20001, 0x282E2, 0x30001)
+        )  # Ext-A, SIP (𨋢), TIP
 
         for loc, freq_sample in (
             ("sc", SC_HANZI_FREQ_CODEPOINTS[:600]),
@@ -306,11 +356,23 @@ class TestSlicerAndLocales(unittest.TestCase):
             latin_slice = next(s for s in plan if s.slice_id == "latin")
             sym_ui_slice = next(s for s in plan if s.slice_id == "symbols-ui")
             for ch in "ᴺⁿ":
-                self.assertIn(ord(ch), latin_slice.binary_codepoints, f"POJ {ch!r} missing from latin")
+                self.assertIn(
+                    ord(ch),
+                    latin_slice.binary_codepoints,
+                    f"POJ {ch!r} missing from latin",
+                )
             for ch in "℃ⅠⅫ∞≒≠≦≧":
-                self.assertIn(ord(ch), sym_ui_slice.binary_codepoints, f"UI symbol {ch!r} missing from symbols-ui")
+                self.assertIn(
+                    ord(ch),
+                    sym_ui_slice.binary_codepoints,
+                    f"UI symbol {ch!r} missing from symbols-ui",
+                )
             for ch in "〈〉『』「」《》ㄅㄆㄇㄈˇˉˊˋ˙":
-                self.assertIn(ord(ch), cjk_core.binary_codepoints, f"{ch!r} missing from cjk-core ({loc})")
+                self.assertIn(
+                    ord(ch),
+                    cjk_core.binary_codepoints,
+                    f"{ch!r} missing from cjk-core ({loc})",
+                )
                 self.assertNotIn(ord(ch), latin_slice.binary_codepoints)
                 self.assertNotIn(
                     ord(ch),
@@ -323,19 +385,38 @@ class TestSlicerAndLocales(unittest.TestCase):
                 self.assertIn(ord("點"), s1.binary_codepoints)
                 self.assertNotIn(ord("点"), s1.binary_codepoints)
                 tail_tier3 = {
-                    *next(s for s in plan if s.slice_id == f"hanzi-freq-{n:02d}").binary_codepoints
+                    *next(
+                        s for s in plan if s.slice_id == f"hanzi-freq-{n:02d}"
+                    ).binary_codepoints
                     for n in (45, 46, 47, 48)
                 }
                 for simp_ch in "点会简欢国时来":
-                    self.assertIn(ord(simp_ch), tail_tier3, f"Simplified {simp_ch!r} should be in TC/HK Tier 3 tail")
+                    self.assertIn(
+                        ord(simp_ch),
+                        tail_tier3,
+                        f"Simplified {simp_ch!r} should be in TC/HK Tier 3 tail",
+                    )
 
             if loc == "hk":
                 s13 = next(s for s in plan if s.slice_id == "hanzi-freq-13")
                 for ch in HK_COLOCATED_CANTONESE_CHARS:
-                    self.assertIn(ord(ch), s13.binary_codepoints, f"Cantonese {ch!r} must be co-located in HK hanzi-freq-13")
+                    self.assertIn(
+                        ord(ch),
+                        s13.binary_codepoints,
+                        f"Cantonese {ch!r} must be co-located in HK hanzi-freq-13",
+                    )
 
         # Verify Bopomofo + tone mark (ㄅ + ˇ U+02C7) shaping in cjk-core WOFF2 slice
-        bopo_cps = [ord("A"), 0x024F, 0x0300, ord("ㄅ"), 0x02C7, ord("『"), ord("』"), ord("語")]
+        bopo_cps = [
+            ord("A"),
+            0x024F,
+            0x0300,
+            ord("ㄅ"),
+            0x02C7,
+            ord("『"),
+            ord("』"),
+            ord("語"),
+        ]
         tt_tc = create_synthetic_ttfont(bopo_cps, family_name="Test Sans TC")
         tt_tc.setGlyphOrder(tt_tc.getGlyphOrder() + ["bopo_ba_caron"])
         tt_tc["glyf"]["bopo_ba_caron"] = tt_tc["glyf"]["uni0041"]
@@ -353,12 +434,18 @@ class TestSlicerAndLocales(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmp:
             res_tc = slice_font(tt_tc, out_dir=Path(tmp) / "tc_out", workers=1)
-            cc_bf = next(bf for bf in res_tc.built_files if bf.spec.slice_id == "cjk-core")
+            cc_bf = next(
+                bf for bf in res_tc.built_files if bf.spec.slice_id == "cjk-core"
+            )
             with TTFont(cc_bf.path) as cc_tt:
                 cmap_cc = cc_tt.getBestCmap()
                 gsub_cc = cc_tt["GSUB"].table
                 self.assertEqual(len(gsub_cc.LookupList.Lookup), 1)
-                lig_cc = gsub_cc.LookupList.Lookup[0].SubTable[0].ligatures[cmap_cc[ord("ㄅ")]][0]
+                lig_cc = (
+                    gsub_cc.LookupList.Lookup[0]
+                    .SubTable[0]
+                    .ligatures[cmap_cc[ord("ㄅ")]][0]
+                )
                 self.assertEqual(lig_cc.Component, [cmap_cc[0x02C7]])
 
                 buf_io = io.BytesIO()
@@ -369,7 +456,7 @@ class TestSlicerAndLocales(unittest.TestCase):
                 face = hb.Face(hb.Blob(buf_io.getvalue()))
                 hb_font = hb.Font(face)
                 hb_buf = hb.Buffer()
-                hb_buf.add_str("ㄅ\u02C7")
+                hb_buf.add_str("ㄅ\u02c7")
                 hb_buf.guess_segment_properties()
                 hb.shape(hb_font, hb_buf)
                 shaped = [

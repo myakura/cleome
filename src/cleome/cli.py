@@ -43,15 +43,17 @@ def _is_input_path_error(exc: OSError, input_paths: Sequence[Path]) -> bool:
     )
 
 
-def _handle_cli_exception(exc: BaseException, *, input_paths: Sequence[Path] = ()) -> int:
+def _handle_cli_exception(
+    exc: BaseException, *, input_paths: Sequence[Path] = ()
+) -> int:
     """Format a concise stderr diagnostic and return the Gate 3 exit code (`1`, `2`, `3`, or `4`)."""
     if isinstance(exc, PermissionError):
         target = f": {exc.filename}" if getattr(exc, "filename", None) else f": {exc}"
         print(f"Error: Permission denied{target}", file=sys.stderr)
         return EXIT_PERMISSION_ERROR
-    if isinstance(exc, (FileNotFoundError, IsADirectoryError, NotADirectoryError)) and _is_input_path_error(
-        exc, input_paths
-    ):
+    if isinstance(
+        exc, (FileNotFoundError, IsADirectoryError, NotADirectoryError)
+    ) and _is_input_path_error(exc, input_paths):
         target = f": {exc.filename}" if getattr(exc, "filename", None) else f": {exc}"
         print(f"Error: Input font not found or is a directory{target}", file=sys.stderr)
         return EXIT_INPUT_ERROR
@@ -65,7 +67,9 @@ def _handle_cli_exception(exc: BaseException, *, input_paths: Sequence[Path] = (
     return EXIT_RUNTIME_ERROR
 
 
-def _load_cli_input_metas(args: argparse.Namespace, config: SliceConfig) -> list[FontMetadata]:
+def _load_cli_input_metas(
+    args: argparse.Namespace, config: SliceConfig
+) -> list[FontMetadata]:
     """Open input font files and extract `FontMetadata` with CLI overrides applied."""
     metas: list[FontMetadata] = []
     for p in args.inputs:
@@ -88,7 +92,9 @@ def _positive_int(val_str: str) -> int:
     try:
         val = int(val_str)
     except ValueError as exc:
-        raise argparse.ArgumentTypeError(f"Expected a positive integer, got '{val_str}'.") from exc
+        raise argparse.ArgumentTypeError(
+            f"Expected a positive integer, got '{val_str}'."
+        ) from exc
     if val <= 0:
         raise argparse.ArgumentTypeError(f"Value must be > 0, got {val}.")
     return val
@@ -121,7 +127,9 @@ def _parse_freq_chunks(spec_str: str) -> tuple[tuple[int, int], ...]:
             )
         chunks.append((sz, cnt))
     if not chunks:
-        raise argparse.ArgumentTypeError("--freq-chunks cannot be empty (use 'none' for flat Tier 3 slicing).")
+        raise argparse.ArgumentTypeError(
+            "--freq-chunks cannot be empty (use 'none' for flat Tier 3 slicing)."
+        )
     return tuple(chunks)
 
 
@@ -406,7 +414,11 @@ def _run_plan(args: argparse.Namespace, config: SliceConfig) -> int:
                     "codepoints": len(meta.codepoints),
                     "total_slices": len(plan),
                     "tiers": {
-                        str(t): {"slices": sc, "codepoints": cp_c, "unicode_range_chars": ur_c}
+                        str(t): {
+                            "slices": sc,
+                            "codepoints": cp_c,
+                            "unicode_range_chars": ur_c,
+                        }
                         for t, (sc, cp_c, ur_c) in _summarize_plan_tiers(plan).items()
                     },
                 }
@@ -418,7 +430,9 @@ def _run_plan(args: argparse.Namespace, config: SliceConfig) -> int:
 
     print(f"Font Family : {prepared.family_name} (slug: {prepared.slug})")
     print(f"Locale      : {resolved_loc} (config: {config.locale})")
-    print(f"Type        : {'Variable' if first.is_variable else 'Static'} ({len(prepared.metas)} file(s))")
+    print(
+        f"Type        : {'Variable' if first.is_variable else 'Static'} ({len(prepared.metas)} file(s))"
+    )
     for m, plan in zip(prepared.metas, prepared.variant_plans):
         style_label = " + ".join(m.styles_css or (m.style_css,))
         print(
@@ -428,7 +442,7 @@ def _run_plan(args: argparse.Namespace, config: SliceConfig) -> int:
         for tier_num, (sc, t_chars, t_ur_len) in _summarize_plan_tiers(plan).items():
             print(
                 f"  Tier {tier_num}: {sc:2d} slices | {t_chars:6,d} chars | "
-                f"unicode-range len: {t_ur_len:6,d} chars ({t_ur_len/1024:.1f} KB)"
+                f"unicode-range len: {t_ur_len:6,d} chars ({t_ur_len / 1024:.1f} KB)"
             )
     return EXIT_OK
 
@@ -515,7 +529,14 @@ def _run_build(args: argparse.Namespace, config: SliceConfig) -> int:
             workers=args.workers,
             force=args.force,
         )
-    except (ValueError, TTLibError, EOFError, struct.error, RuntimeError, OSError) as exc:
+    except (
+        ValueError,
+        TTLibError,
+        EOFError,
+        struct.error,
+        RuntimeError,
+        OSError,
+    ) as exc:
         return _handle_cli_exception(exc, input_paths=args.inputs)
 
     elapsed = time.time() - t0
@@ -535,7 +556,9 @@ def _run_build(args: argparse.Namespace, config: SliceConfig) -> int:
     if args.json_output:
         first_meta = result.fonts_metadata[0]
         resolved_loc = (
-            detect_font_locale(first_meta.codepoints, family_name=first_meta.family_name)
+            detect_font_locale(
+                first_meta.codepoints, family_name=first_meta.family_name
+            )
             if config.locale == "auto"
             else config.locale
         )
@@ -586,7 +609,10 @@ def main(argv: list[str] | None = None) -> int:
             print(f"Error: Input font not found: {p}", file=sys.stderr)
             return EXIT_INPUT_ERROR
         if p.is_dir():
-            print(f"Error: Input path is a directory, expected a font file: {p}", file=sys.stderr)
+            print(
+                f"Error: Input path is a directory, expected a font file: {p}",
+                file=sys.stderr,
+            )
             return EXIT_INPUT_ERROR
 
     try:
@@ -596,9 +622,15 @@ def main(argv: list[str] | None = None) -> int:
             freq_tail_chunk_size=args.freq_tail_chunk_size,
             rare_chunk_size=args.rare_chunk_size,
             symbols_ext_chunk_size=args.symbols_chunk_size,
-            layout_closure=getattr(args, "layout_closure", _DEFAULT_CONFIG.layout_closure),
-            layout_features=tuple(getattr(args, "layout_features", _DEFAULT_CONFIG.layout_features)),
-            drop_tables=tuple(getattr(args, "drop_tables", _DEFAULT_CONFIG.drop_tables)),
+            layout_closure=getattr(
+                args, "layout_closure", _DEFAULT_CONFIG.layout_closure
+            ),
+            layout_features=tuple(
+                getattr(args, "layout_features", _DEFAULT_CONFIG.layout_features)
+            ),
+            drop_tables=tuple(
+                getattr(args, "drop_tables", _DEFAULT_CONFIG.drop_tables)
+            ),
             uvs_base_repair=args.uvs_base_repair,
             slices_subdir=getattr(args, "slices_dir", _DEFAULT_CONFIG.slices_subdir),
             url_prefix=getattr(args, "url_prefix", _DEFAULT_CONFIG.url_prefix),

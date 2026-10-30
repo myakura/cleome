@@ -97,7 +97,9 @@ def create_synthetic_ttfont(
     base_glyph = pen.glyph()
 
     empty_pen = TTGlyphPen(None)
-    glyf_map = {g: (empty_pen.glyph() if g == ".notdef" else base_glyph) for g in glyph_order}
+    glyf_map = {
+        g: (empty_pen.glyph() if g == ".notdef" else base_glyph) for g in glyph_order
+    }
     fb.setupGlyf(glyf_map)
 
     metrics = {g: (1000, 100) for g in glyph_order}
@@ -111,7 +113,12 @@ def create_synthetic_ttfont(
             "licenseInfoURL": "https://openfontlicense.org",
         }
     )
-    fb.setupOS2(sTypoAscender=880, sTypoDescender=-120, usWeightClass=weight, usWidthClass=width_class)
+    fb.setupOS2(
+        sTypoAscender=880,
+        sTypoDescender=-120,
+        usWeightClass=weight,
+        usWidthClass=width_class,
+    )
     fb.setupPost()
 
     if is_variable:
@@ -178,7 +185,9 @@ def assert_generic_cascade_invariants(
 
     for cp in codepoints:
         winner = resolved.get(cp)
-        tc.assertIsNotNone(winner, f"Codepoint U+{cp:04X} not matched by any CSS unicode-range")
+        tc.assertIsNotNone(
+            winner, f"Codepoint U+{cp:04X} not matched by any CSS unicode-range"
+        )
         assert winner is not None
         tc.assertIn(
             cp,
@@ -198,12 +207,14 @@ def assert_jp_plan_invariants(
 
     # Check Kana Core zero-omission guarantee (`む`, `モ`, `ヶ`, `ヵ`, `ゐ`, `ヱ`, `ゔ`, `「`, `」`, `０`, `\u3099`, `\u309A`)
     kana_slice = next((s for s in plan if s.slice_id == "kana-core"), None)
-    for ch in "あむモヶヵゐヱゔ\u3099\u309A、。「」【】０９ＡＺㇰㇿ":
+    for ch in "あむモヶヵゐヱゔ\u3099\u309a、。「」【】０９ＡＺㇰㇿ":
         cp = ord(ch)
         if cp in codepoints:
             tc.assertIsNotNone(kana_slice)
             assert kana_slice is not None
-            tc.assertIn(cp, kana_slice.binary_codepoints, f"'{ch}' missing from kana-core")
+            tc.assertIn(
+                cp, kana_slice.binary_codepoints, f"'{ch}' missing from kana-core"
+            )
 
     # Check Latin & UI Symbols placement (including Combining Diacritical Marks U+0300..036F)
     latin_slice = next((s for s in plan if s.slice_id == "latin"), None)
@@ -220,11 +231,15 @@ def assert_jp_plan_invariants(
         if cp in codepoints:
             tc.assertIsNotNone(sym_ui_slice)
             assert sym_ui_slice is not None
-            tc.assertIn(cp, sym_ui_slice.binary_codepoints, f"'{ch}' missing from symbols-ui")
+            tc.assertIn(
+                cp, sym_ui_slice.binary_codepoints, f"'{ch}' missing from symbols-ui"
+            )
 
     # Check that all 2010 Joyo Kanji (including JIS Level 3 𠮟塡剝頰 & 唾) + 𠮷 reside in Tier 3 (kanji-freq)
     tier3_cps = {*s.binary_codepoints for s in plan if s.tier == 3}
     for ch in "唾𠮟塡剝頰𠮷鷗噓繫﨑髙楷諧毀憬錮傲恣嘲喩慄":
         cp = ord(ch)
         if cp in codepoints:
-            tc.assertIn(cp, tier3_cps, f"'{ch}' (U+{cp:04X}) should be in Tier 3 kanji-freq")
+            tc.assertIn(
+                cp, tier3_cps, f"'{ch}' (U+{cp:04X}) should be in Tier 3 kanji-freq"
+            )

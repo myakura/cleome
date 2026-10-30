@@ -67,8 +67,7 @@ def _compute_slices_output_digest(built_files: Sequence[_SliceFileLike]) -> str:
 
 def _format_cache_comment(cache_key: str, out_digest: str) -> str:
     return (
-        f"/* cleome-cache: v{_CACHE_FORMAT_VERSION} "
-        f"key={cache_key} out={out_digest} */"
+        f"/* cleome-cache: v{_CACHE_FORMAT_VERSION} key={cache_key} out={out_digest} */"
     )
 
 
@@ -76,7 +75,9 @@ def _ensure_directory_creatable(dir_path: Path, label: str) -> None:
     """Raise `ValueError` if `dir_path` or any existing ancestor on disk is a non-directory file."""
     if dir_path.exists():
         if not dir_path.is_dir():
-            raise ValueError(f"{label} must be a directory path, not an existing file: {dir_path!r}")
+            raise ValueError(
+                f"{label} must be a directory path, not an existing file: {dir_path!r}"
+            )
         return
     for parent in dir_path.parents:
         if parent.exists():
@@ -174,7 +175,9 @@ def _resolve_and_validate_outputs(
     slices_dir = out_path if (not subdir or subdir == ".") else (out_path / subdir)
     slices_resolved = slices_dir.resolve()
     if not slices_resolved.is_relative_to(out_resolved):
-        raise ValueError(f"slices_dir {slices_dir!r} resolves outside out_dir {out_path!r}")
+        raise ValueError(
+            f"slices_dir {slices_dir!r} resolves outside out_dir {out_path!r}"
+        )
     _ensure_directory_creatable(slices_dir, "slices_dir")
 
     unified_slug = metas[0].slug
@@ -235,11 +238,15 @@ def _resolve_and_validate_outputs(
                     )
             slice_str = str(slice_out)
             if slice_str in seen_slice_paths:
-                raise ValueError(f"Duplicate slice output path across variants: {slice_str}")
+                raise ValueError(
+                    f"Duplicate slice output path across variants: {slice_str}"
+                )
             seen_slice_paths.add(slice_str)
             total_active_slices += 1
             if spec.tier == 1:
-                preview_fname = spec.filename(m.slug, m.variant_suffix, hash_placeholder)
+                preview_fname = spec.filename(
+                    m.slug, m.variant_suffix, hash_placeholder
+                )
                 preload_slices.append(
                     {
                         "slice_id": spec.slice_id,
@@ -299,7 +306,9 @@ def generate_css(
             styles = meta.styles_css
             if len(fonts_and_files) > 1:
                 v_label = f" ({meta.variant_suffix})" if meta.variant_suffix else ""
-                stretch_info = f", stretch: {meta.stretch_css}" if meta.stretch_css else ""
+                stretch_info = (
+                    f", stretch: {meta.stretch_css}" if meta.stretch_css else ""
+                )
                 style_info = " + ".join(styles)
                 rules.append(
                     CommentNode(

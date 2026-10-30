@@ -115,7 +115,9 @@ def _clone_cmap(src_cmap: object) -> object:
         nt.data = None
         nt.ttFont = None
         if getattr(subtable, "format", None) == 14 and hasattr(subtable, "uvsDict"):
-            nt.uvsDict = {sel: list(records) for sel, records in subtable.uvsDict.items()}
+            nt.uvsDict = {
+                sel: list(records) for sel, records in subtable.uvsDict.items()
+            }
         elif hasattr(subtable, "cmap"):
             nt.cmap = subtable.cmap.copy()
         new_tables.append(nt)
@@ -161,7 +163,8 @@ def _load_cached_font_state(
         has_format14 = False
         if cmap_table is not None:
             has_format14 = any(
-                getattr(t, "format", None) == 14 for t in getattr(cmap_table, "tables", ())
+                getattr(t, "format", None) == 14
+                for t in getattr(cmap_table, "tables", ())
             )
 
     state = _CachedFontState(
@@ -282,9 +285,7 @@ def _subset_single_slice_worker(
     state = _load_cached_font_state(active_ctx, font_idx)
     base_out_path = Path(base_out_path_str)
     buf = io.BytesIO()
-    with TTFont(
-        io.BytesIO(state.font_bytes), lazy=True, recalcTimestamp=False
-    ) as font:
+    with TTFont(io.BytesIO(state.font_bytes), lazy=True, recalcTimestamp=False) as font:
         font.setGlyphOrder(list(state.glyph_order))
         font._reverseGlyphOrderDict = dict(state.rev_glyph_order)
         if state.cmap_table is not None:
@@ -447,9 +448,7 @@ def _export_woff2_slices_batch(
         zip(variants, hints)
     ):
         sources.append(
-            _prepare_worker_source(
-                font_or_bytes, meta, config, is_woff_hint=woff_hint
-            )
+            _prepare_worker_source(font_or_bytes, meta, config, is_woff_hint=woff_hint)
         )
         font_items: list[tuple[SliceSpec, str, str]] = []
         for spec_idx, spec in enumerate(slice_specs):
@@ -470,7 +469,9 @@ def _export_woff2_slices_batch(
                 )
             out_str = str(out_path)
             if out_str in seen_out_paths:
-                raise ValueError(f"Duplicate slice output path across variants: {out_str}")
+                raise ValueError(
+                    f"Duplicate slice output path across variants: {out_str}"
+                )
             seen_out_paths.add(out_str)
             sortable_tasks.append((-len(cps), font_idx, spec_idx, cps, out_str))
             font_items.append((spec, fname, out_str))
@@ -583,4 +584,3 @@ def export_woff2_slices(
         workers=workers,
     )
     return batch_res[0] if batch_res else []
-
