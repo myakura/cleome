@@ -104,6 +104,8 @@ class TestCleomeCLI(unittest.TestCase):
                         "-c",
                         (
                             f"import sys; sys.path.insert(0, {str(src_dir)!r}); "
+                            f"import cleome; "
+                            f"_ = cleome.patch_uvs_missing_base_cmap; "
                             f"from cleome.cli import main; "
                             f"rc = main(['plan', {str(uvs_font_path)!r}]); "
                             f"assert rc == 0; "
