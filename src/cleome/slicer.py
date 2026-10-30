@@ -42,10 +42,7 @@ from cleome.urange import (
     CodepointSet,
     compact_unicode_range,
     format_unicode_range,
-    parse_unicode_range,
 )
-
-_compact_range_with_shadowing = compact_unicode_range
 
 
 @dataclass(frozen=True, slots=True)
@@ -504,7 +501,7 @@ def _append_tier2_and_tier1_slices(
                 if len(sym_ext_chunks) == 1
                 else f"symbols-ext-{idx:02d}"
             )
-            ur_str = _compact_range_with_shadowing(ch_cps, earlier_sorted)
+            ur_str = compact_unicode_range(ch_cps, earlier_sorted)
             slices.append(
                 SliceSpec(
                     slice_id=slice_id,
@@ -522,7 +519,7 @@ def _append_tier2_and_tier1_slices(
 
     if sym_ui_cps:
         forbidden_ui_sorted = sorted(earlier_cps | sym_ext_cps)
-        ur_ui = _compact_range_with_shadowing(sorted(sym_ui_cps), forbidden_ui_sorted)
+        ur_ui = compact_unicode_range(sorted(sym_ui_cps), forbidden_ui_sorted)
         slices.append(
             SliceSpec(
                 slice_id="symbols-ui",
@@ -537,7 +534,7 @@ def _append_tier2_and_tier1_slices(
 
     if core_cps:
         forbidden_core_sorted = sorted(earlier_cps | sym_ext_cps | sym_ui_cps)
-        ur_core = _compact_range_with_shadowing(sorted(core_cps), forbidden_core_sorted)
+        ur_core = compact_unicode_range(sorted(core_cps), forbidden_core_sorted)
         slices.append(
             SliceSpec(
                 slice_id=core_id,
@@ -554,7 +551,7 @@ def _append_tier2_and_tier1_slices(
         forbidden_latin_sorted = sorted(
             earlier_cps | sym_ext_cps | sym_ui_cps | core_cps
         )
-        ur_latin = _compact_range_with_shadowing(
+        ur_latin = compact_unicode_range(
             sorted(latin_cps), forbidden_latin_sorted
         )
         slices.append(

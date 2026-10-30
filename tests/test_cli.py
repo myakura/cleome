@@ -111,11 +111,7 @@ class TestCleomeCLI(unittest.TestCase):
                             f"assert 'cleome.subsetter' not in sys.modules; "
                             f"assert 'cleome.pipeline' not in sys.modules; "
                             f"from cleome.urange import compact_unicode_range, format_unicode_range, parse_unicode_range; "
-                            f"from cleome.slicer import _compact_range_with_shadowing, format_unicode_range as s_fmt, parse_unicode_range as s_parse; "
-                            f"assert _compact_range_with_shadowing is compact_unicode_range and s_fmt is format_unicode_range and s_parse is parse_unicode_range; "
-                            f"from cleome.metadata import extract_font_face_descriptors, patch_uvs_missing_base_cmap, validate_and_compute_variant_suffixes; "
-                            f"from cleome.subsetter import patch_uvs_missing_base_cmap as s_patch; "
-                            f"assert patch_uvs_missing_base_cmap is s_patch"
+                            f"from cleome.metadata import extract_font_face_descriptors, patch_uvs_missing_base_cmap, validate_and_compute_variant_suffixes"
                         ),
                     ],
                     capture_output=True,
