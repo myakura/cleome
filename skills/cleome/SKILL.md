@@ -39,6 +39,8 @@ if __name__ == "__main__":
     assert [s.tier for s in plan] == [4, 3, 1, 1]
     ur_text = compact_unicode_range([0x3041, 0x3043], forbidden_sorted=[0x3042], max_gap=0x80)
     assert parse_unicode_range(ur_text) == {0x3041, 0x3043}
+    assert format_unicode_range([0x3041, 0x3043]) == "U+3041, U+3043"
+    assert format_unicode_range((0x3041, 0x3043)) == "U+3041-3043"
 ```
 
 * `SliceConfig(locale="auto", freq_chunks=((200, 2), (80, 10)), freq_tail_chunk_size=70, rare_chunk_size=250, symbols_ext_chunk_size=350, layout_closure=True, layout_features=("*",), drop_tables=(), uvs_base_repair=True, slices_subdir="slices", url_prefix=None, font_display="swap", filename_hash=True)`. Frozen configuration dataclass validated in `__post_init__`. `locale` accepts any value in `SUPPORTED_LOCALES` (`"auto"`, `"jp"`, `"kr"`, `"sc"`, `"tc"`, `"hk"`). When `filename_hash=True` (default), each built `.woff2` filename includes an 8-character SHA-256 content digest (`<slug>(-<variant>)-<slice_id>-<hash8>.woff2`).
@@ -52,7 +54,7 @@ if __name__ == "__main__":
 * `generate_css(fonts_and_files, config=None, *, cache_key=None, out_digest=None, css_path=None, slices_dir=None) -> str`. Render the `@font-face` stylesheet using Stixis (`SerializationOptions.cleome()`).
 * `patch_uvs_missing_base_cmap(font) -> list[int]`. In-place helper that restores characters mapped in `cmap` Format 14 (UVS/IVS) that upstream fonts omitted from Format 4 or Format 12, prioritizing IVS (`U+E0100..U+E01EF`) over `VS1..VS16`.
 * `slugify_family(name) -> str`. Convert a font family name into a kebab-case filename slug.
-* `format_unicode_range(codepoints) -> str`, `parse_unicode_range(ur_str) -> set[int]`, and `compact_unicode_range(sorted_target_cps, forbidden_sorted, max_gap=0x80) -> str`. Format, parse, and compact CSS `unicode-range` strings without shadowing lower-priority slices.
+* `format_unicode_range(codepoints: set[int] | frozenset[int] | list[int] | tuple[int, int]) -> str`, `parse_unicode_range(ur_str: str) -> set[int]`, and `compact_unicode_range(sorted_target_cps: list[int], forbidden_sorted: list[int], max_gap: int = 0x80) -> str`. Format, parse, and compact CSS `unicode-range` strings without shadowing lower-priority slices. In `format_unicode_range`, a `set`, `frozenset`, or `list` (including a 2-element `list` like `[0x3041, 0x3043]`) is formatted as individual codepoints (`"U+3041, U+3043"`), whereas a 2-element `tuple[int, int]` like `(0x3041, 0x3043)` is formatted as an inclusive `(start, end)` interval (`"U+3041-3043"`).
 
 ## Slicing tiers and runtime rules
 

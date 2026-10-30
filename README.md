@@ -76,7 +76,12 @@ When `workers > 1` (the default), Cleome runs subsetting in a `ProcessPoolExecut
 
 ```python
 from pathlib import Path
-from cleome import SliceConfig, slice_font, slice_fonts
+from cleome import (
+    SliceConfig,
+    format_unicode_range,
+    slice_font,
+    slice_fonts,
+)
 
 if __name__ == "__main__":
     # 1. Slice a Variable Font (path or in-memory TTFont; locale="auto" by default)
@@ -100,6 +105,11 @@ if __name__ == "__main__":
         out_dir=Path("dist/web-static"),
         family_name="My Font JP",
     )
+
+    # 3. Format CSS unicode-range tokens: a set/frozenset/list formats discrete codepoints,
+    #    whereas a 2-element tuple (start, end) formats an inclusive interval
+    assert format_unicode_range([0x3041, 0x3043]) == "U+3041, U+3043"
+    assert format_unicode_range((0x3041, 0x3043)) == "U+3041-3043"
 ```
 
 ---
