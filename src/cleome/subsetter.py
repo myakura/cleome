@@ -354,6 +354,40 @@ def _prepare_worker_source(
     return font_or_bytes, bool(config.uvs_base_repair and meta.patched_uvs_codepoints)
 
 
+def _prune_superseded_hashed_slices(
+    slices_dir: Path,
+    built_files: list[BuiltSliceFile],
+    metas: list[FontMetadata],
+) -> None:
+    """Delete superseded `<stem>-<hash8>.woff2` files in `slices_dir` for the stems in `built_files`."""
+    if not built_files:
+        return
+    active_filenames = {bf.filename for bf in built_files}
+    meta_by_suffix = {m.variant_suffix: m for m in metas}
+    target_base_stems = {
+        Path(
+            bf.spec.filename(
+                meta_by_suffix[bf.variant_suffix].slug,
+                bf.variant_suffix,
+            )
+        ).stem
+        for bf in built_files
+        if bf.variant_suffix in meta_by_suffix
+    }
+    if not target_base_stems:
+        return
+    for existing in slices_dir.iterdir():
+        if (
+            not existing.is_file()
+            or existing.suffix != ".woff2"
+            or existing.name in active_filenames
+        ):
+            continue
+        split_res = _split_hashed_stem(existing.stem)
+        if split_res is not None and split_res[0] in target_base_stems:
+            existing.unlink(missing_ok=True)
+
+
 def _export_woff2_slices_batch(
     variants: list[tuple[TTFont | bytes | Path | str, FontMetadata, list[SliceSpec]]],
     slices_dir: Path,
@@ -361,6 +395,7 @@ def _export_woff2_slices_batch(
     workers: int | None = None,
     *,
     is_woff_hints: list[bool | None] | None = None,
+    prune_superseded: bool = True,
 ) -> list[list[BuiltSliceFile]]:
     """
     Generate `.woff2` slice files in `slices_dir` for one or more font variants using a single
@@ -477,38 +512,30 @@ def _export_woff2_slices_batch(
             ) from exc
 
     all_variant_files: list[list[BuiltSliceFile]] = []
-    active_filenames: set[str] = set()
-    target_base_stems: set[str] = set()
+    all_built: list[BuiltSliceFile] = []
     for (_, meta, _), font_items in zip(variants, per_font_items):
         built_files: list[BuiltSliceFile] = []
-        for spec, base_fname, base_out_str in font_items:
+        for spec, _base_fname, base_out_str in font_items:
             final_fname, sz, ng = results_map[base_out_str]
             final_path = slices_dir / final_fname
-            active_filenames.add(final_fname)
-            target_base_stems.add(Path(base_fname).stem)
-            built_files.append(
-                BuiltSliceFile(
-                    spec=spec,
-                    filename=final_fname,
-                    path=final_path,
-                    size_bytes=sz,
-                    glyph_count=ng,
-                    variant_suffix=meta.variant_suffix,
-                )
+            bf = BuiltSliceFile(
+                spec=spec,
+                filename=final_fname,
+                path=final_path,
+                size_bytes=sz,
+                glyph_count=ng,
+                variant_suffix=meta.variant_suffix,
             )
+            built_files.append(bf)
+            all_built.append(bf)
         all_variant_files.append(built_files)
 
-    if config.filename_hash and target_base_stems:
-        for existing in slices_dir.iterdir():
-            if (
-                not existing.is_file()
-                or existing.suffix != ".woff2"
-                or existing.name in active_filenames
-            ):
-                continue
-            split_res = _split_hashed_stem(existing.stem)
-            if split_res is not None and split_res[0] in target_base_stems:
-                existing.unlink(missing_ok=True)
+    if prune_superseded and config.filename_hash and all_built:
+        _prune_superseded_hashed_slices(
+            slices_dir,
+            all_built,
+            [meta for _, meta, _ in variants],
+        )
 
     return all_variant_files
 

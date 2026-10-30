@@ -35,6 +35,7 @@ from cleome.subsetter import (
     BuiltSliceFile,
     _atomic_output_file,
     _export_woff2_slices_batch,
+    _prune_superseded_hashed_slices,
     serialize_font_to_bytes,
 )
 
@@ -438,6 +439,7 @@ def slice_fonts(
             config=config,
             workers=workers,
             is_woff_hints=woff_hints,
+            prune_superseded=False,
         )
 
         fonts_and_files = list(zip(prepared.metas, variant_built_lists))
@@ -454,6 +456,13 @@ def slice_fonts(
         )
         with _atomic_output_file(outputs.css_path, mode="w", encoding="utf-8") as tf:
             tf.write(css_text)
+
+        if config.filename_hash:
+            _prune_superseded_hashed_slices(
+                outputs.slices_dir,
+                all_built_files,
+                prepared.metas,
+            )
 
         return SliceBundleResult(
             family_name=prepared.family_name,

@@ -1019,6 +1019,27 @@ class TestSubsetterAndShaping(unittest.TestCase):
             self.assertFalse(v1_by_id["kanji-rare-01"].path.exists(), "Superseded hashed slice must be pruned")
             self.assertTrue(v2_by_id["kanji-rare-01"].path.exists())
 
+            # 10. Issue 12: if an exception occurs between WOFF2 export and CSS write,
+            # existing CSS and every slice file it references must remain intact on disk.
+            atomic_out = tmp_path / "atomic_prune_out"
+            res_init = slice_font(font_v1, out_dir=atomic_out, workers=1)
+            orig_css_text = res_init.css_path.read_text(encoding="utf-8")
+            orig_slice_paths = [bf.path for bf in res_init.built_files]
+            self.assertTrue(all(p.is_file() for p in orig_slice_paths))
+
+            with (
+                patch("cleome.pipeline.generate_css", side_effect=RuntimeError("boom before css write")),
+                self.assertRaisesRegex(RuntimeError, "boom before css write"),
+            ):
+                slice_font(font_v2, out_dir=atomic_out, workers=1)
+
+            self.assertEqual(res_init.css_path.read_text(encoding="utf-8"), orig_css_text)
+            for p in orig_slice_paths:
+                self.assertTrue(
+                    p.is_file(),
+                    f"Existing slice referenced by CSS was deleted before new CSS was written: {p.name}",
+                )
+
 
 if __name__ == "__main__":
     unittest.main()
