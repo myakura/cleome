@@ -12,14 +12,17 @@ Cleome inspects a font's `cmap` once and writes deterministic static assets inst
 Requires Python `>= 3.15` and [`uv`](https://docs.astral.sh/uv/).
 
 ```bash
-# Install as a standalone CLI tool from GitHub
-uv tool install git+https://github.com/myakura/cleome
+# Install as a standalone CLI tool from PyPI
+uv tool install cleome
 
 # Or run directly without installing
-uvx --from git+https://github.com/myakura/cleome cleome plan SourceHanSansJP-VF.otf
+uvx cleome plan SourceHanSansJP-VF.otf
 
 # Or add to a Python project
-uv add git+https://github.com/myakura/cleome
+uv add cleome
+
+# Install the unreleased development version from GitHub
+uv tool install git+https://github.com/myakura/cleome
 ```
 
 ---
