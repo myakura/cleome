@@ -14,8 +14,10 @@ __all__ = [
 ]
 
 
-def format_unicode_range(codepoints: CodepointSet | list[int]) -> str:
-    """Format a collection of integer codepoints into a minimal CSS `unicode-range` string."""
+def format_unicode_range(
+    codepoints: CodepointSet | list[int] | tuple[int, int],
+) -> str:
+    """Format a collection of integer codepoints or an inclusive `(start, end)` interval into a minimal CSS `unicode-range` string."""
     if not codepoints:
         return ""
     return format_urange(codepoints)
