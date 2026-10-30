@@ -19,11 +19,14 @@ import uharfbuzz as hb
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 from cleome import (
     SliceConfig,
+    build_slice_plan,
+    export_woff2_slices,
+    extract_font_face_descriptors,
     extract_font_metadata,
     slice_font,
     slice_fonts,
 )
-from cleome.subsetter import _export_woff2_slices_batch
+from cleome.subsetter import _export_woff2_slices_batch, serialize_font_to_bytes
 
 from helpers import create_synthetic_ttfont
 
@@ -87,7 +90,75 @@ class TestSubsetterAndShaping(unittest.TestCase):
 
         meta = extract_font_metadata(tt, uvs_base_repair=True)
         self.assertIn(0x553E, meta.codepoints)
+        self.assertEqual(meta.patched_uvs_codepoints, (0x553E,))
+        from cleome import patch_uvs_missing_base_cmap
+
+        self.assertEqual(patch_uvs_missing_base_cmap(tt), [0x553E])
         self.assertEqual(tt.getBestCmap()[0x553E], "glyph_iv0")
+
+    def test_issue11_extract_font_metadata_does_not_mutate_caller_cmap(self) -> None:
+        """
+        Issue 11 reproduction: `extract_font_metadata(font)` reports `patched_uvs_codepoints`
+        and includes repaired codepoints in `meta.codepoints` without mutating the caller's `cmap`.
+        """
+        from fontTools.fontBuilder import FontBuilder
+        from fontTools.pens.ttGlyphPen import TTGlyphPen
+
+        glyphs = [".notdef", "A", "uni8FBB_uvs"]
+        fb = FontBuilder(1000, isTTF=True)
+        fb.setupGlyphOrder(glyphs)
+        fb.setupCharacterMap({0x41: "A"})
+        fb.setupGlyf({g: TTGlyphPen(None).glyph() for g in glyphs})
+        fb.setupHorizontalMetrics({g: (1000, 0) for g in glyphs})
+        fb.setupHorizontalHeader(ascent=880, descent=-120)
+        fb.setupNameTable({"familyName": "Test Sans JP", "styleName": "Regular"})
+        fb.setupOS2()
+        fb.setupPost()
+        font = fb.font
+
+        # U+8FBB is mapped only through an IVS sequence
+        uvs = CmapSubtable.newSubtable(14)
+        uvs.platformID, uvs.platEncID, uvs.language, uvs.cmap = 0, 5, 0, {}
+        uvs.uvsDict = {0xE0100: [(0x8FBB, "uni8FBB_uvs")]}
+        font["cmap"].tables.append(uvs)
+
+        self.assertNotIn(0x8FBB, font.getBestCmap())
+        meta = extract_font_metadata(font)
+        self.assertEqual(meta.patched_uvs_codepoints, (0x8FBB,))
+        self.assertIn(0x8FBB, meta.codepoints)
+        self.assertNotIn(0x8FBB, font.getBestCmap())
+
+    def test_public_ttfont_functions_preserve_serialized_bytes(self) -> None:
+        """
+        Verify that all public functions accepting a `TTFont` (`extract_font_face_descriptors`,
+        `extract_font_metadata`, `export_woff2_slices`, `slice_font`, `slice_fonts`) preserve
+        the exact serialized byte stream of the caller's `font` before and after invocation.
+        """
+        font = create_synthetic_ttfont(
+            [ord("A"), ord("あ"), ord("日")],
+            family_name="Byte Preserved Sans",
+            uvs_only_cp=(0x8FBB, 0xE0100),
+        )
+        baseline_bytes = serialize_font_to_bytes(font)
+
+        extract_font_face_descriptors(font)
+        self.assertEqual(serialize_font_to_bytes(font), baseline_bytes)
+
+        meta = extract_font_metadata(font)
+        self.assertEqual(meta.patched_uvs_codepoints, (0x8FBB,))
+        self.assertEqual(serialize_font_to_bytes(font), baseline_bytes)
+
+        plan = build_slice_plan(meta.codepoints, family_name=meta.family_name)
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            export_woff2_slices(font, meta, plan, tmp_path / "export_slices", workers=1)
+            self.assertEqual(serialize_font_to_bytes(font), baseline_bytes)
+
+            slice_font(font, out_dir=tmp_path / "slice_one", workers=1)
+            self.assertEqual(serialize_font_to_bytes(font), baseline_bytes)
+
+            slice_fonts([font], out_dir=tmp_path / "slice_many", workers=1)
+            self.assertEqual(serialize_font_to_bytes(font), baseline_bytes)
 
     def test_end_to_end_variable_and_static_export_with_woff2_verification(self) -> None:
         """

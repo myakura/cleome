@@ -270,18 +270,22 @@ def _uvs_selector_sort_key(
     return (0 if 0xE0100 <= sel <= 0xE01EF else 1, sel)
 
 
-def patch_uvs_missing_base_cmap(font: TTFont) -> list[int]:
+def _collect_uvs_missing_base_additions(font: TTFont) -> dict[int, str]:
     """
-    Detect characters that exist in cmap Format 14 (UVS) with a concrete variant glyph
-    but were accidentally omitted from Format 4/12 (such as U+553E '唾' in Adobe SourceHanSansJP-VF.otf v2.005)
-    and patch them into the base cmap tables in-memory.
-    Prioritizes IVS selectors (U+E0100..U+E01EF) in ascending order so U+E0100 (standard base form) always wins.
+    Compute `{cp: glyph_name}` for base characters that exist in `cmap` Format 14 (UVS)
+    with a concrete variant glyph (`gname is not None`), are absent from `getBestCmap()`,
+    and can be represented in at least one Format 4 or Format 12 subtable of `font`,
+    without mutating `font`.
     """
     if "cmap" not in font:
-        return []
+        return {}
     tables = font["cmap"].tables
     if not any(getattr(t, "format", None) == 14 and hasattr(t, "uvsDict") for t in tables):
-        return []
+        return {}
+    has_format4 = any(getattr(t, "format", None) == 4 and hasattr(t, "cmap") for t in tables)
+    has_format12 = any(getattr(t, "format", None) == 12 and hasattr(t, "cmap") for t in tables)
+    if not has_format4 and not has_format12:
+        return {}
     best_cmap = font.getBestCmap() or {}
     uvs_additions: dict[int, str] = {}
     for table in tables:
@@ -294,13 +298,25 @@ def patch_uvs_missing_base_cmap(font: TTFont) -> list[int]:
                         cp not in best_cmap
                         and cp not in uvs_additions
                         and gname is not None
+                        and (has_format12 or cp <= 0xFFFF)
                     ):
                         uvs_additions[cp] = gname
+    return uvs_additions
+
+
+def patch_uvs_missing_base_cmap(font: TTFont) -> list[int]:
+    """
+    Detect characters that exist in cmap Format 14 (UVS) with a concrete variant glyph
+    but were accidentally omitted from Format 4/12 (such as U+553E '唾' in Adobe SourceHanSansJP-VF.otf v2.005)
+    and patch them into the base cmap tables in-memory.
+    Prioritizes IVS selectors (U+E0100..U+E01EF) in ascending order so U+E0100 (standard base form) always wins.
+    """
+    uvs_additions = _collect_uvs_missing_base_additions(font)
     if not uvs_additions:
         return []
 
     patched: set[int] = set()
-    for table in tables:
+    for table in font["cmap"].tables:
         if getattr(table, "format", None) in (4, 12) and hasattr(table, "cmap"):
             for cp, gname in uvs_additions.items():
                 if table.format == 4 and cp > 0xFFFF:
@@ -321,8 +337,12 @@ def extract_font_metadata(
     variant_suffix: str = "",
     uvs_base_repair: bool = True,
 ) -> FontMetadata:
-    """Inspect TTFont tables (`name`, `fvar`, `OS/2`, `post`, `cmap`) to build FontMetadata."""
-    patched_uvs = tuple(patch_uvs_missing_base_cmap(font)) if uvs_base_repair else ()
+    """Inspect TTFont tables (`name`, `fvar`, `OS/2`, `post`, `cmap`) to build FontMetadata without mutating `font`."""
+    patched_uvs = (
+        tuple(sorted(_collect_uvs_missing_base_additions(font)))
+        if uvs_base_repair
+        else ()
+    )
 
     desc = extract_font_face_descriptors(
         font,
@@ -334,7 +354,7 @@ def extract_font_metadata(
     slug = slug_override or slugify_family(desc.family_name)
 
     cmap = font.getBestCmap() or {}
-    codepoints = frozenset(cmap.keys())
+    codepoints = frozenset(cmap.keys()) | frozenset(patched_uvs)
 
     return FontMetadata(
         family_name=desc.family_name,
