@@ -21,6 +21,8 @@ from cleome.metadata import (
 )
 from cleome.slicer import SliceConfig, SliceSpec, _prepare_font_bundle
 
+_DEFAULT_CONFIG = SliceConfig()
+
 EXIT_OK = 0
 EXIT_RUNTIME_ERROR = 1
 EXIT_USAGE_ERROR = 2
@@ -122,6 +124,11 @@ def _parse_freq_chunks(spec_str: str) -> tuple[tuple[int, int], ...]:
     return tuple(chunks)
 
 
+def _format_freq_chunks(chunks: Sequence[tuple[int, int]]) -> str:
+    """Format a tuple of `(size, count)` pairs into a CLI spec string like `'200x2,80x10'` or `'none'`."""
+    return ",".join(f"{sz}x{cnt}" for sz, cnt in chunks) if chunks else "none"
+
+
 def _parse_tag_list(spec_str: str) -> tuple[str, ...]:
     """Parse a comma- or whitespace-separated list of OpenType table or feature tags."""
     return tuple(t.strip() for t in re.split(r"[,\s]+", spec_str.strip()) if t.strip())
@@ -140,38 +147,56 @@ def _add_shared_arguments(parser: argparse.ArgumentParser, *, is_build: bool) ->
         "--locale",
         dest="locale",
         choices=SUPPORTED_LOCALES,
-        default="auto",
-        help="Target CJK slicing profile: 'auto' (detect from family & cmap), 'jp', 'kr', 'sc', 'tc', or 'hk' (default: 'auto')",
+        default=_DEFAULT_CONFIG.locale,
+        help=(
+            "Target CJK slicing profile: 'auto' (detect from family & cmap), "
+            f"'jp', 'kr', 'sc', 'tc', or 'hk' (default: {_DEFAULT_CONFIG.locale!r})"
+        ),
     )
     slicing_group.add_argument(
         "--freq-chunks",
         type=_parse_freq_chunks,
-        default=((200, 2), (80, 10)),
-        help="Progressive Tier 3 chunk schedule from highest frequency downward, or 'none' (default: '200x2,80x10')",
+        default=_DEFAULT_CONFIG.freq_chunks,
+        help=(
+            "Progressive Tier 3 chunk schedule from highest frequency downward, or 'none' "
+            f"(default: {_format_freq_chunks(_DEFAULT_CONFIG.freq_chunks)!r})"
+        ),
     )
     slicing_group.add_argument(
         "--freq-tail-chunk-size",
         type=_positive_int,
-        default=70,
-        help="Target characters per slice for remaining Tier 3 characters (default: 70)",
+        default=_DEFAULT_CONFIG.freq_tail_chunk_size,
+        help=(
+            "Target characters per slice for remaining Tier 3 characters "
+            f"(default: {_DEFAULT_CONFIG.freq_tail_chunk_size})"
+        ),
     )
     slicing_group.add_argument(
         "--rare-chunk-size",
         type=_positive_int,
-        default=250,
-        help="Target characters per slice for Tier 4 rare/extended characters (default: 250)",
+        default=_DEFAULT_CONFIG.rare_chunk_size,
+        help=(
+            "Target characters per slice for Tier 4 rare/extended characters "
+            f"(default: {_DEFAULT_CONFIG.rare_chunk_size})"
+        ),
     )
     slicing_group.add_argument(
         "--symbols-chunk-size",
         type=_positive_int,
-        default=350,
-        help="Target characters per slice for Tier 2 extended symbols (default: 350)",
+        default=_DEFAULT_CONFIG.symbols_ext_chunk_size,
+        help=(
+            "Target characters per slice for Tier 2 extended symbols "
+            f"(default: {_DEFAULT_CONFIG.symbols_ext_chunk_size})"
+        ),
     )
     slicing_group.add_argument(
         "--uvs-base-repair",
         action=argparse.BooleanOptionalAction,
-        default=True,
-        help="Repair characters mapped in cmap Format 14 (UVS/IVS) but omitted from Format 4/12 (default: enabled)",
+        default=_DEFAULT_CONFIG.uvs_base_repair,
+        help=(
+            "Repair characters mapped in cmap Format 14 (UVS/IVS) but omitted from Format 4/12 "
+            f"(default: {'enabled' if _DEFAULT_CONFIG.uvs_base_repair else 'disabled'})"
+        ),
     )
 
     descriptor_group = parser.add_argument_group("CSS descriptor overrides")
@@ -203,8 +228,8 @@ def _add_shared_arguments(parser: argparse.ArgumentParser, *, is_build: bool) ->
     if is_build:
         descriptor_group.add_argument(
             "--display",
-            default="swap",
-            help="CSS `font-display` descriptor value (default: 'swap')",
+            default=_DEFAULT_CONFIG.font_display,
+            help=f"CSS `font-display` descriptor value (default: {_DEFAULT_CONFIG.font_display!r})",
         )
 
         output_group = parser.add_argument_group("Output options")
@@ -217,12 +242,15 @@ def _add_shared_arguments(parser: argparse.ArgumentParser, *, is_build: bool) ->
         )
         output_group.add_argument(
             "--slices-dir",
-            default="slices",
-            help="Subdirectory name under --out-dir for .woff2 files (default: 'slices'; use '.' for flat output)",
+            default=_DEFAULT_CONFIG.slices_subdir,
+            help=(
+                "Subdirectory name under --out-dir for .woff2 files "
+                f"(default: {_DEFAULT_CONFIG.slices_subdir!r}; use '.' for flat output)"
+            ),
         )
         output_group.add_argument(
             "--url-prefix",
-            default=None,
+            default=_DEFAULT_CONFIG.url_prefix,
             help="Custom URL prefix in CSS `src: url('<prefix>/<file>.woff2')` (default: relative path from CSS to <slices-dir>)",
         )
         css_dest_group = output_group.add_mutually_exclusive_group()
@@ -240,27 +268,36 @@ def _add_shared_arguments(parser: argparse.ArgumentParser, *, is_build: bool) ->
         output_group.add_argument(
             "--filename-hash",
             action=argparse.BooleanOptionalAction,
-            default=True,
-            help="Append an 8-character SHA-256 content hash to each .woff2 slice filename (default: enabled)",
+            default=_DEFAULT_CONFIG.filename_hash,
+            help=(
+                "Append an 8-character SHA-256 content hash to each .woff2 slice filename "
+                f"(default: {'enabled' if _DEFAULT_CONFIG.filename_hash else 'disabled'})"
+            ),
         )
 
         subset_group = parser.add_argument_group("Subsetting options")
         subset_group.add_argument(
             "--layout-features",
             type=_parse_tag_list,
-            default=("*",),
-            help="Comma-separated OpenType layout feature tags to retain (default: '*' keeps all features)",
+            default=_DEFAULT_CONFIG.layout_features,
+            help=(
+                "Comma-separated OpenType layout feature tags to retain "
+                f"(default: {','.join(_DEFAULT_CONFIG.layout_features)!r} keeps all features)"
+            ),
         )
         subset_group.add_argument(
             "--layout-closure",
             action=argparse.BooleanOptionalAction,
-            default=True,
-            help="Expand glyph closure over GSUB substitution tables (default: enabled)",
+            default=_DEFAULT_CONFIG.layout_closure,
+            help=(
+                "Expand glyph closure over GSUB substitution tables "
+                f"(default: {'enabled' if _DEFAULT_CONFIG.layout_closure else 'disabled'})"
+            ),
         )
         subset_group.add_argument(
             "--drop-tables",
             type=_parse_tag_list,
-            default=(),
+            default=_DEFAULT_CONFIG.drop_tables,
             help="Comma-separated OpenType table tags to drop during subsetting (e.g. 'GPOS,GSUB,vhea,vmtx')",
         )
 
@@ -558,14 +595,14 @@ def main(argv: list[str] | None = None) -> int:
             freq_tail_chunk_size=args.freq_tail_chunk_size,
             rare_chunk_size=args.rare_chunk_size,
             symbols_ext_chunk_size=args.symbols_chunk_size,
-            layout_closure=getattr(args, "layout_closure", True),
-            layout_features=tuple(getattr(args, "layout_features", ("*",))),
-            drop_tables=tuple(getattr(args, "drop_tables", ())),
+            layout_closure=getattr(args, "layout_closure", _DEFAULT_CONFIG.layout_closure),
+            layout_features=tuple(getattr(args, "layout_features", _DEFAULT_CONFIG.layout_features)),
+            drop_tables=tuple(getattr(args, "drop_tables", _DEFAULT_CONFIG.drop_tables)),
             uvs_base_repair=args.uvs_base_repair,
-            slices_subdir=getattr(args, "slices_dir", "slices"),
-            url_prefix=getattr(args, "url_prefix", None),
-            font_display=getattr(args, "display", "swap"),
-            filename_hash=getattr(args, "filename_hash", True),
+            slices_subdir=getattr(args, "slices_dir", _DEFAULT_CONFIG.slices_subdir),
+            url_prefix=getattr(args, "url_prefix", _DEFAULT_CONFIG.url_prefix),
+            font_display=getattr(args, "display", _DEFAULT_CONFIG.font_display),
+            filename_hash=getattr(args, "filename_hash", _DEFAULT_CONFIG.filename_hash),
         )
     except ValueError as exc:
         return _handle_cli_exception(exc)
