@@ -6,6 +6,7 @@ Uses CSS cascade shadowing (1-token hex ranges for rare ideographs and syllables
 and inverted-pyramid frequency granularity.
 """
 
+from importlib.metadata import version as _metadata_version
 from typing import TYPE_CHECKING, Any
 
 from cleome.locale import (
@@ -39,7 +40,7 @@ if TYPE_CHECKING:
         patch_uvs_missing_base_cmap,
     )
 
-__version__ = "0.2.0"
+__version__ = _metadata_version("cleome")
 
 __all__ = [
     "BuiltSliceFile",
