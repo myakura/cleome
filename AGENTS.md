@@ -15,7 +15,14 @@ Cleome (`cleome`) is a Python (`>= 3.15`) CLI tool and library that inspects Jap
 * **Deterministic, non-destructive font handling.** Open fonts with `recalcTimestamp=False` so repeated builds produce byte-identical `.woff2` files, retain license records (`nameID` `0`, `13`, `14`) in every slice, and never mutate caller-supplied `TTFont` objects in public inspection or slicing APIs (only `patch_uvs_missing_base_cmap` mutates in place).
 * **CSS serialization via Stixis.** Delegate `@font-face` AST validation, PEP 750 `Template` (`t"..."`) escaping, and `<urange>` parsing, formatting, and compaction to `stixis` (`SerializationOptions.cleome()`) rather than formatting raw CSS strings by hand.
 * **CLI contract.** `cleome plan` (`src/cleome/cli.py`) is read-only and never creates output directories or imports subsetting workers. Never mix `nargs="*"` or `"+"` optional flags with positional arguments.
-* **Public API sync.** When changing public APIs, CLI flags, or slicing behavior, update [`skills/cleome/SKILL.md`](skills/cleome/SKILL.md), `README.md`, and the relevant guide under `.agents/docs/`.
+* **Public API sync.** When changing public APIs, CLI flags, or slicing behavior, update [`skills/cleome/SKILL.md`](skills/cleome/SKILL.md), `README.md`, and the relevant guide under `.agents/docs/`. Even in a `refactor`, update [`skills/cleome/SKILL.md`](skills/cleome/SKILL.md) and `README.md` whenever a public function's parameters or accepted types change.
+
+## Documentation ownership
+
+* **Design background and rationale:** [`docs/architecture-and-rationale.md`](docs/architecture-and-rationale.md)
+* **Consumer deployment and usage:** [`docs/hosting-and-usage.md`](docs/hosting-and-usage.md)
+* **Public API contract:** [`skills/cleome/SKILL.md`](skills/cleome/SKILL.md)
+* **Editing rules for contributors and agents:** `.agents/docs/`
 
 ## Domain guides
 
