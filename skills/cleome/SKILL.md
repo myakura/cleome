@@ -47,10 +47,10 @@ if __name__ == "__main__":
 * `build_slice_plan(codepoints, config=None, *, family_name="") -> list[SliceSpec]`. Build the ordered 4-tier slice plan from lowest CSS priority (`tier=4`, declared first) to highest CSS priority (`tier=1`, declared last).
 * `detect_font_locale(codepoints, family_name="") -> str`. Auto-detect `"jp"`, `"kr"`, `"sc"`, `"tc"`, or `"hk"` from `family_name` tokens and `cmap` coverage ratios.
 * `extract_font_face_descriptors(font, *, family_override=None, weight_override=None, stretch_override=None, style_override=None) -> FontFaceDescriptors`. Extract CSS `@font-face` descriptors from `name`, `fvar` (`wght`, `wdth`, `ital`, `slnt`), `OS/2`, and `post`.
-* `extract_font_metadata(font, *, family_override=None, slug_override=None, weight_override=None, stretch_override=None, style_override=None, variant_suffix="", uvs_base_repair=True) -> FontMetadata`. Extract descriptors, `codepoints`, and `patched_uvs_codepoints` from a `TTFont`.
+* `extract_font_metadata(font, *, family_override=None, slug_override=None, weight_override=None, stretch_override=None, style_override=None, variant_suffix="", uvs_base_repair=True) -> FontMetadata`. Extract descriptors, `codepoints`, and `patched_uvs_codepoints` from a `TTFont` without mutating `font`.
 * `export_woff2_slices(font_or_bytes, meta, slice_specs, slices_dir, config=None, workers=None) -> list[BuiltSliceFile]`. Export `.woff2` slices in parallel without mutating `font_or_bytes`.
 * `generate_css(fonts_and_files, config=None, *, cache_key=None, out_digest=None, css_path=None, slices_dir=None) -> str`. Render the `@font-face` stylesheet using Stixis (`SerializationOptions.cleome()`).
-* `patch_uvs_missing_base_cmap(font) -> list[int]`. Restore characters mapped in `cmap` Format 14 (UVS/IVS) that upstream fonts omitted from Format 4 or Format 12, prioritizing IVS (`U+E0100..U+E01EF`) over `VS1..VS16`.
+* `patch_uvs_missing_base_cmap(font) -> list[int]`. In-place helper that restores characters mapped in `cmap` Format 14 (UVS/IVS) that upstream fonts omitted from Format 4 or Format 12, prioritizing IVS (`U+E0100..U+E01EF`) over `VS1..VS16`.
 * `slugify_family(name) -> str`. Convert a font family name into a kebab-case filename slug.
 * `format_unicode_range(codepoints) -> str`, `parse_unicode_range(ur_str) -> set[int]`, and `compact_unicode_range(sorted_target_cps, forbidden_sorted, max_gap=0x80) -> str`. Format, parse, and compact CSS `unicode-range` strings without shadowing lower-priority slices.
 
