@@ -1040,6 +1040,118 @@ class TestSubsetterAndShaping(unittest.TestCase):
                     f"Existing slice referenced by CSS was deleted before new CSS was written: {p.name}",
                 )
 
+    def test_stixis_comment_serialization_matches_cache_regexes(self) -> None:
+        """
+        Verify directly against `stixis` output (`generate_css` -> `stixis.dumps` with
+        `SerializationOptions.cleome()`) that `_CACHE_COMMENT_RE` and `_BLOCK_GLYPHS_RE`
+        round-trip the cache header and every `@font-face` block's glyph count.
+        """
+        from cleome.css import (
+            _BLOCK_GLYPHS_RE,
+            _CACHE_COMMENT_RE,
+            _CACHE_FORMAT_VERSION,
+            generate_css,
+        )
+        from cleome.slicer import SliceSpec
+        from cleome.subsetter import BuiltSliceFile
+
+        tt = create_synthetic_ttfont(
+            [ord("A"), ord("あ"), ord("日")],
+            family_name="Stixis Roundtrip",
+            is_variable=True,
+        )
+        ital_ax = Axis()
+        ital_ax.axisTag = "ital"
+        ital_ax.minValue = 0.0
+        ital_ax.defaultValue = 0.0
+        ital_ax.maxValue = 1.0
+        ital_ax.axisNameID = 256
+        tt["fvar"].axes.append(ital_ax)
+        meta = extract_font_metadata(tt)
+        self.assertEqual(meta.styles_css, ("normal", "italic"))
+
+        specs = [
+            SliceSpec(
+                slice_id="kanji-freq-01",
+                tier=3,
+                category="kanji-freq",
+                description="Tier 3: Frequent Kanji (Rank 1-200)",
+                binary_codepoints=frozenset({ord("日")}),
+                css_unicode_range="U+65E5",
+            ),
+            SliceSpec(
+                slice_id="kana-core",
+                tier=1,
+                category="kana-core",
+                description="Tier 1: Core Kana, CJK Punctuation & Fullwidth ASCII",
+                binary_codepoints=frozenset({ord("あ")}),
+                css_unicode_range="U+3042",
+            ),
+            SliceSpec(
+                slice_id="latin",
+                tier=1,
+                category="latin",
+                description="Tier 1: Basic Latin, Western Punctuation & Combining Marks",
+                binary_codepoints=frozenset({ord("A")}),
+                css_unicode_range="U+41",
+            ),
+        ]
+        built_files = [
+            BuiltSliceFile(
+                spec=specs[0],
+                filename="stixis-roundtrip-kanji-freq-01-11111111.woff2",
+                path=Path("slices/stixis-roundtrip-kanji-freq-01-11111111.woff2"),
+                size_bytes=12345,
+                glyph_count=205,
+            ),
+            BuiltSliceFile(
+                spec=specs[1],
+                filename="stixis-roundtrip-kana-core-22222222.woff2",
+                path=Path("slices/stixis-roundtrip-kana-core-22222222.woff2"),
+                size_bytes=28400,
+                glyph_count=380,
+            ),
+            BuiltSliceFile(
+                spec=specs[2],
+                filename="stixis-roundtrip-latin-33333333.woff2",
+                path=Path("slices/stixis-roundtrip-latin-33333333.woff2"),
+                size_bytes=9120,
+                glyph_count=142,
+            ),
+        ]
+
+        sample_key = "0123456789abcdef0123456789abcdef"
+        sample_out = "fedcba9876543210fedcba9876543210"
+        css_text = generate_css(
+            [(meta, built_files)],
+            cache_key=sample_key,
+            out_digest=sample_out,
+        )
+        lines = css_text.splitlines()
+        self.assertGreaterEqual(len(lines), 2)
+
+        cache_match = _CACHE_COMMENT_RE.match(lines[1].strip())
+        self.assertIsNotNone(
+            cache_match,
+            f"stixis cache comment line {lines[1]!r} did not match _CACHE_COMMENT_RE",
+        )
+        assert cache_match is not None
+        self.assertEqual(int(cache_match.group("version")), _CACHE_FORMAT_VERSION)
+        self.assertEqual(cache_match.group("key"), sample_key)
+        self.assertEqual(cache_match.group("out"), sample_out)
+
+        extracted_glyphs = [
+            int(bm.group("glyphs"))
+            for line in lines[2:]
+            if (bm := _BLOCK_GLYPHS_RE.match(line.strip())) is not None
+        ]
+        # 2 styles ("normal", "italic") * 3 slices = 6 @font-face comment headers
+        self.assertEqual(
+            extracted_glyphs,
+            [205, 380, 142, 205, 380, 142],
+            f"_BLOCK_GLYPHS_RE failed to round-trip glyph counts from stixis CSS:\n{css_text}",
+        )
+
     def test_issue14_concurrent_slice_font_workers_1_across_threads(self) -> None:
         """
         Issue 14 reproduction: concurrent `slice_font(..., workers=1)` calls from multiple
