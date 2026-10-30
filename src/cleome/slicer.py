@@ -16,6 +16,7 @@ from bisect import bisect_left, bisect_right
 from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
+
 from stixis import canonicalize
 
 from cleome.data.kanji_freq import KANJI_FREQ_RANK
@@ -91,11 +92,15 @@ class SliceConfig:
                     f"freq_chunks entries must have positive (chunk_size, num_chunks), got {(chunk_size, num_chunks)}"
                 )
         if self.freq_tail_chunk_size <= 0:
-            raise ValueError(f"freq_tail_chunk_size must be > 0, got {self.freq_tail_chunk_size}")
+            raise ValueError(
+                f"freq_tail_chunk_size must be > 0, got {self.freq_tail_chunk_size}"
+            )
         if self.rare_chunk_size <= 0:
             raise ValueError(f"rare_chunk_size must be > 0, got {self.rare_chunk_size}")
         if self.symbols_ext_chunk_size <= 0:
-            raise ValueError(f"symbols_ext_chunk_size must be > 0, got {self.symbols_ext_chunk_size}")
+            raise ValueError(
+                f"symbols_ext_chunk_size must be > 0, got {self.symbols_ext_chunk_size}"
+            )
         subdir_str = self.slices_subdir.strip()
         if not subdir_str:
             raise ValueError("slices_subdir cannot be empty")
@@ -121,7 +126,9 @@ class SliceConfig:
                 at_rule="@font-face",
             )
         except ValueError as exc:
-            raise ValueError(f"Invalid CSS font-display value: {self.font_display!r}") from exc
+            raise ValueError(
+                f"Invalid CSS font-display value: {self.font_display!r}"
+            ) from exc
         object.__setattr__(self, "font_display", norm_display)
 
 
@@ -137,8 +144,14 @@ class SliceSpec:
     css_unicode_range: str
     uses_cascade_shadowing: bool = False
 
-    def filename(self, slug: str, variant_suffix: str = "", content_hash: str = "") -> str:
-        stem = f"{slug}-{variant_suffix}-{self.slice_id}" if variant_suffix else f"{slug}-{self.slice_id}"
+    def filename(
+        self, slug: str, variant_suffix: str = "", content_hash: str = ""
+    ) -> str:
+        stem = (
+            f"{slug}-{variant_suffix}-{self.slice_id}"
+            if variant_suffix
+            else f"{slug}-{self.slice_id}"
+        )
         if content_hash:
             return f"{stem}-{content_hash}.woff2"
         return f"{stem}.woff2"
@@ -497,9 +510,7 @@ def _append_tier2_and_tier1_slices(
         )
         for idx, ch_cps in enumerate(sym_ext_chunks, start=1):
             slice_id = (
-                "symbols-ext"
-                if len(sym_ext_chunks) == 1
-                else f"symbols-ext-{idx:02d}"
+                "symbols-ext" if len(sym_ext_chunks) == 1 else f"symbols-ext-{idx:02d}"
             )
             ur_str = compact_unicode_range(ch_cps, earlier_sorted)
             slices.append(
@@ -551,9 +562,7 @@ def _append_tier2_and_tier1_slices(
         forbidden_latin_sorted = sorted(
             earlier_cps | sym_ext_cps | sym_ui_cps | core_cps
         )
-        ur_latin = compact_unicode_range(
-            sorted(latin_cps), forbidden_latin_sorted
-        )
+        ur_latin = compact_unicode_range(sorted(latin_cps), forbidden_latin_sorted)
         slices.append(
             SliceSpec(
                 slice_id="latin",
@@ -631,5 +640,3 @@ def _prepare_font_bundle(
         variant_plans=variant_plans,
         union_plan=union_plan,
     )
-
-

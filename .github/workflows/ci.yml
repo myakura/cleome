@@ -27,8 +27,13 @@ jobs:
       - name: Install dependencies
         run: uv sync --frozen
 
-      - name: Run unittest suite (including HarfBuzz shaping verification)
-        run: uv run python -m unittest discover -s tests -v -f
+      - name: Lint and check formatting with Ruff
+        run: |
+          uv run ruff check
+          uv run ruff format --check
+
+      - name: Run pytest suite (including HarfBuzz shaping verification)
+        run: uv run pytest
 
       - name: Build wheel and sdist
         run: uv build

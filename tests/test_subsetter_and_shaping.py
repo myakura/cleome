@@ -6,17 +6,20 @@ Variable Font (`ital`/`slnt`/`wght`/`wdth`) CSS generation, TTFont immutability,
 import copy
 import io
 import os
-from pathlib import Path
 import sys
 import tempfile
 import unittest
+from pathlib import Path
+
+import uharfbuzz as hb
 from fontTools.feaLib.builder import addOpenTypeFeaturesFromString
 from fontTools.ttLib import TTFont
 from fontTools.ttLib.tables._c_m_a_p import CmapSubtable
 from fontTools.ttLib.tables._f_v_a_r import Axis
-import uharfbuzz as hb
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
+from helpers import create_synthetic_ttfont
+
 from cleome import (
     SliceConfig,
     build_slice_plan,
@@ -27,8 +30,6 @@ from cleome import (
     slice_fonts,
 )
 from cleome.subsetter import _export_woff2_slices_batch, serialize_font_to_bytes
-
-from helpers import create_synthetic_ttfont
 
 
 class TestSubsetterAndShaping(unittest.TestCase):
@@ -49,19 +50,39 @@ class TestSubsetterAndShaping(unittest.TestCase):
             # 1. Pass in-memory TTFont: caller's TTFont must NOT be mutated, yet WOFF2 has U+553E
             mem_out = Path(tmp) / "mem_out"
             mem_res = slice_font(tt, out_dir=mem_out, workers=2)
-            self.assertNotIn(0x553E, tt.getBestCmap(), "Caller's in-memory TTFont must not be mutated")
-            kanji_woff2 = next(bf.path for bf in mem_res.built_files if "kanji-freq" in bf.spec.slice_id)
+            self.assertNotIn(
+                0x553E,
+                tt.getBestCmap(),
+                "Caller's in-memory TTFont must not be mutated",
+            )
+            kanji_woff2 = next(
+                bf.path
+                for bf in mem_res.built_files
+                if "kanji-freq" in bf.spec.slice_id
+            )
             with TTFont(kanji_woff2) as slice_tt:
-                self.assertIn(0x553E, slice_tt.getBestCmap(), "WOFF2 slice from in-memory TTFont must contain U+553E")
+                self.assertIn(
+                    0x553E,
+                    slice_tt.getBestCmap(),
+                    "WOFF2 slice from in-memory TTFont must contain U+553E",
+                )
 
             # 2. Pass Path on disk: worker process patches Format 14 -> base cmap in WOFF2
             disk_font = Path(tmp) / "uvs_font.ttf"
             tt.save(disk_font, reorderTables=False)
             disk_out = Path(tmp) / "disk_out"
             disk_res = slice_font(disk_font, out_dir=disk_out, workers=2)
-            disk_kanji_woff2 = next(bf.path for bf in disk_res.built_files if "kanji-freq" in bf.spec.slice_id)
+            disk_kanji_woff2 = next(
+                bf.path
+                for bf in disk_res.built_files
+                if "kanji-freq" in bf.spec.slice_id
+            )
             with TTFont(disk_kanji_woff2) as slice_tt:
-                self.assertIn(0x553E, slice_tt.getBestCmap(), "WOFF2 slice from disk Path must contain U+553E")
+                self.assertIn(
+                    0x553E,
+                    slice_tt.getBestCmap(),
+                    "WOFF2 slice from disk Path must contain U+553E",
+                )
 
     def test_uvs_selector_deterministic_priority_ivs_over_vs(self) -> None:
         """
@@ -160,12 +181,16 @@ class TestSubsetterAndShaping(unittest.TestCase):
             slice_fonts([font], out_dir=tmp_path / "slice_many", workers=1)
             self.assertEqual(serialize_font_to_bytes(font), baseline_bytes)
 
-    def test_end_to_end_variable_and_static_export_with_woff2_verification(self) -> None:
+    def test_end_to_end_variable_and_static_export_with_woff2_verification(
+        self,
+    ) -> None:
         """
         Test WOFF2 slice generation, exact cmap verification of every built slice,
         license nameID (13, 14) preservation, head.modified determinism, and static font-stretch.
         """
-        sample_chars = "A0€あむモヶ「」→▶①Ωα日人一𠮟𠮷鷗" + "".join(chr(cp) for cp in range(0x4E10, 0x4E30))
+        sample_chars = "A0€あむモヶ「」→▶①Ωα日人一𠮟𠮷鷗" + "".join(
+            chr(cp) for cp in range(0x4E10, 0x4E30)
+        )
         sample_cps = sorted({ord(c) for c in sample_chars})
 
         vf_tt = create_synthetic_ttfont(
@@ -185,11 +210,18 @@ class TestSubsetterAndShaping(unittest.TestCase):
             for bf in res.built_files:
                 self.assertTrue(bf.path.exists() and bf.size_bytes > 0)
                 with TTFont(bf.path) as woff2_tt:
-                    self.assertEqual(set(woff2_tt.getBestCmap().keys()), set(bf.spec.binary_codepoints))
+                    self.assertEqual(
+                        set(woff2_tt.getBestCmap().keys()),
+                        set(bf.spec.binary_codepoints),
+                    )
                     self.assertEqual(woff2_tt["head"].modified, 3700000000)
                     name_ids = {r.nameID for r in woff2_tt["name"].names}
-                    self.assertIn(13, name_ids, "License description (nameID 13) must be retained")
-                    self.assertIn(14, name_ids, "License info URL (nameID 14) must be retained")
+                    self.assertIn(
+                        13, name_ids, "License description (nameID 13) must be retained"
+                    )
+                    self.assertIn(
+                        14, name_ids, "License info URL (nameID 14) must be retained"
+                    )
 
             # Test multi-file static fonts (Condensed Regular 400 + Condensed Bold 700, width_class=3 -> 75%)
             reg_path = Path(tmp) / "TestSansJP-Cond-Regular.ttf"
@@ -223,14 +255,22 @@ class TestSubsetterAndShaping(unittest.TestCase):
         or duplicate (weight, stretch, style) @font-face descriptors raises ValueError.
         """
         sample_cps = [ord("A"), ord("あ"), ord("日")]
-        f1 = create_synthetic_ttfont(sample_cps, family_name="Family A", weight=400, width_class=5)
-        f2 = create_synthetic_ttfont(sample_cps, family_name="Family B", weight=700, width_class=5)
-        f3_dup = create_synthetic_ttfont(sample_cps, family_name="Family A", weight=400, width_class=5)
+        f1 = create_synthetic_ttfont(
+            sample_cps, family_name="Family A", weight=400, width_class=5
+        )
+        f2 = create_synthetic_ttfont(
+            sample_cps, family_name="Family B", weight=700, width_class=5
+        )
+        f3_dup = create_synthetic_ttfont(
+            sample_cps, family_name="Family A", weight=400, width_class=5
+        )
 
         with tempfile.TemporaryDirectory() as tmp:
             # Mismatched family names without family_name override -> ValueError (and must not create out_dir)
             mismatch_dir = Path(tmp) / "mismatch"
-            with self.assertRaisesRegex(ValueError, "different detected font-family names"):
+            with self.assertRaisesRegex(
+                ValueError, "different detected font-family names"
+            ):
                 slice_fonts((f1, f2), out_dir=mismatch_dir, workers=1)
             self.assertFalse(mismatch_dir.exists())
 
@@ -272,9 +312,16 @@ class TestSubsetterAndShaping(unittest.TestCase):
                 config=SliceConfig(layout_features=("vert",)),
                 workers=2,
             )
-            kana_vert = next(bf.path for bf in res_vert.built_files if bf.spec.slice_id == "kana-core")
+            kana_vert = next(
+                bf.path
+                for bf in res_vert.built_files
+                if bf.spec.slice_id == "kana-core"
+            )
             with TTFont(kana_vert) as woff2_tt:
-                gsub_tags = [f.FeatureTag for f in woff2_tt["GSUB"].table.FeatureList.FeatureRecord]
+                gsub_tags = [
+                    f.FeatureTag
+                    for f in woff2_tt["GSUB"].table.FeatureList.FeatureRecord
+                ]
                 self.assertEqual(gsub_tags, ["vert"])
 
             # 2. Default '*' retains both 'liga' and 'vert'
@@ -285,9 +332,14 @@ class TestSubsetterAndShaping(unittest.TestCase):
                 config=SliceConfig(layout_features=("*",)),
                 workers=2,
             )
-            kana_all = next(bf.path for bf in res_all.built_files if bf.spec.slice_id == "kana-core")
+            kana_all = next(
+                bf.path for bf in res_all.built_files if bf.spec.slice_id == "kana-core"
+            )
             with TTFont(kana_all) as woff2_tt:
-                gsub_tags_all = sorted(f.FeatureTag for f in woff2_tt["GSUB"].table.FeatureList.FeatureRecord)
+                gsub_tags_all = sorted(
+                    f.FeatureTag
+                    for f in woff2_tt["GSUB"].table.FeatureList.FeatureRecord
+                )
                 self.assertEqual(gsub_tags_all, ["liga", "vert"])
 
     def test_multi_font_differing_cmaps_variant_slice_specs(self) -> None:
@@ -295,14 +347,24 @@ class TestSubsetterAndShaping(unittest.TestCase):
         Verify that when bundling multiple fonts with differing `cmap`s, `variant_slice_specs`
         contains each font's own slice plan (matching `built_files`), while `slice_specs` holds the union plan.
         """
-        f_reg = create_synthetic_ttfont([ord("A"), ord("あ")], family_name="Diff Cmap", weight=400)
-        f_bold = create_synthetic_ttfont([ord("A"), ord("あ"), ord("日"), 0x4E02], family_name="Diff Cmap", weight=700)
+        f_reg = create_synthetic_ttfont(
+            [ord("A"), ord("あ")], family_name="Diff Cmap", weight=400
+        )
+        f_bold = create_synthetic_ttfont(
+            [ord("A"), ord("あ"), ord("日"), 0x4E02],
+            family_name="Diff Cmap",
+            weight=700,
+        )
 
         with tempfile.TemporaryDirectory() as tmp:
-            res = slice_fonts([f_reg, f_bold], out_dir=Path(tmp) / "diff_cmap", workers=2)
+            res = slice_fonts(
+                [f_reg, f_bold], out_dir=Path(tmp) / "diff_cmap", workers=2
+            )
             self.assertEqual(len(res.variant_slice_specs), 2)
             self.assertEqual(len(res.variant_slice_specs[0]), 2)  # latin + kana-core
-            self.assertEqual(len(res.variant_slice_specs[1]), 4)  # rare + freq + kana-core + latin
+            self.assertEqual(
+                len(res.variant_slice_specs[1]), 4
+            )  # rare + freq + kana-core + latin
             self.assertEqual(len(res.slice_specs), 4)  # union plan
             self.assertEqual(
                 len(res.built_files),
@@ -321,8 +383,14 @@ class TestSubsetterAndShaping(unittest.TestCase):
 
         def _make_uvs_font() -> TTFont:
             f = create_synthetic_ttfont(sample_cps, family_name="UVS Keep Font")
-            f.setGlyphOrder(f.getGlyphOrder() + ["uni65E5_ivs0", "uni4E02_ivs0", "uni553E_uvs"])
-            for g, adv in (("uni65E5_ivs0", 910), ("uni4E02_ivs0", 820), ("uni553E_uvs", 730)):
+            f.setGlyphOrder(
+                f.getGlyphOrder() + ["uni65E5_ivs0", "uni4E02_ivs0", "uni553E_uvs"]
+            )
+            for g, adv in (
+                ("uni65E5_ivs0", 910),
+                ("uni4E02_ivs0", 820),
+                ("uni553E_uvs", 730),
+            ):
                 f["glyf"][g] = f["glyf"]["uni0041"]
                 f["hmtx"][g] = (adv, 100)
             s14 = CmapSubtable.newSubtable(14)
@@ -337,7 +405,9 @@ class TestSubsetterAndShaping(unittest.TestCase):
                     (0x553E, "uni553E_uvs"),  # U+553E not in base cmap
                 ],
                 0xE0101: [(ord("日"), None)],
-                0xFE00: [(ord("日"), "uni65E5_ivs0")],  # VS1 selector is also in base cmap (symbols-ext)
+                0xFE00: [
+                    (ord("日"), "uni65E5_ivs0")
+                ],  # VS1 selector is also in base cmap (symbols-ext)
             }
             f["cmap"].tables.append(s14)
             return f
@@ -361,16 +431,32 @@ class TestSubsetterAndShaping(unittest.TestCase):
                     workers=w,
                 )
 
-                freq_bf = next(bf for bf in res.built_files if bf.spec.category == "kanji-freq")
-                rare_bf = next(bf for bf in res.built_files if bf.spec.category == "kanji-rare")
-                sym_bf = next(bf for bf in res.built_files if bf.spec.category == "symbols-ext")
+                freq_bf = next(
+                    bf for bf in res.built_files if bf.spec.category == "kanji-freq"
+                )
+                rare_bf = next(
+                    bf for bf in res.built_files if bf.spec.category == "kanji-rare"
+                )
+                sym_bf = next(
+                    bf for bf in res.built_files if bf.spec.category == "symbols-ext"
+                )
 
                 with TTFont(freq_bf.path) as freq_tt:
-                    expected_freq_cps = {ord("日"), 0x553E} if patch_missing else {ord("日")}
-                    self.assertEqual(set(freq_tt.getBestCmap().keys()), expected_freq_cps)
-                    self.assertNotIn(0xFE00, freq_tt.getBestCmap(), "VS1 must not leak into kanji-freq base cmap")
+                    expected_freq_cps = (
+                        {ord("日"), 0x553E} if patch_missing else {ord("日")}
+                    )
+                    self.assertEqual(
+                        set(freq_tt.getBestCmap().keys()), expected_freq_cps
+                    )
+                    self.assertNotIn(
+                        0xFE00,
+                        freq_tt.getBestCmap(),
+                        "VS1 must not leak into kanji-freq base cmap",
+                    )
                     f14_tables = [t for t in freq_tt["cmap"].tables if t.format == 14]
-                    self.assertEqual(len(f14_tables), 1, f"{label}: Format 14 missing in kanji-freq")
+                    self.assertEqual(
+                        len(f14_tables), 1, f"{label}: Format 14 missing in kanji-freq"
+                    )
                     uvs_dict = f14_tables[0].uvsDict
                     self.assertEqual(uvs_dict[0xE0101], [(ord("日"), None)])
                     # Verify non-default UVS glyph for 日 has distinct advance width 910 (not base 1000 or 820)
@@ -386,7 +472,9 @@ class TestSubsetterAndShaping(unittest.TestCase):
                 with TTFont(rare_bf.path) as rare_tt:
                     self.assertEqual(set(rare_tt.getBestCmap().keys()), {0x4E02})
                     f14_tables = [t for t in rare_tt["cmap"].tables if t.format == 14]
-                    self.assertEqual(len(f14_tables), 1, f"{label}: Format 14 missing in kanji-rare")
+                    self.assertEqual(
+                        len(f14_tables), 1, f"{label}: Format 14 missing in kanji-rare"
+                    )
                     uvs_dict = f14_tables[0].uvsDict
                     self.assertEqual(set(uvs_dict.keys()), {0xE0100})
                     self.assertEqual(len(uvs_dict[0xE0100]), 1)
@@ -398,7 +486,9 @@ class TestSubsetterAndShaping(unittest.TestCase):
                 with TTFont(sym_bf.path) as sym_tt:
                     self.assertEqual(set(sym_tt.getBestCmap().keys()), {0xFE00})
                     f14_tables = [t for t in sym_tt["cmap"].tables if t.format == 14]
-                    self.assertEqual(len(f14_tables), 0, "symbols-ext has no Format 14 base chars")
+                    self.assertEqual(
+                        len(f14_tables), 0, "symbols-ext has no Format 14 base chars"
+                    )
 
                 # Verify HarfBuzz shaping before and after slicing for IVS/UVS sequences
                 def _hb_shape_advances(font_obj: TTFont, text: str) -> list[int]:
@@ -418,12 +508,16 @@ class TestSubsetterAndShaping(unittest.TestCase):
                 with TTFont(freq_bf.path) as sliced_freq_tt:
                     for seq, expected_adv in (
                         ("日", [1000]),
-                        ("日\U000E0100", [910]),
-                        ("日\U000E0101", [1000]),
-                        ("日\uFE00", [910]),
+                        ("日\U000e0100", [910]),
+                        ("日\U000e0101", [1000]),
+                        ("日\ufe00", [910]),
                     ):
-                        self.assertEqual(_hb_shape_advances(orig_uvs, seq), expected_adv)
-                        self.assertEqual(_hb_shape_advances(sliced_freq_tt, seq), expected_adv)
+                        self.assertEqual(
+                            _hb_shape_advances(orig_uvs, seq), expected_adv
+                        )
+                        self.assertEqual(
+                            _hb_shape_advances(sliced_freq_tt, seq), expected_adv
+                        )
 
     def test_issue2_combining_marks_and_base_chars_retain_gsub_ccmp(self) -> None:
         """
@@ -432,7 +526,10 @@ class TestSubsetterAndShaping(unittest.TestCase):
         `ccmp` composition (`A + U+0301 -> Á`) retains its GSUB lookup and all input/output
         glyphs (both when the precomposed glyph is in `cmap` and when it is unmapped).
         """
-        def _hb_shape_glyphs_and_advances(font_obj: TTFont, text: str) -> list[tuple[str, int]]:
+
+        def _hb_shape_glyphs_and_advances(
+            font_obj: TTFont, text: str
+        ) -> list[tuple[str, int]]:
             buf_io = io.BytesIO()
             c = copy.deepcopy(font_obj)
             c.flavor = None
@@ -490,10 +587,15 @@ class TestSubsetterAndShaping(unittest.TestCase):
                 self.assertEqual(ligs[0].Component, [g_acute])
                 self.assertEqual(ligs[0].LigGlyph, g_aacute)
                 self.assertEqual(latin_tt["hmtx"][g_aacute][0], 950)
-                self.assertEqual(_hb_shape_glyphs_and_advances(latin_tt, "A\u0301"), [(g_aacute, 950)])
+                self.assertEqual(
+                    _hb_shape_glyphs_and_advances(latin_tt, "A\u0301"),
+                    [(g_aacute, 950)],
+                )
 
             # 2. Unmapped precomposed glyph reachable only via GSUB ccmp closure
-            tt_unmapped = create_synthetic_ttfont([ord("A"), 0x0301, ord("あ")], family_name="Unmapped Lig Font")
+            tt_unmapped = create_synthetic_ttfont(
+                [ord("A"), 0x0301, ord("あ")], family_name="Unmapped Lig Font"
+            )
             tt_unmapped.setGlyphOrder(tt_unmapped.getGlyphOrder() + ["Aacute_lig"])
             tt_unmapped["glyf"]["Aacute_lig"] = tt_unmapped["glyf"]["uni0041"]
             tt_unmapped["hmtx"]["Aacute_lig"] = (940, 100)
@@ -507,14 +609,25 @@ class TestSubsetterAndShaping(unittest.TestCase):
                 } ccmp;
                 """,
             )
-            self.assertEqual(_hb_shape_glyphs_and_advances(tt_unmapped, "A\u0301"), [("Aacute_lig", 940)])
-            res_unmapped = slice_font(tt_unmapped, out_dir=Path(tmp) / "ccmp_unmapped", workers=1)
-            latin_unmapped_bf = next(bf for bf in res_unmapped.built_files if bf.spec.slice_id == "latin")
+            self.assertEqual(
+                _hb_shape_glyphs_and_advances(tt_unmapped, "A\u0301"),
+                [("Aacute_lig", 940)],
+            )
+            res_unmapped = slice_font(
+                tt_unmapped, out_dir=Path(tmp) / "ccmp_unmapped", workers=1
+            )
+            latin_unmapped_bf = next(
+                bf for bf in res_unmapped.built_files if bf.spec.slice_id == "latin"
+            )
             with TTFont(latin_unmapped_bf.path) as lu_tt:
                 cmap_u = lu_tt.getBestCmap()
                 gsub_u = lu_tt["GSUB"].table
                 self.assertEqual(len(gsub_u.LookupList.Lookup), 1)
-                lig_u = gsub_u.LookupList.Lookup[0].SubTable[0].ligatures[cmap_u[ord("A")]][0]
+                lig_u = (
+                    gsub_u.LookupList.Lookup[0]
+                    .SubTable[0]
+                    .ligatures[cmap_u[ord("A")]][0]
+                )
                 self.assertEqual(lig_u.Component, [cmap_u[0x0301]])
                 self.assertIn(lig_u.LigGlyph, lu_tt.getGlyphOrder())
                 self.assertEqual(lu_tt["hmtx"][lig_u.LigGlyph][0], 940)
@@ -540,7 +653,9 @@ class TestSubsetterAndShaping(unittest.TestCase):
             return ax
 
         def _make_vf_with_axes(family: str, *extra_axes: Axis) -> TTFont:
-            f = create_synthetic_ttfont(sample_cps, family_name=family, is_variable=True)
+            f = create_synthetic_ttfont(
+                sample_cps, family_name=family, is_variable=True
+            )
             f["fvar"].axes = [f["fvar"].axes[0], *extra_axes]
             return f
 
@@ -551,12 +666,16 @@ class TestSubsetterAndShaping(unittest.TestCase):
         self.assertEqual(meta_01.styles_css, ("normal", "italic"))
 
         # 2. Fixed ital axis 1..1 -> italic only; fixed ital axis 0..0 -> normal only
-        tt_ital_11 = _make_vf_with_axes("Ital Fixed 1", _make_axis("ital", 1.0, 1.0, 1.0))
+        tt_ital_11 = _make_vf_with_axes(
+            "Ital Fixed 1", _make_axis("ital", 1.0, 1.0, 1.0)
+        )
         meta_11 = extract_font_metadata(tt_ital_11)
         self.assertEqual(meta_11.style_css, "italic")
         self.assertEqual(meta_11.styles_css, ("italic",))
 
-        tt_ital_00 = _make_vf_with_axes("Ital Fixed 0", _make_axis("ital", 0.0, 0.0, 0.0))
+        tt_ital_00 = _make_vf_with_axes(
+            "Ital Fixed 0", _make_axis("ital", 0.0, 0.0, 0.0)
+        )
         meta_00 = extract_font_metadata(tt_ital_00)
         self.assertEqual(meta_00.style_css, "normal")
         self.assertEqual(meta_00.styles_css, ("normal",))
@@ -567,12 +686,16 @@ class TestSubsetterAndShaping(unittest.TestCase):
         self.assertEqual(meta_slnt_var.style_css, "oblique 0deg 12deg")
         self.assertEqual(meta_slnt_var.styles_css, ("oblique 0deg 12deg",))
 
-        tt_slnt_fix = _make_vf_with_axes("Slnt Fixed", _make_axis("slnt", -12.0, -12.0, -12.0))
+        tt_slnt_fix = _make_vf_with_axes(
+            "Slnt Fixed", _make_axis("slnt", -12.0, -12.0, -12.0)
+        )
         meta_slnt_fix = extract_font_metadata(tt_slnt_fix)
         self.assertEqual(meta_slnt_fix.style_css, "oblique 12deg")
         self.assertEqual(meta_slnt_fix.styles_css, ("oblique 12deg",))
 
-        tt_slnt_zero = _make_vf_with_axes("Slnt Zero", _make_axis("slnt", 0.0, 0.0, 0.0))
+        tt_slnt_zero = _make_vf_with_axes(
+            "Slnt Zero", _make_axis("slnt", 0.0, 0.0, 0.0)
+        )
         meta_slnt_zero = extract_font_metadata(tt_slnt_zero)
         self.assertEqual(meta_slnt_zero.style_css, "normal")
         self.assertEqual(meta_slnt_zero.styles_css, ("normal",))
@@ -585,7 +708,9 @@ class TestSubsetterAndShaping(unittest.TestCase):
         )
         meta_both = extract_font_metadata(tt_both)
         self.assertEqual(meta_both.style_css, "normal")
-        self.assertEqual(meta_both.styles_css, ("normal", "italic", "oblique 0deg 12deg"))
+        self.assertEqual(
+            meta_both.styles_css, ("normal", "italic", "oblique 0deg 12deg")
+        )
 
         combo_cases = [
             # (ital_range, slnt_range, expected_styles_css)
@@ -599,7 +724,11 @@ class TestSubsetterAndShaping(unittest.TestCase):
             ((0.0, 0.0, 1.0), (0.0, 0.0, 0.0), ("normal", "italic")),
             ((0.0, 0.0, 1.0), (-12.0, -12.0, -12.0), ("italic", "oblique 12deg")),
             ((0.0, 0.0, 1.0), (-12.0, -8.0, -5.0), ("italic", "oblique 5deg 12deg")),
-            ((0.0, 0.0, 1.0), (-12.0, 0.0, 0.0), ("normal", "italic", "oblique 0deg 12deg")),
+            (
+                (0.0, 0.0, 1.0),
+                (-12.0, 0.0, 0.0),
+                ("normal", "italic", "oblique 0deg 12deg"),
+            ),
         ]
         for ital_rng, slnt_rng, expected_styles in combo_cases:
             tt_c = _make_vf_with_axes(
@@ -617,7 +746,9 @@ class TestSubsetterAndShaping(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmp:
             res_01 = slice_font(tt_ital_01, out_dir=Path(tmp) / "ital_vf", workers=1)
-            self.assertEqual(len(res_01.built_files), 3)  # Only 1 set of WOFF2 files built
+            self.assertEqual(
+                len(res_01.built_files), 3
+            )  # Only 1 set of WOFF2 files built
             self.assertEqual(res_01.css_text.count("font-style: normal;"), 3)
             self.assertEqual(res_01.css_text.count("font-style: italic;"), 3)
 
@@ -625,7 +756,9 @@ class TestSubsetterAndShaping(unittest.TestCase):
             self.assertEqual(len(res_both.built_files), 3)
             self.assertEqual(res_both.css_text.count("font-style: normal;"), 3)
             self.assertEqual(res_both.css_text.count("font-style: italic;"), 3)
-            self.assertEqual(res_both.css_text.count("font-style: oblique 0deg 12deg;"), 3)
+            self.assertEqual(
+                res_both.css_text.count("font-style: oblique 0deg 12deg;"), 3
+            )
 
             # Pairing an upright font (ital=0, slnt=0) with a fixed oblique font (ital=0, slnt=-12)
             # of the same family and weight must succeed without descriptor collision
@@ -648,9 +781,15 @@ class TestSubsetterAndShaping(unittest.TestCase):
             self.assertEqual(res_paired.css_text.count("font-style: oblique 12deg;"), 3)
 
             # Collision check: bundling ital 0..1 VF with an italic-only VF of same weight must raise ValueError
-            tt_ital_conflict = _make_vf_with_axes("Ital VF", _make_axis("ital", 1.0, 1.0, 1.0))
+            tt_ital_conflict = _make_vf_with_axes(
+                "Ital VF", _make_axis("ital", 1.0, 1.0, 1.0)
+            )
             with self.assertRaisesRegex(ValueError, "Duplicate @font-face descriptors"):
-                slice_fonts([tt_ital_01, tt_ital_conflict], out_dir=Path(tmp) / "conflict", workers=1)
+                slice_fonts(
+                    [tt_ital_01, tt_ital_conflict],
+                    out_dir=Path(tmp) / "conflict",
+                    workers=1,
+                )
 
     def test_issue4_ttfont_input_not_mutated_on_success_or_error(self) -> None:
         """
@@ -659,6 +798,7 @@ class TestSubsetterAndShaping(unittest.TestCase):
         `head`, `hhea`, `OS/2`, `cmap`, or any other table on the caller's `TTFont`
         object on either success or error.
         """
+
         def _structural_snapshot(obj: object) -> object:
             if isinstance(obj, (int, float, str, bytes, bool, type(None))):
                 return obj
@@ -680,7 +820,11 @@ class TestSubsetterAndShaping(unittest.TestCase):
         )
         self.assertEqual(tt["maxp"].numGlyphs, 0)
         self.assertEqual(tt["maxp"].maxPoints, 0)
-        snapshot_tables = {tag: _structural_snapshot(tt[tag]) for tag in tt.keys() if tag != "GlyphOrder"}
+        snapshot_tables = {
+            tag: _structural_snapshot(tt[tag])
+            for tag in tt.keys()  # noqa: SIM118 - TTFont does not implement __iter__
+            if tag != "GlyphOrder"
+        }
         snapshot_glyph_order = list(tt.getGlyphOrder())
         snapshot_flavor = tt.flavor
         snapshot_recalc = tt.recalcTimestamp
@@ -689,8 +833,12 @@ class TestSubsetterAndShaping(unittest.TestCase):
             self.assertEqual(tt.flavor, snapshot_flavor)
             self.assertEqual(tt.recalcTimestamp, snapshot_recalc)
             self.assertEqual(list(tt.getGlyphOrder()), snapshot_glyph_order)
-            self.assertEqual(tt["maxp"].numGlyphs, 0, "Caller's TTFont maxp.numGlyphs was mutated!")
-            self.assertEqual(tt["maxp"].maxPoints, 0, "Caller's TTFont maxp.maxPoints was mutated!")
+            self.assertEqual(
+                tt["maxp"].numGlyphs, 0, "Caller's TTFont maxp.numGlyphs was mutated!"
+            )
+            self.assertEqual(
+                tt["maxp"].maxPoints, 0, "Caller's TTFont maxp.maxPoints was mutated!"
+            )
             for tag, orig_snap in snapshot_tables.items():
                 self.assertEqual(
                     _structural_snapshot(tt[tag]),
@@ -802,8 +950,12 @@ class TestSubsetterAndShaping(unittest.TestCase):
         3. Temporary files created via `NamedTemporaryFile` leave no `.tmp` files behind.
         """
         malicious_family = "Evil */ @import url('https://evil.example/a.css'); /* Font'\n  src: url('x');\r\f\\End"
-        f400 = create_synthetic_ttfont([ord("A"), ord("あ")], family_name=malicious_family, weight=400)
-        f700 = create_synthetic_ttfont([ord("A"), ord("あ")], family_name=malicious_family, weight=700)
+        f400 = create_synthetic_ttfont(
+            [ord("A"), ord("あ")], family_name=malicious_family, weight=400
+        )
+        f700 = create_synthetic_ttfont(
+            [ord("A"), ord("あ")], family_name=malicious_family, weight=700
+        )
 
         with tempfile.TemporaryDirectory() as tmp:
             out_dir = Path(tmp) / "hardened_out"
@@ -821,10 +973,16 @@ class TestSubsetterAndShaping(unittest.TestCase):
             for line in res.css_text.splitlines():
                 stripped = line.strip()
                 if stripped.startswith("/*"):
-                    self.assertTrue(stripped.endswith("*/"), f"Unclosed comment line: {line!r}")
+                    self.assertTrue(
+                        stripped.endswith("*/"), f"Unclosed comment line: {line!r}"
+                    )
                     inner = stripped[2:-2]
-                    self.assertNotIn("*/", inner, f"Unescaped comment closer inside comment: {line!r}")
-                if stripped.startswith("font-family:") or stripped.startswith("src:"):
+                    self.assertNotIn(
+                        "*/",
+                        inner,
+                        f"Unescaped comment closer inside comment: {line!r}",
+                    )
+                if stripped.startswith(("font-family:", "src:")):
                     self.assertNotIn("\n", stripped)
                     self.assertNotIn("\r", stripped)
                     self.assertNotIn("\f", stripped)
@@ -834,7 +992,9 @@ class TestSubsetterAndShaping(unittest.TestCase):
 
             # Verify published CSS and WOFF2 files are world-readable (0o644 under umask 0o022)
             for p in (res.css_path, *(bf.path for bf in res.built_files)):
-                self.assertEqual(p.stat().st_mode & 0o777, 0o644, f"Unexpected mode for {p.name}")
+                self.assertEqual(
+                    p.stat().st_mode & 0o777, 0o644, f"Unexpected mode for {p.name}"
+                )
 
             # No leftover temporary files
             leftover_tmps = list(out_dir.rglob("*.tmp*"))
@@ -848,7 +1008,9 @@ class TestSubsetterAndShaping(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "slug"):
                 slice_font(f400, out_dir=out_dir, slug="../escape", workers=1)
             with self.assertRaisesRegex(ValueError, "css_filename"):
-                slice_font(f400, out_dir=out_dir, css_filename="../escape.css", workers=1)
+                slice_font(
+                    f400, out_dir=out_dir, css_filename="../escape.css", workers=1
+                )
 
     def test_build_cache_skip_subsetting_and_invalidation(self) -> None:
         """
@@ -875,9 +1037,9 @@ class TestSubsetterAndShaping(unittest.TestCase):
             create_synthetic_ttfont(cps_reg, family_name="Cache Sans", weight=400).save(
                 p_reg, reorderTables=False
             )
-            create_synthetic_ttfont(cps_bold, family_name="Cache Sans", weight=700).save(
-                p_bold, reorderTables=False
-            )
+            create_synthetic_ttfont(
+                cps_bold, family_name="Cache Sans", weight=700
+            ).save(p_bold, reorderTables=False)
 
             out_dir = tmp_path / "dist_cache"
 
@@ -893,13 +1055,19 @@ class TestSubsetterAndShaping(unittest.TestCase):
             )
             self.assertIn(" glyphs, ", css_lines[4])
             # Ensure no dotfile or JSON manifest polluted out_dir or slices_dir
-            self.assertEqual([p.name for p in out_dir.iterdir() if p.is_file()], [res1.css_path.name])
-            self.assertTrue(all(p.suffix == ".woff2" for p in res1.slices_dir.iterdir()))
+            self.assertEqual(
+                [p.name for p in out_dir.iterdir() if p.is_file()], [res1.css_path.name]
+            )
+            self.assertTrue(
+                all(p.suffix == ".woff2" for p in res1.slices_dir.iterdir())
+            )
 
             # 2. Second call -> skips _export_woff2_slices_batch completely and returns identical metadata
             with patch(
                 "cleome.pipeline._export_woff2_slices_batch",
-                side_effect=AssertionError("_export_woff2_slices_batch should be skipped on cache hit"),
+                side_effect=AssertionError(
+                    "_export_woff2_slices_batch should be skipped on cache hit"
+                ),
             ) as mock_export:
                 res2 = slice_fonts([p_reg, p_bold], out_dir=out_dir, workers=1)
                 self.assertEqual(mock_export.call_count, 0)
@@ -968,9 +1136,9 @@ class TestSubsetterAndShaping(unittest.TestCase):
             self.assertEqual(victim.read_bytes(), orig_bytes)
 
             # 6. Modified input font binary invalidates cache
-            create_synthetic_ttfont([*cps_reg, ord("B")], family_name="Cache Sans", weight=400).save(
-                p_reg, reorderTables=False
-            )
+            create_synthetic_ttfont(
+                [*cps_reg, ord("B")], family_name="Cache Sans", weight=400
+            ).save(p_reg, reorderTables=False)
             res_font_changed = slice_fonts(
                 [p_reg, p_bold],
                 out_dir=out_dir,
@@ -992,31 +1160,44 @@ class TestSubsetterAndShaping(unittest.TestCase):
             # 8. Custom slugs containing ',', ':', or '*' hit the cache on second build
             for special_slug in ("cache,font", "cache:font", "cache*font"):
                 special_out = tmp_path / f"out_{special_slug}"
-                r1 = slice_font(p_reg, out_dir=special_out, slug=special_slug, workers=1)
-                r2 = slice_font(p_reg, out_dir=special_out, slug=special_slug, workers=1)
+                r1 = slice_font(
+                    p_reg, out_dir=special_out, slug=special_slug, workers=1
+                )
+                r2 = slice_font(
+                    p_reg, out_dir=special_out, slug=special_slug, workers=1
+                )
                 self.assertFalse(r1.cached)
-                self.assertTrue(r2.cached, f"Expected cache hit for slug={special_slug!r}")
+                self.assertTrue(
+                    r2.cached, f"Expected cache hit for slug={special_slug!r}"
+                )
 
             # 9. Stale hashed slice cleanup: updating only one tier keeps unchanged hashes and prunes old hash
             stale_out = tmp_path / "stale_hash_out"
             font_v1 = tmp_path / "Stale-v1.ttf"
             font_v2 = tmp_path / "Stale-v2.ttf"
-            create_synthetic_ttfont([ord("A"), ord("あ"), 0x4E02], family_name="Stale Test").save(
-                font_v1, reorderTables=False
-            )
-            create_synthetic_ttfont([ord("A"), ord("あ"), 0x4E02, 0x4E04], family_name="Stale Test").save(
-                font_v2, reorderTables=False
-            )
+            create_synthetic_ttfont(
+                [ord("A"), ord("あ"), 0x4E02], family_name="Stale Test"
+            ).save(font_v1, reorderTables=False)
+            create_synthetic_ttfont(
+                [ord("A"), ord("あ"), 0x4E02, 0x4E04], family_name="Stale Test"
+            ).save(font_v2, reorderTables=False)
             res_v1 = slice_font(font_v1, out_dir=stale_out, workers=1)
             v1_by_id = {bf.spec.slice_id: bf for bf in res_v1.built_files}
             res_v2 = slice_font(font_v2, out_dir=stale_out, workers=1)
             v2_by_id = {bf.spec.slice_id: bf for bf in res_v2.built_files}
             # Unchanged latin and kana-core keep identical content hash and filename
             self.assertEqual(v1_by_id["latin"].filename, v2_by_id["latin"].filename)
-            self.assertEqual(v1_by_id["kana-core"].filename, v2_by_id["kana-core"].filename)
+            self.assertEqual(
+                v1_by_id["kana-core"].filename, v2_by_id["kana-core"].filename
+            )
             # Modified kanji-rare-01 gets a new hash, and the old file is pruned from slices_dir
-            self.assertNotEqual(v1_by_id["kanji-rare-01"].filename, v2_by_id["kanji-rare-01"].filename)
-            self.assertFalse(v1_by_id["kanji-rare-01"].path.exists(), "Superseded hashed slice must be pruned")
+            self.assertNotEqual(
+                v1_by_id["kanji-rare-01"].filename, v2_by_id["kanji-rare-01"].filename
+            )
+            self.assertFalse(
+                v1_by_id["kanji-rare-01"].path.exists(),
+                "Superseded hashed slice must be pruned",
+            )
             self.assertTrue(v2_by_id["kanji-rare-01"].path.exists())
 
             # 10. Issue 12: if an exception occurs between WOFF2 export and CSS write,
@@ -1028,12 +1209,17 @@ class TestSubsetterAndShaping(unittest.TestCase):
             self.assertTrue(all(p.is_file() for p in orig_slice_paths))
 
             with (
-                patch("cleome.pipeline.generate_css", side_effect=RuntimeError("boom before css write")),
+                patch(
+                    "cleome.pipeline.generate_css",
+                    side_effect=RuntimeError("boom before css write"),
+                ),
                 self.assertRaisesRegex(RuntimeError, "boom before css write"),
             ):
                 slice_font(font_v2, out_dir=atomic_out, workers=1)
 
-            self.assertEqual(res_init.css_path.read_text(encoding="utf-8"), orig_css_text)
+            self.assertEqual(
+                res_init.css_path.read_text(encoding="utf-8"), orig_css_text
+            )
             for p in orig_slice_paths:
                 self.assertTrue(
                     p.is_file(),
@@ -1158,6 +1344,7 @@ class TestSubsetterAndShaping(unittest.TestCase):
         threads must not collide on module globals or read another thread's font source.
         """
         from concurrent.futures import ThreadPoolExecutor
+
         from fontTools.fontBuilder import FontBuilder
         from fontTools.pens.ttGlyphPen import TTGlyphPen
 
@@ -1179,7 +1366,11 @@ class TestSubsetterAndShaping(unittest.TestCase):
             fb.setupPost()
             return fb.font
 
-        cps = list(range(0x20, 0x7F)) + list(range(0x3041, 0x3097)) + list(range(0x4E00, 0x5800))
+        cps = (
+            list(range(0x20, 0x7F))
+            + list(range(0x3041, 0x3097))
+            + list(range(0x4E00, 0x5800))
+        )
         fonts = [make_font(f"Family {i}", cps) for i in range(4)]
 
         with tempfile.TemporaryDirectory() as tmp:
@@ -1187,7 +1378,10 @@ class TestSubsetterAndShaping(unittest.TestCase):
             for run_idx in range(3):
                 out = tmp_path / f"run_{run_idx}"
                 with ThreadPoolExecutor(4) as pool:
-                    futs = [pool.submit(slice_font, f, out / str(i), workers=1) for i, f in enumerate(fonts)]
+                    futs = [
+                        pool.submit(slice_font, f, out / str(i), workers=1)
+                        for i, f in enumerate(fonts)
+                    ]
                     results = [fut.result() for fut in futs]
                 for i, res in enumerate(results):
                     self.assertEqual(res.family_name, f"Family {i}")

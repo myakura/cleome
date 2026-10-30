@@ -23,7 +23,9 @@ _TC_ONLY_FREQ: frozenset[int] = frozenset(
     TC_HANZI_FREQ_RANK.keys() - SC_HANZI_FREQ_RANK.keys() - KANJI_FREQ_RANK.keys()
 )
 _HK_EXTRA_CPS: frozenset[int] = frozenset(ord(c) for c in HK_EXTRA_CANTONESE_CHARS)
-_BOPOMOFO_TONE_MARKS: frozenset[int] = frozenset({0x02C7, 0x02C9, 0x02CA, 0x02CB, 0x02D9})
+_BOPOMOFO_TONE_MARKS: frozenset[int] = frozenset(
+    {0x02C7, 0x02C9, 0x02CA, 0x02CB, 0x02D9}
+)
 
 CJK_IDEOGRAPH_REGIONS: tuple[tuple[str, int, int], ...] = (
     ("Ext-A", 0x3400, 0x4DBF),
@@ -179,7 +181,9 @@ def detect_font_locale(codepoints: CodepointSet, family_name: str = "") -> str:
             return "kr"
         if tokens & {"sc", "chs", "cn", "zhs", "hans", "simplified"}:
             return "sc"
-        if (tokens & {"hk", "hkg", "hongkong", "cantonese", "yue"}) or ("hong kong" in lower_name):
+        if (tokens & {"hk", "hkg", "hongkong", "cantonese", "yue"}) or (
+            "hong kong" in lower_name
+        ):
             return "hk"
         if tokens & {"tc", "cht", "tw", "zht", "hant", "traditional"}:
             return "tc"

@@ -2,13 +2,14 @@
 High-level font slicing pipeline (`slice_font` / `slice_fonts`) and bundle cache verification for Cleome.
 """
 
-from collections.abc import Sequence
-from contextlib import ExitStack
-from dataclasses import asdict, dataclass, field
 import hashlib
 import io
 import json
+from collections.abc import Sequence
+from contextlib import ExitStack
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
+
 from fontTools.ttLib import TTFont
 
 from cleome.css import (
@@ -16,7 +17,6 @@ from cleome.css import (
     _CACHE_COMMENT_RE,
     _CACHE_FORMAT_VERSION,
     _compute_slices_output_digest,
-    _format_cache_comment,
     _resolve_and_validate_outputs,
     generate_css,
 )
@@ -90,7 +90,8 @@ class SliceBundleResult:
 
 
 def _get_toolchain_versions() -> dict[str, str]:
-    from importlib.metadata import PackageNotFoundError, version as pkg_version
+    from importlib.metadata import PackageNotFoundError
+    from importlib.metadata import version as pkg_version
 
     versions: dict[str, str] = {}
     for dist_name in ("cleome", "fonttools", "brotli", "stixis"):
@@ -244,7 +245,9 @@ def _try_load_cached_bundle(
                 expected_fname = hashed_by_stem.get(Path(base_fname).stem, "")
                 if not expected_fname:
                     return None
-                expected_fname = _validate_filename_token(expected_fname, "slice filename")
+                expected_fname = _validate_filename_token(
+                    expected_fname, "slice filename"
+                )
             else:
                 expected_fname = base_fname
             slice_path = slices_dir / expected_fname
@@ -262,9 +265,7 @@ def _try_load_cached_bundle(
                 if not expected_fname.endswith(f"-{actual_hash8}.woff2"):
                     return None
 
-            out_hasher.update(
-                f"{expected_fname}:{size_bytes}:{glyph_count}\n".encode("utf-8")
-            )
+            out_hasher.update(f"{expected_fname}:{size_bytes}:{glyph_count}\n".encode())
             out_hasher.update(raw_slice)
 
             bf = BuiltSliceFile(
@@ -359,7 +360,9 @@ def slice_fonts(
                 probe_tt = stack.enter_context(
                     TTFont(io.BytesIO(raw_bytes), lazy=True, recalcTimestamp=False)
                 )
-                loaded_fonts.append(_LoadedFont(probe_tt, p, probe_tt.flavor is not None, digest))
+                loaded_fonts.append(
+                    _LoadedFont(probe_tt, p, probe_tt.flavor is not None, digest)
+                )
 
         raw_metas = [
             extract_font_metadata(
@@ -420,9 +423,13 @@ def slice_fonts(
         if outputs.explicit_css:
             outputs.css_path.parent.mkdir(parents=True, exist_ok=True)
 
-        batch_variants: list[tuple[TTFont | bytes | Path | str, FontMetadata, list[SliceSpec]]] = [
+        batch_variants: list[
+            tuple[TTFont | bytes | Path | str, FontMetadata, list[SliceSpec]]
+        ] = [
             (lf.export_source, m, variant_specs)
-            for lf, m, variant_specs in zip(loaded_fonts, prepared.metas, prepared.variant_plans)
+            for lf, m, variant_specs in zip(
+                loaded_fonts, prepared.metas, prepared.variant_plans
+            )
         ]
         woff_hints = [lf.is_woff_hint for lf in loaded_fonts]
         variant_built_lists = _export_woff2_slices_batch(

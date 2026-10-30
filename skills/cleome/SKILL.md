@@ -35,9 +35,13 @@ from cleome import (
 
 if __name__ == "__main__":
     cfg = SliceConfig(locale="jp", rare_chunk_size=250)
-    plan = build_slice_plan({0x0041, 0x3042, 0x65E5, 0x4E02}, config=cfg, family_name="Demo JP")
+    plan = build_slice_plan(
+        {0x0041, 0x3042, 0x65E5, 0x4E02}, config=cfg, family_name="Demo JP"
+    )
     assert [s.tier for s in plan] == [4, 3, 1, 1]
-    ur_text = compact_unicode_range([0x3041, 0x3043], forbidden_sorted=[0x3042], max_gap=0x80)
+    ur_text = compact_unicode_range(
+        [0x3041, 0x3043], forbidden_sorted=[0x3042], max_gap=0x80
+    )
     assert parse_unicode_range(ur_text) == {0x3041, 0x3043}
     assert format_unicode_range([0x3041, 0x3043]) == "U+3041, U+3043"
     assert format_unicode_range((0x3041, 0x3043)) == "U+3041-3043"

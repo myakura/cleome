@@ -3,9 +3,10 @@ OpenType table inspection (`name`, `fvar`, `OS/2`, `post`, `cmap`) and CSS `@fon
 descriptor extraction for Cleome.
 """
 
+import re
 from collections.abc import Sequence
 from dataclasses import dataclass, field
-import re
+
 from fontTools.ttLib import TTFont
 from stixis import SerializationOptions, canonicalize
 
@@ -95,7 +96,9 @@ class FontMetadata:
         )
         if self.stretch_css is not None:
             object.__setattr__(
-                self, "stretch_css", _validate_css_descriptor(self.stretch_css, "font-stretch")
+                self,
+                "stretch_css",
+                _validate_css_descriptor(self.stretch_css, "font-stretch"),
             )
         object.__setattr__(
             self, "style_css", _validate_css_descriptor(self.style_css, "font-style")
@@ -106,7 +109,9 @@ class FontMetadata:
             object.__setattr__(
                 self,
                 "styles_css",
-                tuple(_validate_css_descriptor(s, "font-style") for s in self.styles_css),
+                tuple(
+                    _validate_css_descriptor(s, "font-style") for s in self.styles_css
+                ),
             )
 
 
@@ -118,7 +123,7 @@ def slugify_family(name: str) -> str:
 
 def _fmt_num(val: float) -> str:
     if abs(val - round(val)) < 1e-4:
-        return str(int(round(val)))
+        return str(round(val))
     return f"{val:.2f}".rstrip("0").rstrip(".")
 
 
@@ -166,7 +171,11 @@ def extract_font_face_descriptors(
     axes: dict[str, tuple[float, float, float]] = {}
     if is_variable:
         for ax in font["fvar"].axes:
-            axes[ax.axisTag] = (float(ax.minValue), float(ax.defaultValue), float(ax.maxValue))
+            axes[ax.axisTag] = (
+                float(ax.minValue),
+                float(ax.defaultValue),
+                float(ax.maxValue),
+            )
 
     # Weight
     if weight_override is not None:
@@ -197,9 +206,8 @@ def extract_font_face_descriptors(
         stretch_css = None
 
     # Style (ital / slnt / OS/2 / post)
-    static_italic = (
-        ("OS/2" in font and bool(font["OS/2"].fsSelection & 0x01))
-        or ("post" in font and getattr(font["post"], "italicAngle", 0.0) != 0.0)
+    static_italic = ("OS/2" in font and bool(font["OS/2"].fsSelection & 0x01)) or (
+        "post" in font and getattr(font["post"], "italicAngle", 0.0) != 0.0
     )
     if style_override is not None:
         styles_css: tuple[str, ...] = (style_override,)
@@ -280,10 +288,16 @@ def _collect_uvs_missing_base_additions(font: TTFont) -> dict[int, str]:
     if "cmap" not in font:
         return {}
     tables = font["cmap"].tables
-    if not any(getattr(t, "format", None) == 14 and hasattr(t, "uvsDict") for t in tables):
+    if not any(
+        getattr(t, "format", None) == 14 and hasattr(t, "uvsDict") for t in tables
+    ):
         return {}
-    has_format4 = any(getattr(t, "format", None) == 4 and hasattr(t, "cmap") for t in tables)
-    has_format12 = any(getattr(t, "format", None) == 12 and hasattr(t, "cmap") for t in tables)
+    has_format4 = any(
+        getattr(t, "format", None) == 4 and hasattr(t, "cmap") for t in tables
+    )
+    has_format12 = any(
+        getattr(t, "format", None) == 12 and hasattr(t, "cmap") for t in tables
+    )
     if not has_format4 and not has_format12:
         return {}
     best_cmap = font.getBestCmap() or {}
@@ -412,7 +426,13 @@ def validate_and_compute_variant_suffixes(
         else:
             parts: list[str] = []
             if has_multiple_stretches:
-                stretch_label = (m.stretch_css or "100%").replace("%", "").replace(".", "_").replace(" ", "-").lower()
+                stretch_label = (
+                    (m.stretch_css or "100%")
+                    .replace("%", "")
+                    .replace(".", "_")
+                    .replace(" ", "-")
+                    .lower()
+                )
                 parts.append(f"w{stretch_label}")
             parts.append(m.weight_css.replace(".", "_").replace(" ", "-"))
             if has_multiple_styles and m.style_css != "normal":
@@ -423,14 +443,12 @@ def validate_and_compute_variant_suffixes(
 
 
 __all__ = [
+    "OS2_WIDTH_CLASS_TO_CSS",
     "FontFaceDescriptors",
     "FontMetadata",
-    "OS2_WIDTH_CLASS_TO_CSS",
     "extract_font_face_descriptors",
     "extract_font_metadata",
     "patch_uvs_missing_base_cmap",
     "slugify_family",
     "validate_and_compute_variant_suffixes",
 ]
-
-
