@@ -822,9 +822,9 @@ class TestSubsetterAndShaping(unittest.TestCase):
         self.assertEqual(tt["maxp"].maxPoints, 0)
         snapshot_tables = {
             tag: _structural_snapshot(tt[tag])
-            for tag in tt.keys()
+            for tag in tt.keys()  # noqa: SIM118 - TTFont does not implement __iter__
             if tag != "GlyphOrder"
-        }  # noqa: SIM118 - TTFont does not implement __iter__
+        }
         snapshot_glyph_order = list(tt.getGlyphOrder())
         snapshot_flavor = tt.flavor
         snapshot_recalc = tt.recalcTimestamp
