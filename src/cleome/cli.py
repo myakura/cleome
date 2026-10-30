@@ -347,11 +347,7 @@ def _run_plan(args: argparse.Namespace, config: SliceConfig) -> int:
         return _handle_cli_exception(exc, input_paths=args.inputs)
 
     first = prepared.metas[0]
-    resolved_loc = (
-        detect_font_locale(first.codepoints, family_name=prepared.family_name)
-        if config.locale == "auto"
-        else config.locale
-    )
+    resolved_loc = prepared.resolved_locale
 
     if args.json_output:
         payload = {
@@ -421,30 +417,9 @@ def _run_build_dry_run(args: argparse.Namespace, config: SliceConfig) -> int:
     except (ValueError, TTLibError, EOFError, struct.error, OSError) as exc:
         return _handle_cli_exception(exc, input_paths=args.inputs)
 
-    total_slices = 0
-    preload_slices: list[dict[str, str]] = []
-    hash_placeholder = "<hash8>" if config.filename_hash else ""
-    for m, plan in zip(prepared.metas, prepared.variant_plans):
-        for spec in plan:
-            if not (spec.binary_codepoints & m.codepoints):
-                continue
-            total_slices += 1
-            if spec.tier == 1:
-                preview_fname = spec.filename(m.slug, m.variant_suffix, hash_placeholder)
-                preload_slices.append(
-                    {
-                        "slice_id": spec.slice_id,
-                        "variant_suffix": m.variant_suffix,
-                        "filename": preview_fname,
-                        "url": f"{outputs.url_prefix}{preview_fname}",
-                    }
-                )
-
-    resolved_loc = (
-        detect_font_locale(prepared.metas[0].codepoints, family_name=prepared.family_name)
-        if config.locale == "auto"
-        else config.locale
-    )
+    total_slices = outputs.total_active_slices
+    preload_slices = outputs.preload_slices
+    resolved_loc = prepared.resolved_locale
     if args.json_output:
         payload = {
             "ok": True,
