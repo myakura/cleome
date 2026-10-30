@@ -1040,6 +1040,48 @@ class TestSubsetterAndShaping(unittest.TestCase):
                     f"Existing slice referenced by CSS was deleted before new CSS was written: {p.name}",
                 )
 
+    def test_issue14_concurrent_slice_font_workers_1_across_threads(self) -> None:
+        """
+        Issue 14 reproduction: concurrent `slice_font(..., workers=1)` calls from multiple
+        threads must not collide on module globals or read another thread's font source.
+        """
+        from concurrent.futures import ThreadPoolExecutor
+        from fontTools.fontBuilder import FontBuilder
+        from fontTools.pens.ttGlyphPen import TTGlyphPen
+
+        def make_font(family: str, cps: list[int]) -> TTFont:
+            names = [".notdef"] + [f"uni{cp:04X}" for cp in cps]
+            pen = TTGlyphPen(None)
+            pen.moveTo((0, 0))
+            pen.lineTo((0, 500))
+            pen.lineTo((500, 0))
+            pen.closePath()
+            fb = FontBuilder(1000, isTTF=True)
+            fb.setupGlyphOrder(names)
+            fb.setupCharacterMap({cp: f"uni{cp:04X}" for cp in cps})
+            fb.setupGlyf({n: pen.glyph() for n in names})
+            fb.setupHorizontalMetrics({n: (1000, 0) for n in names})
+            fb.setupHorizontalHeader(ascent=880, descent=-120)
+            fb.setupNameTable({"familyName": family, "styleName": "Regular"})
+            fb.setupOS2()
+            fb.setupPost()
+            return fb.font
+
+        cps = list(range(0x20, 0x7F)) + list(range(0x3041, 0x3097)) + list(range(0x4E00, 0x5800))
+        fonts = [make_font(f"Family {i}", cps) for i in range(4)]
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            for run_idx in range(3):
+                out = tmp_path / f"run_{run_idx}"
+                with ThreadPoolExecutor(4) as pool:
+                    futs = [pool.submit(slice_font, f, out / str(i), workers=1) for i, f in enumerate(fonts)]
+                    results = [fut.result() for fut in futs]
+                for i, res in enumerate(results):
+                    self.assertEqual(res.family_name, f"Family {i}")
+                    self.assertTrue(res.css_path.is_file())
+                    self.assertIn(f"font-family: 'Family {i}';", res.css_text)
+
 
 if __name__ == "__main__":
     unittest.main()
