@@ -599,9 +599,10 @@ def _prepare_font_bundle(
         replace(m, family_name=unified_family, slug=unified_slug, variant_suffix=v_suf)
         for m, v_suf in zip(raw_metas, variant_suffixes)
     ]
+    union_codepoints = frozenset({*m.codepoints for m in metas})
 
     resolved_locale = (
-        detect_font_locale(metas[0].codepoints, family_name=unified_family)
+        detect_font_locale(union_codepoints, family_name=unified_family)
         if config.locale == "auto"
         else config.locale
     )
@@ -619,7 +620,6 @@ def _prepare_font_bundle(
             )
 
     variant_plans = [plan_cache[m.codepoints] for m in metas]
-    union_codepoints = frozenset({*m.codepoints for m in metas})
     union_plan = plan_cache.get(union_codepoints) or build_slice_plan(
         union_codepoints, config=resolved_config, family_name=unified_family
     )

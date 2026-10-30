@@ -15,6 +15,7 @@ import uharfbuzz as hb
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 from cleome import (
+    FontMetadata,
     SliceConfig,
     build_slice_plan,
     detect_font_locale,
@@ -29,6 +30,8 @@ from cleome.data.tc_freq import (
     HK_HANZI_FREQ_CODEPOINTS,
     TC_HANZI_FREQ_CODEPOINTS,
 )
+from cleome.locale import _SC_ONLY_FREQ
+from cleome.slicer import _prepare_font_bundle
 
 from helpers import (
     assert_generic_cascade_invariants,
@@ -147,6 +150,48 @@ class TestSlicerAndLocales(unittest.TestCase):
             detect_font_locale(build_synthetic_charset(full=True), "Custom Gothic"),
             "jp",
         )
+
+    def test_prepare_font_bundle_detects_locale_from_union_codepoints(self) -> None:
+        """
+        Issue 32 regression test: when bundling variants with differing codepoints under
+        `locale="auto"`, `_prepare_font_bundle` detects the locale from the union of all
+        variants' codepoints so `resolved_locale`, per-variant slice plans, and `union_plan`
+        are independent of variant order.
+        """
+        sc_cps = frozenset(sorted(_SC_ONLY_FREQ)[:50] + [0x0041, 0x3001, 0x3002])
+        ascii_cps = frozenset(range(0x0020, 0x007F)) | frozenset({0x3001, 0x3002})
+
+        m_sc = FontMetadata(
+            family_name="Custom Sans",
+            slug="custom-sans",
+            is_variable=False,
+            weight_css="400",
+            stretch_css="100%",
+            style_css="normal",
+            styles_css=("normal",),
+            codepoints=sc_cps,
+        )
+        m_latin = FontMetadata(
+            family_name="Custom Sans",
+            slug="custom-sans",
+            is_variable=False,
+            weight_css="400",
+            stretch_css="100%",
+            style_css="italic",
+            styles_css=("italic",),
+            codepoints=ascii_cps,
+        )
+
+        b1 = _prepare_font_bundle([m_sc, m_latin], SliceConfig(locale="auto"))
+        b2 = _prepare_font_bundle([m_latin, m_sc], SliceConfig(locale="auto"))
+
+        self.assertEqual(b1.resolved_locale, "sc")
+        self.assertEqual(b2.resolved_locale, "sc")
+        self.assertEqual([s.slice_id for s in b1.variant_plans[0]], ["hanzi-freq-01", "cjk-core", "latin"])
+        self.assertEqual([s.slice_id for s in b1.variant_plans[1]], ["cjk-core", "latin"])
+        self.assertEqual(b2.variant_plans, [b1.variant_plans[1], b1.variant_plans[0]])
+        self.assertEqual(b1.union_plan, b2.union_plan)
+        self.assertEqual([s.slice_id for s in b2.union_plan], ["hanzi-freq-01", "cjk-core", "latin"])
 
     def test_korean_profile_cascade_shadowing_and_jamo_colocation(self) -> None:
         """
