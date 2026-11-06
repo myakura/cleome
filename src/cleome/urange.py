@@ -37,10 +37,12 @@ def compact_unicode_range(
 ) -> str:
     """
     Merge adjacent target codepoints into contiguous hex ranges `[start, end]` whenever:
-    1. The gap between consecutive target codepoints is `<= max_gap`, AND
+    1. The gap between consecutive target codepoints (`cp - prev`) is `<= max_gap` (`max_gap >= 0`), AND
     2. The open interval `(prev, cp)` contains ZERO codepoints from `forbidden_sorted`
        (verified in O(log F) via binary search).
     """
+    if max_gap < 0:
+        raise ValueError(f"max_gap must be >= 0, got {max_gap}")
     if not sorted_target_cps:
         return ""
     return compact_urange(
