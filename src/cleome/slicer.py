@@ -101,6 +101,12 @@ class SliceConfig:
             raise ValueError(
                 f"symbols_ext_chunk_size must be > 0, got {self.symbols_ext_chunk_size}"
             )
+        cleaned_features = tuple(
+            t.strip() for t in self.layout_features if isinstance(t, str) and t.strip()
+        )
+        if not cleaned_features:
+            raise ValueError("layout_features cannot be empty")
+        object.__setattr__(self, "layout_features", cleaned_features)
         subdir_str = self.slices_subdir.strip()
         if not subdir_str:
             raise ValueError("slices_subdir cannot be empty")

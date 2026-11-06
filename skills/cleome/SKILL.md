@@ -66,7 +66,7 @@ See [`docs/architecture-and-rationale.md`](../../docs/architecture-and-rationale
 
 * **Four-tier CSS cascade shadowing (`Tier 4` -> `Tier 3` -> `Tier 2` -> `Tier 1`).** `Tier 4` rare ideograph/syllable slices sit at the top of the stylesheet with 1-token hex ranges (`U+XXXX-YYYY`) per Unicode block (never bridging across planes), shadowed by `Tier 3` inverted-pyramid frequency chunks (`200x2`, `80x10`, `~70` tail), `Tier 2` symbols (`symbols-ext`, `symbols-ui`), and `Tier 1` core phonetic and Latin slices (`kana-core`, `hangul-core`, `cjk-core`, `latin`) declared below.
 * **Multiprocessing guard.** When `workers > 1` (or `workers=None` on multi-core systems), `slice_font`, `slice_fonts`, and `export_woff2_slices` spawn a `ProcessPoolExecutor`. Guard top-level scripts with `if __name__ == "__main__":` or pass `workers=1`.
-* **Layout feature overrides.** `SliceConfig(layout_features=("*",))` keeps all OpenType layout features by default. Passing specific tags via `layout_features` or `--layout-features` replaces the entire list, so include vertical and composition tags (`ccmp,locl,kern,mark,mkmk,liga,palt,halt,vpal,vhal,vkrn,vert,vrt2,ruby`) when needed.
+* **Layout feature overrides.** `SliceConfig(layout_features=("*",))` keeps all OpenType layout features by default (`layout_features` cannot be empty; passing `()` or `--layout-features ""` raises a `ValueError` / usage error). Passing specific tags via `layout_features` or `--layout-features` replaces the entire list, so include vertical and composition tags (`ccmp,locl,kern,mark,mkmk,liga,palt,halt,vpal,vhal,vkrn,vert,vrt2,ruby`) when needed.
 
 ## CLI (`cleome`)
 

@@ -80,6 +80,25 @@ class TestCleomeCLI(unittest.TestCase):
                 cli_main([str(font_path)])
             self.assertEqual(cm3.exception.code, 2)
 
+            # 4. Empty --layout-features "" is rejected as a usage error (exit code 2)
+            err_lf = StringIO()
+            with redirect_stderr(err_lf):
+                try:
+                    rc_lf = cli_main(
+                        [
+                            "build",
+                            str(font_path),
+                            "-o",
+                            str(Path(tmp) / "lf_out"),
+                            "--layout-features",
+                            "",
+                        ]
+                    )
+                except SystemExit as exc_lf:
+                    rc_lf = int(exc_lf.code)
+            self.assertEqual(rc_lf, 2)
+            self.assertIn("layout_features", err_lf.getvalue())
+
     def test_cli_plan_and_build_subcommands(self) -> None:
         """
         Verify agent-first CLI subcommands:
