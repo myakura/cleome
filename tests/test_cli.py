@@ -414,6 +414,100 @@ class TestCleomeCLI(unittest.TestCase):
             self.assertIn("Dry run: would build 4 WOFF2 slices", buf_dry_txt.getvalue())
             self.assertFalse(dry_out.exists())
 
+    def test_cli_build_and_plan_multi_font_bundle_locale_agreement(self) -> None:
+        """
+        Issue 43 regression test: when bundling multiple fonts under `locale="auto"` whose
+        first-font and union locales differ (for example a Latin-only companion font listed
+        before a Simplified Chinese font), `cleome build --json`, `cleome build --dry-run --json`,
+        `cleome plan --json`, and `SliceBundleResult.locale` all report the union-resolved locale.
+        """
+        from cleome import slice_fonts
+        from cleome.locale import _SC_ONLY_FREQ
+
+        latin_cps = sorted(range(0x0020, 0x007F))
+        sc_cps = sorted(
+            {*range(0x0020, 0x007F), *sorted(_SC_ONLY_FREQ)[:50], 0x3001, 0x3002}
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            font_latin = tmp_path / "CustomSans-Regular.ttf"
+            font_sc = tmp_path / "CustomSans-Bold.ttf"
+            create_synthetic_ttfont(
+                latin_cps, family_name="Custom Sans", weight=400
+            ).save(font_latin, reorderTables=False)
+            create_synthetic_ttfont(sc_cps, family_name="Custom Sans", weight=700).save(
+                font_sc, reorderTables=False
+            )
+
+            buf_plan = StringIO()
+            with redirect_stdout(buf_plan):
+                rc_plan = cli_main(["plan", str(font_latin), str(font_sc), "--json"])
+            self.assertEqual(rc_plan, 0)
+            plan_data = json.loads(buf_plan.getvalue())
+            self.assertEqual(plan_data["locale"], "sc")
+
+            out_dir = tmp_path / "bundle_out"
+            buf_dry = StringIO()
+            with redirect_stdout(buf_dry):
+                rc_dry = cli_main(
+                    [
+                        "build",
+                        str(font_latin),
+                        str(font_sc),
+                        "-o",
+                        str(out_dir),
+                        "--dry-run",
+                        "--json",
+                    ]
+                )
+            self.assertEqual(rc_dry, 0)
+            dry_data = json.loads(buf_dry.getvalue())
+            self.assertEqual(dry_data["locale"], plan_data["locale"])
+
+            buf_build = StringIO()
+            with redirect_stdout(buf_build):
+                rc_build = cli_main(
+                    [
+                        "build",
+                        str(font_latin),
+                        str(font_sc),
+                        "-o",
+                        str(out_dir),
+                        "-j",
+                        "1",
+                        "--json",
+                    ]
+                )
+            self.assertEqual(rc_build, 0)
+            build_data = json.loads(buf_build.getvalue())
+            self.assertFalse(build_data["cached"])
+            self.assertEqual(build_data["locale"], "sc")
+            self.assertEqual(build_data["locale"], plan_data["locale"])
+
+            buf_cached = StringIO()
+            with redirect_stdout(buf_cached):
+                rc_cached = cli_main(
+                    [
+                        "build",
+                        str(font_latin),
+                        str(font_sc),
+                        "-o",
+                        str(out_dir),
+                        "-j",
+                        "1",
+                        "--json",
+                    ]
+                )
+            self.assertEqual(rc_cached, 0)
+            cached_data = json.loads(buf_cached.getvalue())
+            self.assertTrue(cached_data["cached"])
+            self.assertEqual(cached_data["locale"], "sc")
+
+            res = slice_fonts([font_latin, font_sc], out_dir=out_dir, workers=1)
+            self.assertTrue(res.cached)
+            self.assertEqual(res.locale, "sc")
+
     def test_cli_build_css_out_and_relative_url_resolution(self) -> None:
         """
         Verify `cleome build --css-out` with explicit `--url-prefix`, relative URL calculation,

@@ -65,6 +65,7 @@ class SliceBundleResult:
       codepoints when bundling multiple fonts.
     - `variant_slice_specs`: Per-font slice plans aligned 1:1 with `fonts_metadata`
       (matching the `BuiltSliceFile.spec` items in `built_files` for each variant).
+    - `locale`: Resolved CJK slicing locale (`"jp"`, `"kr"`, `"sc"`, `"tc"`, or `"hk"`).
     - `cached`: `True` when existing `.woff2` slices and CSS matched the input digest
       and configuration so `fontTools.subset` + WOFF2 compression was skipped.
     """
@@ -79,6 +80,7 @@ class SliceBundleResult:
     fonts_metadata: list[FontMetadata]
     variant_slice_specs: list[list[SliceSpec]] = field(default_factory=list)
     cached: bool = False
+    locale: str = "jp"
 
     @property
     def total_woff2_bytes(self) -> int:
@@ -168,6 +170,8 @@ def _try_load_cached_bundle(
     active_variant_plans: list[list[SliceSpec]],
     slice_specs: list[SliceSpec],
     config: SliceConfig,
+    *,
+    resolved_locale: str,
 ) -> SliceBundleResult | None:
     if not css_path.is_file() or not slices_dir.is_dir():
         return None
@@ -304,6 +308,7 @@ def _try_load_cached_bundle(
         fonts_metadata=metas,
         variant_slice_specs=variant_plans,
         cached=True,
+        locale=resolved_locale,
     )
 
 
@@ -414,6 +419,7 @@ def slice_fonts(
                 prepared.active_variant_plans,
                 prepared.union_plan,
                 config,
+                resolved_locale=prepared.resolved_locale,
             )
             if cached_res is not None:
                 return cached_res
@@ -473,6 +479,7 @@ def slice_fonts(
             fonts_metadata=prepared.metas,
             variant_slice_specs=prepared.variant_plans,
             cached=False,
+            locale=prepared.resolved_locale,
         )
 
 

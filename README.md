@@ -88,7 +88,10 @@ if __name__ == "__main__":
             rare_chunk_size=250,
         ),
     )
-    print(f"Generated {result.css_path} and {len(result.built_files)} WOFF2 slices")
+    print(
+        f"Generated {result.css_path} and {len(result.built_files)} WOFF2 slices "
+        f"(locale={result.locale})"
+    )
 
     # 2. Slice multiple Static Font weights into a unified stylesheet
     static_result = slice_fonts(
