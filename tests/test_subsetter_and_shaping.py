@@ -1270,6 +1270,34 @@ class TestSubsetterAndShaping(unittest.TestCase):
                     f"Existing slice referenced by CSS was deleted before new CSS was written: {p.name}",
                 )
 
+            # 11. Two builds into the same slices_dir with the same slug, different css_filename,
+            # and different subsetting options prune the earlier build's hashed slices.
+            shared_out = tmp_path / "shared_slices_out"
+            vf_shared = tmp_path / "Shared-VF.ttf"
+            create_synthetic_ttfont(
+                [ord("A"), ord("あ")], family_name="Shared Demo", is_variable=True
+            ).save(vf_shared, reorderTables=False)
+            res_a = slice_font(
+                vf_shared,
+                out_dir=shared_out,
+                css_filename="a.css",
+                config=SliceConfig(drop_tables=()),
+                workers=1,
+            )
+            a_paths = [bf.path for bf in res_a.built_files]
+            self.assertTrue(all(p.is_file() for p in a_paths))
+
+            res_b = slice_font(
+                vf_shared,
+                out_dir=shared_out,
+                css_filename="b.css",
+                config=SliceConfig(drop_tables=("gvar",)),
+                workers=1,
+            )
+            b_paths = [bf.path for bf in res_b.built_files]
+            self.assertTrue(all(p.is_file() for p in b_paths))
+            self.assertTrue(all(not p.exists() for p in a_paths))
+
     def test_stixis_comment_serialization_matches_cache_regexes(self) -> None:
         """
         Verify directly against `stixis` output (`generate_css` -> `stixis.dumps` with
