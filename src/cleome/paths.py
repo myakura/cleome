@@ -121,6 +121,23 @@ def _validate_slice_output_path(
     return base_fname, slice_str
 
 
+def _build_preload_slices(
+    items: Sequence[tuple[SliceSpec, str, str]],
+    url_prefix: str,
+) -> list[dict[str, str]]:
+    """Build the Tier 1 preload summary entries from `(spec, variant_suffix, filename)` tuples."""
+    return [
+        {
+            "slice_id": spec.slice_id,
+            "variant_suffix": variant_suffix,
+            "filename": filename,
+            "url": f"{url_prefix}{filename}",
+        }
+        for spec, variant_suffix, filename in items
+        if spec.tier == 1
+    ]
+
+
 def _resolve_and_validate_outputs(
     out_dir: Path | str,
     config: SliceConfig,
@@ -193,7 +210,7 @@ def _resolve_and_validate_outputs(
     )
 
     total_active_slices = 0
-    preload_slices: list[dict[str, str]] = []
+    preload_items: list[tuple[SliceSpec, str, str]] = []
     seen_slice_paths: set[str] = set()
     hash_placeholder = "<hash8>" if config.filename_hash else ""
 
@@ -210,18 +227,15 @@ def _resolve_and_validate_outputs(
                 css_path_for_err=resolved_css_path,
             )
             total_active_slices += 1
-            if spec.tier == 1:
-                preview_fname = spec.filename(
-                    m.slug, m.variant_suffix, hash_placeholder
+            preload_items.append(
+                (
+                    spec,
+                    m.variant_suffix,
+                    spec.filename(m.slug, m.variant_suffix, hash_placeholder),
                 )
-                preload_slices.append(
-                    {
-                        "slice_id": spec.slice_id,
-                        "variant_suffix": m.variant_suffix,
-                        "filename": preview_fname,
-                        "url": f"{url_prefix}{preview_fname}",
-                    }
-                )
+            )
+
+    preload_slices = _build_preload_slices(preload_items, url_prefix)
 
     return _ResolvedOutputs(
         out_path=out_path,

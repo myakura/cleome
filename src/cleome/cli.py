@@ -510,7 +510,7 @@ def _run_build(args: argparse.Namespace, config: SliceConfig) -> int:
     if args.dry_run:
         return _run_build_dry_run(args, config)
 
-    from cleome.paths import _resolve_url_prefix
+    from cleome.paths import _build_preload_slices, _resolve_url_prefix
     from cleome.pipeline import slice_fonts
 
     t0 = time.time()
@@ -543,16 +543,10 @@ def _run_build(args: argparse.Namespace, config: SliceConfig) -> int:
     url_prefix = _resolve_url_prefix(
         config, css_path=result.css_path, slices_dir=result.slices_dir
     )
-    preload_slices = [
-        {
-            "slice_id": bf.spec.slice_id,
-            "variant_suffix": bf.variant_suffix,
-            "filename": bf.filename,
-            "url": f"{url_prefix}{bf.filename}",
-        }
-        for bf in result.built_files
-        if bf.spec.tier == 1
-    ]
+    preload_slices = _build_preload_slices(
+        [(bf.spec, bf.variant_suffix, bf.filename) for bf in result.built_files],
+        url_prefix,
+    )
     if args.json_output:
         first_meta = result.fonts_metadata[0]
         resolved_loc = (
