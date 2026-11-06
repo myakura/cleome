@@ -105,7 +105,7 @@ def _get_toolchain_versions() -> dict[str, str]:
 def _compute_cache_key(
     font_digests: list[str],
     metas: list[FontMetadata],
-    variant_plans: list[list[SliceSpec]],
+    active_variant_plans: list[list[SliceSpec]],
     config: SliceConfig,
     *,
     family_name: str | None,
@@ -147,13 +147,12 @@ def _compute_cache_key(
                         "category": s.category,
                         "description": s.description,
                         "css_unicode_range": s.css_unicode_range,
-                        "cps": sorted(s.binary_codepoints & m.codepoints),
+                        "cps": sorted(s.binary_codepoints),
                     }
-                    for s in plan
-                    if s.binary_codepoints & m.codepoints
+                    for s in active_plan
                 ],
             }
-            for m, plan in zip(metas, variant_plans)
+            for m, active_plan in zip(metas, active_variant_plans)
         ],
     }
     raw = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
@@ -166,6 +165,7 @@ def _try_load_cached_bundle(
     cache_key: str,
     metas: list[FontMetadata],
     variant_plans: list[list[SliceSpec]],
+    active_variant_plans: list[list[SliceSpec]],
     slice_specs: list[SliceSpec],
     config: SliceConfig,
 ) -> SliceBundleResult | None:
@@ -196,9 +196,8 @@ def _try_load_cached_bundle(
             block_glyphs.append(int(bm.group("glyphs")))
 
     expected_block_count = sum(
-        len(m.styles_css)
-        * sum(1 for spec in plan if spec.binary_codepoints & m.codepoints)
-        for m, plan in zip(metas, variant_plans)
+        len(m.styles_css) * len(active_plan)
+        for m, active_plan in zip(metas, active_variant_plans)
     )
     if len(block_glyphs) != expected_block_count:
         return None
@@ -226,8 +225,7 @@ def _try_load_cached_bundle(
     out_hasher = hashlib.sha256()
 
     block_cursor = 0
-    for m, plan in zip(metas, variant_plans):
-        active_specs = [spec for spec in plan if spec.binary_codepoints & m.codepoints]
+    for m, active_specs in zip(metas, active_variant_plans):
         num_styles = len(m.styles_css)
         n_specs = len(active_specs)
         # First style block carries the glyph counts for this variant's active slices
@@ -386,7 +384,7 @@ def slice_fonts(
             out_dir,
             config,
             prepared.metas,
-            prepared.variant_plans,
+            prepared.active_variant_plans,
             css_filename=css_filename,
             css_path=css_path,
         )
@@ -395,7 +393,7 @@ def slice_fonts(
         cache_key = _compute_cache_key(
             font_digests,
             prepared.metas,
-            prepared.variant_plans,
+            prepared.active_variant_plans,
             config,
             family_name=family_name,
             slug=slug,
@@ -413,6 +411,7 @@ def slice_fonts(
                 cache_key,
                 prepared.metas,
                 prepared.variant_plans,
+                prepared.active_variant_plans,
                 prepared.union_plan,
                 config,
             )
@@ -428,7 +427,7 @@ def slice_fonts(
         ] = [
             (lf.export_source, m, variant_specs)
             for lf, m, variant_specs in zip(
-                loaded_fonts, prepared.metas, prepared.variant_plans
+                loaded_fonts, prepared.metas, prepared.active_variant_plans
             )
         ]
         woff_hints = [lf.is_woff_hint for lf in loaded_fonts]

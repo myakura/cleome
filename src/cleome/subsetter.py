@@ -21,16 +21,16 @@ from pathlib import Path
 from fontTools.subset import Options, Subsetter
 from fontTools.ttLib import TTFont
 
-from cleome.css import _ensure_directory_creatable
+from cleome.css import _ensure_directory_creatable, _validate_slice_output_path
 from cleome.metadata import (
     FontMetadata,
     _split_hashed_stem,
-    _validate_filename_token,
     patch_uvs_missing_base_cmap,
 )
 from cleome.slicer import (
     SliceConfig,
     SliceSpec,
+    _filter_active_slices,
 )
 
 
@@ -451,28 +451,17 @@ def _export_woff2_slices_batch(
             _prepare_worker_source(font_or_bytes, meta, config, is_woff_hint=woff_hint)
         )
         font_items: list[tuple[SliceSpec, str, str]] = []
-        for spec_idx, spec in enumerate(slice_specs):
-            cps = sorted(spec.binary_codepoints & meta.codepoints)
-            if not cps:
-                continue
-            fname = _validate_filename_token(
-                spec.filename(meta.slug, meta.variant_suffix), "slice filename"
+        for spec_idx, (spec, cps) in enumerate(
+            _filter_active_slices(meta, slice_specs)
+        ):
+            fname, out_str = _validate_slice_output_path(
+                meta,
+                spec,
+                slices_dir,
+                slices_dir_resolved,
+                seen_out_paths,
+                filename_hash=config.filename_hash,
             )
-            out_path = slices_dir / fname
-            if not out_path.resolve().is_relative_to(slices_dir_resolved):
-                raise ValueError(
-                    f"Slice output path {out_path!r} resolves outside slices_dir {slices_dir!r}"
-                )
-            if not config.filename_hash and out_path.exists() and out_path.is_dir():
-                raise ValueError(
-                    f"Slice output path must be a file, not an existing directory: {out_path!r}"
-                )
-            out_str = str(out_path)
-            if out_str in seen_out_paths:
-                raise ValueError(
-                    f"Duplicate slice output path across variants: {out_str}"
-                )
-            seen_out_paths.add(out_str)
             sortable_tasks.append((-len(cps), font_idx, spec_idx, cps, out_str))
             font_items.append((spec, fname, out_str))
         per_font_items.append(font_items)

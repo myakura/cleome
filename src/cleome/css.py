@@ -140,11 +140,48 @@ class _ResolvedOutputs:
     preload_slices: list[dict[str, str]]
 
 
+def _validate_slice_output_path(
+    meta: FontMetadata,
+    spec: SliceSpec,
+    slices_dir: Path,
+    slices_resolved: Path,
+    seen_slice_paths: set[str],
+    *,
+    filename_hash: bool,
+    css_resolved: Path | None = None,
+    css_path_for_err: Path | None = None,
+) -> tuple[str, str]:
+    """Validate a single planned slice output path and return `(base_fname, str(slice_out))`."""
+    base_fname = _validate_filename_token(
+        spec.filename(meta.slug, meta.variant_suffix), "slice filename"
+    )
+    slice_out = slices_dir / base_fname
+    slice_resolved = slice_out.resolve()
+    if not slice_resolved.is_relative_to(slices_resolved):
+        raise ValueError(
+            f"Slice output path {slice_out!r} resolves outside slices_dir {slices_dir!r}"
+        )
+    if not filename_hash:
+        if slice_out.exists() and slice_out.is_dir():
+            raise ValueError(
+                f"Slice output path must be a file, not an existing directory: {slice_out!r}"
+            )
+        if css_resolved is not None and slice_resolved == css_resolved:
+            raise ValueError(
+                f"css_path {css_path_for_err!r} collides with planned slice output {slice_out!r}"
+            )
+    slice_str = str(slice_out)
+    if slice_str in seen_slice_paths:
+        raise ValueError(f"Duplicate slice output path across variants: {slice_str}")
+    seen_slice_paths.add(slice_str)
+    return base_fname, slice_str
+
+
 def _resolve_and_validate_outputs(
     out_dir: Path | str,
     config: SliceConfig,
     metas: Sequence[FontMetadata],
-    variant_plans: Sequence[Sequence[SliceSpec]],
+    active_variant_plans: Sequence[Sequence[SliceSpec]],
     *,
     css_filename: str | None = None,
     css_path: Path | str | None = None,
@@ -216,34 +253,18 @@ def _resolve_and_validate_outputs(
     seen_slice_paths: set[str] = set()
     hash_placeholder = "<hash8>" if config.filename_hash else ""
 
-    for m, plan in zip(metas, variant_plans):
-        for spec in plan:
-            if not (spec.binary_codepoints & m.codepoints):
-                continue
-            base_fname = _validate_filename_token(
-                spec.filename(m.slug, m.variant_suffix), "slice filename"
+    for m, active_plan in zip(metas, active_variant_plans):
+        for spec in active_plan:
+            _validate_slice_output_path(
+                m,
+                spec,
+                slices_dir,
+                slices_resolved,
+                seen_slice_paths,
+                filename_hash=config.filename_hash,
+                css_resolved=css_resolved,
+                css_path_for_err=resolved_css_path,
             )
-            slice_out = slices_dir / base_fname
-            slice_resolved = slice_out.resolve()
-            if not slice_resolved.is_relative_to(slices_resolved):
-                raise ValueError(
-                    f"Slice output path {slice_out!r} resolves outside slices_dir {slices_dir!r}"
-                )
-            if not config.filename_hash:
-                if slice_out.exists() and slice_out.is_dir():
-                    raise ValueError(
-                        f"Slice output path must be a file, not an existing directory: {slice_out!r}"
-                    )
-                if slice_resolved == css_resolved:
-                    raise ValueError(
-                        f"css_path {resolved_css_path!r} collides with planned slice output {slice_out!r}"
-                    )
-            slice_str = str(slice_out)
-            if slice_str in seen_slice_paths:
-                raise ValueError(
-                    f"Duplicate slice output path across variants: {slice_str}"
-                )
-            seen_slice_paths.add(slice_str)
             total_active_slices += 1
             if spec.tier == 1:
                 preview_fname = spec.filename(
