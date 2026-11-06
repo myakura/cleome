@@ -448,7 +448,7 @@ def _run_plan(args: argparse.Namespace, config: SliceConfig) -> int:
 
 
 def _run_build_dry_run(args: argparse.Namespace, config: SliceConfig) -> int:
-    from cleome.css import _resolve_and_validate_outputs
+    from cleome.paths import _resolve_and_validate_outputs
 
     try:
         raw_metas = _load_cli_input_metas(args, config)
@@ -462,7 +462,7 @@ def _run_build_dry_run(args: argparse.Namespace, config: SliceConfig) -> int:
             args.out_dir,
             config,
             prepared.metas,
-            prepared.variant_plans,
+            prepared.active_variant_plans,
             css_filename=args.css_name,
             css_path=args.css_out,
         )
@@ -510,7 +510,7 @@ def _run_build(args: argparse.Namespace, config: SliceConfig) -> int:
     if args.dry_run:
         return _run_build_dry_run(args, config)
 
-    from cleome.css import _resolve_url_prefix
+    from cleome.paths import _build_preload_slices, _resolve_url_prefix
     from cleome.pipeline import slice_fonts
 
     t0 = time.time()
@@ -543,16 +543,10 @@ def _run_build(args: argparse.Namespace, config: SliceConfig) -> int:
     url_prefix = _resolve_url_prefix(
         config, css_path=result.css_path, slices_dir=result.slices_dir
     )
-    preload_slices = [
-        {
-            "slice_id": bf.spec.slice_id,
-            "variant_suffix": bf.variant_suffix,
-            "filename": bf.filename,
-            "url": f"{url_prefix}{bf.filename}",
-        }
-        for bf in result.built_files
-        if bf.spec.tier == 1
-    ]
+    preload_slices = _build_preload_slices(
+        [(bf.spec, bf.variant_suffix, bf.filename) for bf in result.built_files],
+        url_prefix,
+    )
     if args.json_output:
         first_meta = result.fonts_metadata[0]
         resolved_loc = (

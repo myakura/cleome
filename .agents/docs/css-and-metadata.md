@@ -1,6 +1,6 @@
 # `@font-face` CSS generation, variable axes, and variant bundling
 
-Editing rules for [`cleome/metadata.py`](../../src/cleome/metadata.py), [`cleome/css.py`](../../src/cleome/css.py), and [`cleome/pipeline.py`](../../src/cleome/pipeline.py). See [`docs/architecture-and-rationale.md`](../../docs/architecture-and-rationale.md) for background rationale, [`docs/hosting-and-usage.md`](../../docs/hosting-and-usage.md) for output layout and caching behavior, and [`skills/cleome/SKILL.md`](../../skills/cleome/SKILL.md) for the public API contract.
+Editing rules for [`cleome/metadata.py`](../../src/cleome/metadata.py), [`cleome/paths.py`](../../src/cleome/paths.py), [`cleome/css.py`](../../src/cleome/css.py), and [`cleome/pipeline.py`](../../src/cleome/pipeline.py). See [`docs/architecture-and-rationale.md`](../../docs/architecture-and-rationale.md) for background rationale, [`docs/hosting-and-usage.md`](../../docs/hosting-and-usage.md) for output layout and caching behavior, and [`skills/cleome/SKILL.md`](../../skills/cleome/SKILL.md) for the public API contract.
 
 ## Variable and static axis mapping
 

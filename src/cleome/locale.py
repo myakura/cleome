@@ -8,8 +8,7 @@ import re
 from cleome.data.kanji_freq import KANJI_FREQ_RANK
 from cleome.data.sc_freq import SC_HANZI_FREQ_RANK
 from cleome.data.tc_freq import HK_EXTRA_CANTONESE_CHARS, TC_HANZI_FREQ_RANK
-
-type CodepointSet = set[int] | frozenset[int]
+from cleome.urange import CodepointSet
 
 SUPPORTED_LOCALES: tuple[str, ...] = ("auto", "jp", "kr", "sc", "tc", "hk")
 

@@ -101,6 +101,12 @@ class SliceConfig:
             raise ValueError(
                 f"symbols_ext_chunk_size must be > 0, got {self.symbols_ext_chunk_size}"
             )
+        cleaned_features = tuple(
+            t.strip() for t in self.layout_features if isinstance(t, str) and t.strip()
+        )
+        if not cleaned_features:
+            raise ValueError("layout_features cannot be empty")
+        object.__setattr__(self, "layout_features", cleaned_features)
         subdir_str = self.slices_subdir.strip()
         if not subdir_str:
             raise ValueError("slices_subdir cannot be empty")
@@ -585,7 +591,20 @@ class _PreparedBundle:
     resolved_locale: str
     metas: list[FontMetadata]
     variant_plans: list[list[SliceSpec]]
+    active_variant_plans: list[list[SliceSpec]]
     union_plan: list[SliceSpec]
+
+
+def _filter_active_slices(
+    meta: FontMetadata, slice_specs: Sequence[SliceSpec]
+) -> list[tuple[SliceSpec, list[int]]]:
+    """Return `(spec, sorted_codepoints)` for each slice in `slice_specs` that intersects `meta.codepoints`."""
+    active: list[tuple[SliceSpec, list[int]]] = []
+    for spec in slice_specs:
+        cps = sorted(spec.binary_codepoints & meta.codepoints)
+        if cps:
+            active.append((spec, cps))
+    return active
 
 
 def _prepare_font_bundle(
@@ -629,6 +648,10 @@ def _prepare_font_bundle(
             )
 
     variant_plans = [plan_cache[m.codepoints] for m in metas]
+    active_variant_plans = [
+        [spec for spec, _ in _filter_active_slices(m, plan)]
+        for m, plan in zip(metas, variant_plans)
+    ]
     union_plan = plan_cache.get(union_codepoints) or build_slice_plan(
         union_codepoints, config=resolved_config, family_name=unified_family
     )
@@ -638,5 +661,6 @@ def _prepare_font_bundle(
         resolved_locale=resolved_locale,
         metas=metas,
         variant_plans=variant_plans,
+        active_variant_plans=active_variant_plans,
         union_plan=union_plan,
     )

@@ -26,6 +26,7 @@ from cleome import (
     FontMetadata,
     SliceConfig,
     build_slice_plan,
+    compact_unicode_range,
     detect_font_locale,
     parse_unicode_range,
     slice_font,
@@ -98,6 +99,16 @@ class TestSlicerAndLocales(unittest.TestCase):
             SliceConfig(font_display="")
         with self.assertRaisesRegex(ValueError, "Invalid CSS font-display value"):
             SliceConfig(font_display="not-a-display-keyword")
+        with self.assertRaisesRegex(ValueError, "layout_features cannot be empty"):
+            SliceConfig(layout_features=())
+        with self.assertRaisesRegex(ValueError, "layout_features cannot be empty"):
+            SliceConfig(layout_features=("", "   "))
+
+        # compact_unicode_range max_gap boundary (cp - prev <= max_gap) and negative rejection
+        self.assertEqual(compact_unicode_range([0x10, 0x90], []), "U+10-90")
+        self.assertEqual(compact_unicode_range([0x10, 0x91], []), "U+10, U+91")
+        with self.assertRaisesRegex(ValueError, "max_gap must be >= 0"):
+            compact_unicode_range([0x10, 0x11], [], max_gap=-1)
 
         # 1. Family name detection
         self.assertEqual(detect_font_locale({ord("A")}, "Noto Sans KR"), "kr")
