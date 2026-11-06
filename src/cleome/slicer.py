@@ -279,6 +279,20 @@ def _build_freq_slices(
     return slices
 
 
+def _resolve_locale(
+    codepoints: CodepointSet,
+    config: SliceConfig,
+    *,
+    family_name: str = "",
+) -> str:
+    """Resolve `config.locale` against `codepoints` and `family_name` when `config.locale == 'auto'`."""
+    return (
+        detect_font_locale(codepoints, family_name=family_name)
+        if config.locale == "auto"
+        else config.locale
+    )
+
+
 def build_slice_plan(
     codepoints: CodepointSet,
     config: SliceConfig | None = None,
@@ -305,11 +319,7 @@ def build_slice_plan(
     if not all_cps:
         return []
 
-    resolved_locale = (
-        detect_font_locale(all_cps, family_name=family_name)
-        if config.locale == "auto"
-        else config.locale
-    )
+    resolved_locale = _resolve_locale(all_cps, config, family_name=family_name)
 
     if resolved_locale == "kr":
         return _build_kr_slice_plan(all_cps, config)
@@ -629,10 +639,8 @@ def _prepare_font_bundle(
     ]
     union_codepoints = frozenset({*m.codepoints for m in metas})
 
-    resolved_locale = (
-        detect_font_locale(union_codepoints, family_name=unified_family)
-        if config.locale == "auto"
-        else config.locale
+    resolved_locale = _resolve_locale(
+        union_codepoints, config, family_name=unified_family
     )
     resolved_config = (
         config

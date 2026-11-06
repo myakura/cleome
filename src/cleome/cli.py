@@ -15,7 +15,7 @@ from pathlib import Path
 
 from fontTools.ttLib import TTFont, TTLibError
 
-from cleome.locale import SUPPORTED_LOCALES, detect_font_locale
+from cleome.locale import SUPPORTED_LOCALES
 from cleome.metadata import (
     FontMetadata,
     extract_font_metadata,
@@ -548,14 +548,6 @@ def _run_build(args: argparse.Namespace, config: SliceConfig) -> int:
         url_prefix,
     )
     if args.json_output:
-        first_meta = result.fonts_metadata[0]
-        resolved_loc = (
-            detect_font_locale(
-                first_meta.codepoints, family_name=first_meta.family_name
-            )
-            if config.locale == "auto"
-            else config.locale
-        )
         payload = {
             "ok": True,
             "command": "build",
@@ -563,7 +555,7 @@ def _run_build(args: argparse.Namespace, config: SliceConfig) -> int:
             "cached": result.cached,
             "family_name": result.family_name,
             "slug": result.slug,
-            "locale": resolved_loc,
+            "locale": result.locale,
             "filename_hash": config.filename_hash,
             "css_path": str(result.css_path),
             "css_bytes": result.css_bytes,
