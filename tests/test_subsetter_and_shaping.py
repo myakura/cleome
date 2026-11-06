@@ -1461,6 +1461,53 @@ class TestSubsetterAndShaping(unittest.TestCase):
                     self.assertTrue(res.css_path.is_file())
                     self.assertIn(f"font-family: 'Family {i}';", res.css_text)
 
+    def test_export_woff2_slices_prunes_superseded_hashed_slices_immediately(
+        self,
+    ) -> None:
+        """
+        Issue 44 verification: `export_woff2_slices` prunes superseded content-hashed
+        `<stem>-<hash8>.woff2` files for the same variant in `slices_dir` immediately
+        when `config.filename_hash=True` (default), while preserving unchanged slice
+        files and unrelated variants.
+        """
+        f_v1 = create_synthetic_ttfont(
+            [ord("A"), ord("あ"), 0x4E02], family_name="Direct Export"
+        )
+        f_v2 = create_synthetic_ttfont(
+            [ord("A"), ord("あ"), 0x4E02, 0x4E04], family_name="Direct Export"
+        )
+        meta_v1 = extract_font_metadata(f_v1)
+        meta_v2 = extract_font_metadata(f_v2)
+        plan_v1 = build_slice_plan(meta_v1.codepoints, family_name=meta_v1.family_name)
+        plan_v2 = build_slice_plan(meta_v2.codepoints, family_name=meta_v2.family_name)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            slices_dir = Path(tmp) / "slices"
+            built_v1 = export_woff2_slices(
+                f_v1, meta_v1, plan_v1, slices_dir, workers=1
+            )
+            v1_by_id = {bf.spec.slice_id: bf for bf in built_v1}
+            self.assertTrue(all(bf.path.is_file() for bf in built_v1))
+
+            built_v2 = export_woff2_slices(
+                f_v2, meta_v2, plan_v2, slices_dir, workers=1
+            )
+            v2_by_id = {bf.spec.slice_id: bf for bf in built_v2}
+
+            self.assertEqual(v1_by_id["latin"].filename, v2_by_id["latin"].filename)
+            self.assertEqual(
+                v1_by_id["kana-core"].filename, v2_by_id["kana-core"].filename
+            )
+            self.assertNotEqual(
+                v1_by_id["kanji-rare-01"].filename,
+                v2_by_id["kanji-rare-01"].filename,
+            )
+            self.assertFalse(
+                v1_by_id["kanji-rare-01"].path.exists(),
+                "export_woff2_slices must prune superseded hashed slice immediately",
+            )
+            self.assertTrue(v2_by_id["kanji-rare-01"].path.is_file())
+
 
 if __name__ == "__main__":
     unittest.main()
