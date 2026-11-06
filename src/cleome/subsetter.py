@@ -21,12 +21,12 @@ from pathlib import Path
 from fontTools.subset import Options, Subsetter
 from fontTools.ttLib import TTFont
 
-from cleome.css import _ensure_directory_creatable, _validate_slice_output_path
 from cleome.metadata import (
     FontMetadata,
     _split_hashed_stem,
     patch_uvs_missing_base_cmap,
 )
+from cleome.paths import _ensure_directory_creatable, _validate_slice_output_path
 from cleome.slicer import (
     SliceConfig,
     SliceSpec,

@@ -17,7 +17,6 @@ from cleome.css import (
     _CACHE_COMMENT_RE,
     _CACHE_FORMAT_VERSION,
     _compute_slices_output_digest,
-    _resolve_and_validate_outputs,
     generate_css,
 )
 from cleome.metadata import (
@@ -26,6 +25,7 @@ from cleome.metadata import (
     _validate_filename_token,
     extract_font_metadata,
 )
+from cleome.paths import _resolve_and_validate_outputs
 from cleome.slicer import (
     SliceConfig,
     SliceSpec,

@@ -1017,7 +1017,8 @@ class TestSubsetterAndShaping(unittest.TestCase):
         Verify `_resolve_url_prefix` and `generate_css` URL resolution for `"/"`, `"/fonts"`,
         `"/fonts/"`, `"https://cdn.example/"`, and `""`.
         """
-        from cleome.css import _resolve_url_prefix, generate_css
+        from cleome.css import generate_css
+        from cleome.paths import _resolve_url_prefix
         from cleome.slicer import SliceSpec
         from cleome.subsetter import BuiltSliceFile
 

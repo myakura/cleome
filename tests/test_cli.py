@@ -153,6 +153,7 @@ class TestCleomeCLI(unittest.TestCase):
                             f"rc = main(['plan', {str(uvs_font_path)!r}]); "
                             f"assert rc == 0; "
                             f"assert 'cleome.css' not in sys.modules; "
+                            f"assert 'cleome.paths' not in sys.modules; "
                             f"assert 'cleome.subsetter' not in sys.modules; "
                             f"assert 'cleome.pipeline' not in sys.modules; "
                             f"from cleome.urange import compact_unicode_range, format_unicode_range, parse_unicode_range; "

@@ -448,7 +448,7 @@ def _run_plan(args: argparse.Namespace, config: SliceConfig) -> int:
 
 
 def _run_build_dry_run(args: argparse.Namespace, config: SliceConfig) -> int:
-    from cleome.css import _resolve_and_validate_outputs
+    from cleome.paths import _resolve_and_validate_outputs
 
     try:
         raw_metas = _load_cli_input_metas(args, config)
@@ -510,7 +510,7 @@ def _run_build(args: argparse.Namespace, config: SliceConfig) -> int:
     if args.dry_run:
         return _run_build_dry_run(args, config)
 
-    from cleome.css import _resolve_url_prefix
+    from cleome.paths import _resolve_url_prefix
     from cleome.pipeline import slice_fonts
 
     t0 = time.time()
