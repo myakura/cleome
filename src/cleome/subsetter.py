@@ -561,6 +561,12 @@ def export_woff2_slices(
     """
     Generate `.woff2` slice files in `slices_dir` for all `slice_specs` using parallel workers.
 
+    When `config.filename_hash` is `True` (default), superseded `<stem>-<hash8>.woff2` files
+    for the same variant in `slices_dir` are pruned immediately after the new slices are written.
+    Callers that also maintain an on-disk `@font-face` stylesheet in the same directory must
+    regenerate and write that CSS (via `generate_css`) immediately afterwards, or use
+    `slice_font` / `slice_fonts` which write the new CSS atomically before pruning superseded slices.
+
     Note: When `workers` > 1 (or `None` on multi-core systems), `ProcessPoolExecutor` is used.
     On platforms that use `spawn` or `forkserver` (macOS, Windows, Python 3.14+ Linux),
     top-level scripts calling this function must guard their entry point with
