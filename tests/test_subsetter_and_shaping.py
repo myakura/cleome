@@ -1012,6 +1012,50 @@ class TestSubsetterAndShaping(unittest.TestCase):
                     f400, out_dir=out_dir, css_filename="../escape.css", workers=1
                 )
 
+    def test_resolve_url_prefix_variants(self) -> None:
+        """
+        Verify `_resolve_url_prefix` and `generate_css` URL resolution for `"/"`, `"/fonts"`,
+        `"/fonts/"`, `"https://cdn.example/"`, and `""`.
+        """
+        from cleome.css import _resolve_url_prefix, generate_css
+        from cleome.slicer import SliceSpec
+        from cleome.subsetter import BuiltSliceFile
+
+        tt = create_synthetic_ttfont([ord("A")], family_name="F")
+        meta = extract_font_metadata(tt)
+        spec = SliceSpec(
+            slice_id="latin",
+            tier=1,
+            category="latin",
+            description="Tier 1: Latin",
+            binary_codepoints=frozenset({ord("A")}),
+            css_unicode_range="U+41",
+        )
+        bf = BuiltSliceFile(
+            spec=spec,
+            filename="f-latin-xxxx.woff2",
+            path=Path("slices/f-latin-xxxx.woff2"),
+            size_bytes=1024,
+            glyph_count=2,
+        )
+
+        cases = (
+            ("/", "/", "url('/f-latin-xxxx.woff2')"),
+            ("/fonts", "/fonts/", "url('/fonts/f-latin-xxxx.woff2')"),
+            ("/fonts/", "/fonts/", "url('/fonts/f-latin-xxxx.woff2')"),
+            (
+                "https://cdn.example/",
+                "https://cdn.example/",
+                "url('https://cdn.example/f-latin-xxxx.woff2')",
+            ),
+            ("", "", "url('f-latin-xxxx.woff2')"),
+        )
+        for raw_prefix, expected_resolved, expected_src_url in cases:
+            cfg = SliceConfig(url_prefix=raw_prefix)
+            self.assertEqual(_resolve_url_prefix(cfg), expected_resolved)
+            css_out = generate_css([(meta, [bf])], config=cfg)
+            self.assertIn(expected_src_url, css_out)
+
     def test_build_cache_skip_subsetting_and_invalidation(self) -> None:
         """
         Verify build caching across single- and multi-font bundles:

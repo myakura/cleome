@@ -95,8 +95,10 @@ def _resolve_url_prefix(
     slices_dir: Path | None = None,
 ) -> str:
     if config.url_prefix is not None:
+        if not config.url_prefix:
+            return ""
         prefix = config.url_prefix.rstrip("/")
-        return f"{prefix}/" if prefix else ""
+        return f"{prefix}/" if prefix else "/"
     if css_path is not None and slices_dir is not None:
         css_dir_abs = os.path.abspath(css_path.parent)
         slices_dir_abs = os.path.abspath(slices_dir)
