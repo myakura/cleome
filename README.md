@@ -66,7 +66,7 @@ cleome build MyFont-VF.otf -o dist/web \
 
 ## Python API usage
 
-See [`skills/cleome/SKILL.md`](https://github.com/myakura/cleome/blob/main/skills/cleome/SKILL.md) for all exported functions, dataclasses, non-mutation guarantees, and `ProcessPoolExecutor` entrypoint rules.
+Only the top-level `cleome` package (`cleome.__all__`) is public. See [`skills/cleome/SKILL.md`](https://github.com/myakura/cleome/blob/main/skills/cleome/SKILL.md) for all exported functions, dataclasses, non-mutation guarantees, and `ProcessPoolExecutor` entrypoint rules.
 
 ```python
 from pathlib import Path
