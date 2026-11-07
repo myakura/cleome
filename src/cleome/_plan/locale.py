@@ -5,10 +5,10 @@ Unicode character classification predicates and CJK locale auto-detection
 
 import re
 
-from cleome.data.kanji_freq import KANJI_FREQ_RANK
-from cleome.data.sc_freq import SC_HANZI_FREQ_RANK
-from cleome.data.tc_freq import HK_EXTRA_CANTONESE_CHARS, TC_HANZI_FREQ_RANK
-from cleome.urange import CodepointSet
+from cleome._plan.data.kanji_freq import KANJI_FREQ_RANK
+from cleome._plan.data.sc_freq import SC_HANZI_FREQ_RANK
+from cleome._plan.data.tc_freq import HK_EXTRA_CANTONESE_CHARS, TC_HANZI_FREQ_RANK
+from cleome._plan.urange import CodepointSet
 
 SUPPORTED_LOCALES: tuple[str, ...] = ("auto", "jp", "kr", "sc", "tc", "hk")
 

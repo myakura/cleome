@@ -9,36 +9,33 @@ and inverted-pyramid frequency granularity.
 from importlib.metadata import version as _metadata_version
 from typing import TYPE_CHECKING, Any
 
-from cleome.locale import (
-    SUPPORTED_LOCALES,
-    detect_font_locale,
-)
-from cleome.metadata import (
+from cleome._font.metadata import (
     FontFaceDescriptors,
     FontMetadata,
     extract_font_face_descriptors,
     extract_font_metadata,
-    patch_uvs_missing_base_cmap,
     slugify_family,
 )
-from cleome.slicer import (
-    SliceConfig,
-    SliceSpec,
-    build_slice_plan,
+from cleome._font.uvs import patch_uvs_missing_base_cmap
+from cleome._plan.builder import build_slice_plan
+from cleome._plan.config import SliceConfig, SliceSpec
+from cleome._plan.locale import (
+    SUPPORTED_LOCALES,
+    detect_font_locale,
 )
-from cleome.urange import (
+from cleome._plan.urange import (
     compact_unicode_range,
     format_unicode_range,
     parse_unicode_range,
 )
 
 if TYPE_CHECKING:
-    from cleome.css import generate_css
-    from cleome.pipeline import SliceBundleResult, slice_font, slice_fonts
-    from cleome.subsetter import (
+    from cleome._font.subset import (
         BuiltSliceFile,
         export_woff2_slices,
     )
+    from cleome._output.css import generate_css
+    from cleome._pipeline import SliceBundleResult, slice_font, slice_fonts
 
 __version__ = _metadata_version("cleome")
 
@@ -68,15 +65,15 @@ __all__ = [
 
 def __getattr__(name: str) -> Any:
     if name in ("BuiltSliceFile", "export_woff2_slices"):
-        from cleome import subsetter as _subsetter
+        from cleome._font import subset as _subset
 
-        return getattr(_subsetter, name)
+        return getattr(_subset, name)
     if name == "generate_css":
-        from cleome import css as _css
+        from cleome._output import css as _css
 
         return getattr(_css, name)
     if name in ("SliceBundleResult", "slice_font", "slice_fonts"):
-        from cleome import pipeline as _pipeline
+        from cleome import _pipeline
 
         return getattr(_pipeline, name)
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

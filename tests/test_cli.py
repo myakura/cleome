@@ -150,12 +150,13 @@ class TestCleomeCLI(unittest.TestCase):
                             f"from cleome.cli import main; "
                             f"rc = main(['plan', {str(uvs_font_path)!r}]); "
                             f"assert rc == 0; "
-                            f"assert 'cleome.css' not in sys.modules; "
-                            f"assert 'cleome.paths' not in sys.modules; "
-                            f"assert 'cleome.subsetter' not in sys.modules; "
-                            f"assert 'cleome.pipeline' not in sys.modules; "
-                            f"from cleome.urange import compact_unicode_range, format_unicode_range, parse_unicode_range; "
-                            f"from cleome.metadata import extract_font_face_descriptors, patch_uvs_missing_base_cmap, validate_and_compute_variant_suffixes"
+                            f"assert 'cleome._output.css' not in sys.modules; "
+                            f"assert 'cleome._output.paths' not in sys.modules; "
+                            f"assert 'cleome._font.subset' not in sys.modules; "
+                            f"assert 'cleome._pipeline' not in sys.modules; "
+                            f"from cleome._plan.urange import compact_unicode_range, format_unicode_range, parse_unicode_range; "
+                            f"from cleome._font.metadata import extract_font_face_descriptors, validate_and_compute_variant_suffixes; "
+                            f"from cleome._font.uvs import patch_uvs_missing_base_cmap"
                         ),
                     ],
                     capture_output=True,
@@ -422,7 +423,7 @@ class TestCleomeCLI(unittest.TestCase):
         `cleome plan --json`, and `SliceBundleResult.locale` all report the union-resolved locale.
         """
         from cleome import slice_fonts
-        from cleome.locale import _SC_ONLY_FREQ
+        from cleome._plan.locale import _SC_ONLY_FREQ
 
         latin_cps = sorted(range(0x0020, 0x007F))
         sc_cps = sorted(
@@ -861,7 +862,7 @@ class TestCleomeCLI(unittest.TestCase):
             # Exit code 3: PermissionError
             with (
                 mock_patch(
-                    "cleome.pipeline.slice_fonts",
+                    "cleome._pipeline.slice_fonts",
                     side_effect=PermissionError(13, "Denied", str(build_out)),
                 ),
                 redirect_stderr(StringIO()),
@@ -880,7 +881,7 @@ class TestCleomeCLI(unittest.TestCase):
                 ),
             ):
                 with (
-                    mock_patch("cleome.pipeline.slice_fonts", side_effect=runtime_exc),
+                    mock_patch("cleome._pipeline.slice_fonts", side_effect=runtime_exc),
                     redirect_stderr(StringIO()),
                 ):
                     self.assertEqual(

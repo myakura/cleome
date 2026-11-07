@@ -31,16 +31,16 @@ from cleome import (
     parse_unicode_range,
     slice_font,
 )
-from cleome.data.kanji_freq import KANJI_FREQ_RANK
-from cleome.data.kr_freq import KR_HANGUL_FREQ_CODEPOINTS
-from cleome.data.sc_freq import SC_HANZI_FREQ_CODEPOINTS
-from cleome.data.tc_freq import (
+from cleome._plan.bundle import _prepare_font_bundle
+from cleome._plan.data.kanji_freq import KANJI_FREQ_RANK
+from cleome._plan.data.kr_freq import KR_HANGUL_FREQ_CODEPOINTS
+from cleome._plan.data.sc_freq import SC_HANZI_FREQ_CODEPOINTS
+from cleome._plan.data.tc_freq import (
     HK_COLOCATED_CANTONESE_CHARS,
     HK_HANZI_FREQ_CODEPOINTS,
     TC_HANZI_FREQ_CODEPOINTS,
 )
-from cleome.locale import _SC_ONLY_FREQ
-from cleome.slicer import _prepare_font_bundle
+from cleome._plan.locale import _SC_ONLY_FREQ
 
 
 class TestSlicerAndLocales(unittest.TestCase):

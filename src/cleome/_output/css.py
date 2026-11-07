@@ -19,9 +19,9 @@ from stixis import (
     using_options,
 )
 
-from cleome.metadata import FontMetadata
-from cleome.paths import _resolve_url_prefix
-from cleome.slicer import SliceConfig, SliceSpec
+from cleome._font.metadata import FontMetadata
+from cleome._output.paths import _resolve_url_prefix
+from cleome._plan.config import SliceConfig, SliceSpec
 
 _CLEOME_CSS_OPTIONS = SerializationOptions.cleome()
 _CACHE_FORMAT_VERSION = 1

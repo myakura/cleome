@@ -12,32 +12,31 @@ from pathlib import Path
 
 from fontTools.ttLib import TTFont
 
-from cleome.css import (
-    _BLOCK_GLYPHS_RE,
-    _CACHE_COMMENT_RE,
-    _CACHE_FORMAT_VERSION,
-    _compute_slices_output_digest,
-    generate_css,
-)
-from cleome.metadata import (
+from cleome._font.metadata import (
     FontMetadata,
-    _split_hashed_stem,
-    _validate_filename_token,
     extract_font_metadata,
 )
-from cleome.paths import _resolve_and_validate_outputs
-from cleome.slicer import (
-    SliceConfig,
-    SliceSpec,
-    _prepare_font_bundle,
-)
-from cleome.subsetter import (
+from cleome._font.subset import (
     BuiltSliceFile,
     _atomic_output_file,
     _export_woff2_slices_batch,
     _prune_superseded_hashed_slices,
     serialize_font_to_bytes,
 )
+from cleome._names import (
+    _split_hashed_stem,
+    _validate_filename_token,
+)
+from cleome._output.css import (
+    _BLOCK_GLYPHS_RE,
+    _CACHE_COMMENT_RE,
+    _CACHE_FORMAT_VERSION,
+    _compute_slices_output_digest,
+    generate_css,
+)
+from cleome._output.paths import _resolve_and_validate_outputs
+from cleome._plan.bundle import _prepare_font_bundle
+from cleome._plan.config import SliceConfig, SliceSpec
 
 __all__ = [
     "SliceBundleResult",
