@@ -8,6 +8,7 @@ Cleome (`cleome`) is a Python (`>= 3.15`) CLI tool and library that inspects Jap
 * Lint check: `uv run ruff check`
 * Format check: `uv run ruff format --check`
 * Run test suite (`pytest` + HarfBuzz shaping verification): `uv run pytest`
+  * Test placement: `tests/test_slicer_and_locales.py` covers `_plan` (locale, data, bundle); `tests/test_subsetter_and_shaping.py` covers `_font`, `_output`, `_pipeline`, and `_plan.config`; `tests/test_cli.py` covers `cli` and end-to-end runs. Add a new test to the file for the module it exercises; when none matches, create `tests/test_<module>.py` instead of appending to an unrelated file.
 * Preview a 4-tier slice plan without writing files (read-only): `uv run cleome plan <font.ttf> [--json]`
 * Build `.woff2` slices and `@font-face` CSS: `uv run cleome build <font.ttf> -o dist/ [--css-out <path.css>] [--no-filename-hash] [--dry-run]`
 
