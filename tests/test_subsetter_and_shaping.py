@@ -29,7 +29,7 @@ from cleome import (
     slice_font,
     slice_fonts,
 )
-from cleome.subsetter import _export_woff2_slices_batch, serialize_font_to_bytes
+from cleome._font.subset import _export_woff2_slices_batch, serialize_font_to_bytes
 
 
 class TestSubsetterAndShaping(unittest.TestCase):
@@ -1017,10 +1017,10 @@ class TestSubsetterAndShaping(unittest.TestCase):
         Verify `_resolve_url_prefix` and `generate_css` URL resolution for `"/"`, `"/fonts"`,
         `"/fonts/"`, `"https://cdn.example/"`, and `""`.
         """
-        from cleome.css import generate_css
-        from cleome.paths import _resolve_url_prefix
-        from cleome.slicer import SliceSpec
-        from cleome.subsetter import BuiltSliceFile
+        from cleome._font.subset import BuiltSliceFile
+        from cleome._output.css import generate_css
+        from cleome._output.paths import _resolve_url_prefix
+        from cleome._plan.config import SliceSpec
 
         tt = create_synthetic_ttfont([ord("A")], family_name="F")
         meta = extract_font_metadata(tt)
@@ -1109,7 +1109,7 @@ class TestSubsetterAndShaping(unittest.TestCase):
 
             # 2. Second call -> skips _export_woff2_slices_batch completely and returns identical metadata
             with patch(
-                "cleome.pipeline._export_woff2_slices_batch",
+                "cleome._pipeline._export_woff2_slices_batch",
                 side_effect=AssertionError(
                     "_export_woff2_slices_batch should be skipped on cache hit"
                 ),
@@ -1255,7 +1255,7 @@ class TestSubsetterAndShaping(unittest.TestCase):
 
             with (
                 patch(
-                    "cleome.pipeline.generate_css",
+                    "cleome._pipeline.generate_css",
                     side_effect=RuntimeError("boom before css write"),
                 ),
                 self.assertRaisesRegex(RuntimeError, "boom before css write"),
@@ -1305,14 +1305,14 @@ class TestSubsetterAndShaping(unittest.TestCase):
         `SerializationOptions.cleome()`) that `_CACHE_COMMENT_RE` and `_BLOCK_GLYPHS_RE`
         round-trip the cache header and every `@font-face` block's glyph count.
         """
-        from cleome.css import (
+        from cleome._font.subset import BuiltSliceFile
+        from cleome._output.css import (
             _BLOCK_GLYPHS_RE,
             _CACHE_COMMENT_RE,
             _CACHE_FORMAT_VERSION,
             generate_css,
         )
-        from cleome.slicer import SliceSpec
-        from cleome.subsetter import BuiltSliceFile
+        from cleome._plan.config import SliceSpec
 
         tt = create_synthetic_ttfont(
             [ord("A"), ord("あ"), ord("日")],

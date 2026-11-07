@@ -14,7 +14,7 @@ from fontTools.ttLib.tables.TupleVariation import TupleVariation
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 from cleome import SliceSpec, parse_unicode_range
-from cleome.data.kanji_freq import KANJI_FREQ_CODEPOINTS
+from cleome._plan.data.kanji_freq import KANJI_FREQ_CODEPOINTS
 
 
 def build_synthetic_charset(*, full: bool) -> frozenset[int]:

@@ -13,22 +13,17 @@ Implements the 4-tier architecture:
 """
 
 from bisect import bisect_left, bisect_right
-from collections.abc import Sequence
-from dataclasses import dataclass, replace
-from pathlib import Path
 
-from stixis import canonicalize
-
-from cleome.data.kanji_freq import KANJI_FREQ_RANK
-from cleome.data.kr_freq import KR_HANGUL_FREQ_RANK
-from cleome.data.sc_freq import SC_HANZI_FREQ_RANK
-from cleome.data.tc_freq import (
+from cleome._plan.config import SliceConfig, SliceSpec
+from cleome._plan.data.kanji_freq import KANJI_FREQ_RANK
+from cleome._plan.data.kr_freq import KR_HANGUL_FREQ_RANK
+from cleome._plan.data.sc_freq import SC_HANZI_FREQ_RANK
+from cleome._plan.data.tc_freq import (
     HK_HANZI_FREQ_RANK,
     TC_HANZI_FREQ_RANK,
 )
-from cleome.locale import (
+from cleome._plan.locale import (
     CJK_IDEOGRAPH_REGIONS,
-    SUPPORTED_LOCALES,
     detect_font_locale,
     is_cjk_ideograph,
     is_hangul_syllable,
@@ -38,129 +33,11 @@ from cleome.locale import (
     is_tier1_latin,
     is_tier2_symbols_ui,
 )
-from cleome.metadata import FontMetadata, validate_and_compute_variant_suffixes
-from cleome.urange import (
+from cleome._plan.urange import (
     CodepointSet,
     compact_unicode_range,
     format_unicode_range,
 )
-
-
-@dataclass(frozen=True, slots=True)
-class SliceConfig:
-    """Configuration parameters for dynamic unicode-range slicing."""
-
-    # Target CJK slicing profile: "auto" (detect from family name & cmap), "jp", "kr", "sc", "tc", or "hk".
-    locale: str = "auto"
-
-    # Progressive (Inverted-Pyramid) chunk schedule for Tier 3 (frequency-ranked Kanji/Hanzi/Hangul):
-    # List of (chunk_size, num_chunks) from highest frequency (rank 1) downward.
-    # Any remaining frequency-ranked characters in the font's cmap after these chunks
-    # are sliced using `freq_tail_chunk_size`.
-    freq_chunks: tuple[tuple[int, int], ...] = (
-        (200, 2),  # Rank 1..400: 200 chars x 2 slices
-        (80, 10),  # Rank 401..1200: 80 chars x 10 slices
-    )
-    freq_tail_chunk_size: int = 70  # Rank 1201..N: ~70 chars/slice
-
-    # Target character count per slice for Tier 4 (rare Kanji/Hanzi/Hanja/Hangul) and Tier 2 (`symbols-ext`):
-    rare_chunk_size: int = 250
-    symbols_ext_chunk_size: int = 350
-
-    # Subsetting & WOFF2 options:
-    layout_closure: bool = True
-    layout_features: tuple[str, ...] = ("*",)
-    drop_tables: tuple[str, ...] = ()
-    uvs_base_repair: bool = True
-
-    # CSS generation options:
-    slices_subdir: str = "slices"
-    url_prefix: str | None = None
-    font_display: str = "swap"
-    filename_hash: bool = True
-
-    def __post_init__(self) -> None:
-        norm_locale = self.locale.strip().lower()
-        if norm_locale not in SUPPORTED_LOCALES:
-            raise ValueError(
-                f"Unsupported locale {self.locale!r}; expected one of {SUPPORTED_LOCALES}"
-            )
-        object.__setattr__(self, "locale", norm_locale)
-        for chunk_size, num_chunks in self.freq_chunks:
-            if chunk_size <= 0 or num_chunks <= 0:
-                raise ValueError(
-                    f"freq_chunks entries must have positive (chunk_size, num_chunks), got {(chunk_size, num_chunks)}"
-                )
-        if self.freq_tail_chunk_size <= 0:
-            raise ValueError(
-                f"freq_tail_chunk_size must be > 0, got {self.freq_tail_chunk_size}"
-            )
-        if self.rare_chunk_size <= 0:
-            raise ValueError(f"rare_chunk_size must be > 0, got {self.rare_chunk_size}")
-        if self.symbols_ext_chunk_size <= 0:
-            raise ValueError(
-                f"symbols_ext_chunk_size must be > 0, got {self.symbols_ext_chunk_size}"
-            )
-        cleaned_features = tuple(
-            t.strip() for t in self.layout_features if isinstance(t, str) and t.strip()
-        )
-        if not cleaned_features:
-            raise ValueError("layout_features cannot be empty")
-        object.__setattr__(self, "layout_features", cleaned_features)
-        subdir_str = self.slices_subdir.strip()
-        if not subdir_str:
-            raise ValueError("slices_subdir cannot be empty")
-        subdir_norm = subdir_str.rstrip("/") or "."
-        subdir_path = Path(subdir_norm)
-        if (
-            "\\" in subdir_str
-            or "\x00" in subdir_str
-            or subdir_str.startswith("/")
-            or subdir_path.is_absolute()
-            or ".." in subdir_path.parts
-        ):
-            raise ValueError(
-                f"slices_subdir must be a relative path inside out_dir without '..', got {self.slices_subdir!r}"
-            )
-        display_str = self.font_display.strip()
-        if not display_str:
-            raise ValueError("font_display cannot be empty")
-        try:
-            norm_display = canonicalize(
-                "font-display",
-                display_str,
-                at_rule="@font-face",
-            )
-        except ValueError as exc:
-            raise ValueError(
-                f"Invalid CSS font-display value: {self.font_display!r}"
-            ) from exc
-        object.__setattr__(self, "font_display", norm_display)
-
-
-@dataclass(frozen=True, slots=True)
-class SliceSpec:
-    """Specification of a single unicode-range slice."""
-
-    slice_id: str
-    tier: int
-    category: str
-    description: str
-    binary_codepoints: frozenset[int]
-    css_unicode_range: str
-    uses_cascade_shadowing: bool = False
-
-    def filename(
-        self, slug: str, variant_suffix: str = "", content_hash: str = ""
-    ) -> str:
-        stem = (
-            f"{slug}-{variant_suffix}-{self.slice_id}"
-            if variant_suffix
-            else f"{slug}-{self.slice_id}"
-        )
-        if content_hash:
-            return f"{stem}-{content_hash}.woff2"
-        return f"{stem}.woff2"
 
 
 def _chunk_sorted_codepoints(
@@ -590,85 +467,3 @@ def _append_tier2_and_tier1_slices(
                 uses_cascade_shadowing=True,
             )
         )
-
-
-@dataclass(frozen=True, slots=True)
-class _PreparedBundle:
-    """Unified metadata, resolved locale, per-variant slice plans, and union plan across input fonts."""
-
-    family_name: str
-    slug: str
-    resolved_locale: str
-    metas: list[FontMetadata]
-    variant_plans: list[list[SliceSpec]]
-    active_variant_plans: list[list[SliceSpec]]
-    union_plan: list[SliceSpec]
-
-
-def _filter_active_slices(
-    meta: FontMetadata, slice_specs: Sequence[SliceSpec]
-) -> list[tuple[SliceSpec, list[int]]]:
-    """Return `(spec, sorted_codepoints)` for each slice in `slice_specs` that intersects `meta.codepoints`."""
-    active: list[tuple[SliceSpec, list[int]]] = []
-    for spec in slice_specs:
-        cps = sorted(spec.binary_codepoints & meta.codepoints)
-        if cps:
-            active.append((spec, cps))
-    return active
-
-
-def _prepare_font_bundle(
-    raw_metas: Sequence[FontMetadata],
-    config: SliceConfig,
-    *,
-    family_override: str | None = None,
-    slug_override: str | None = None,
-) -> _PreparedBundle:
-    """Validate variants, unify family and slug, and compute cached 4-tier slice plans without I/O."""
-    if not raw_metas:
-        raise ValueError("At least one FontMetadata item is required.")
-    variant_suffixes = validate_and_compute_variant_suffixes(
-        raw_metas, family_override=family_override
-    )
-    unified_family = family_override or raw_metas[0].family_name
-    unified_slug = slug_override or raw_metas[0].slug
-
-    metas: list[FontMetadata] = [
-        replace(m, family_name=unified_family, slug=unified_slug, variant_suffix=v_suf)
-        for m, v_suf in zip(raw_metas, variant_suffixes)
-    ]
-    union_codepoints = frozenset({*m.codepoints for m in metas})
-
-    resolved_locale = _resolve_locale(
-        union_codepoints, config, family_name=unified_family
-    )
-    resolved_config = (
-        config
-        if config.locale == resolved_locale
-        else replace(config, locale=resolved_locale)
-    )
-
-    plan_cache: dict[frozenset[int], list[SliceSpec]] = {}
-    for m in metas:
-        if m.codepoints not in plan_cache:
-            plan_cache[m.codepoints] = build_slice_plan(
-                m.codepoints, config=resolved_config, family_name=unified_family
-            )
-
-    variant_plans = [plan_cache[m.codepoints] for m in metas]
-    active_variant_plans = [
-        [spec for spec, _ in _filter_active_slices(m, plan)]
-        for m, plan in zip(metas, variant_plans)
-    ]
-    union_plan = plan_cache.get(union_codepoints) or build_slice_plan(
-        union_codepoints, config=resolved_config, family_name=unified_family
-    )
-    return _PreparedBundle(
-        family_name=unified_family,
-        slug=unified_slug,
-        resolved_locale=resolved_locale,
-        metas=metas,
-        variant_plans=variant_plans,
-        active_variant_plans=active_variant_plans,
-        union_plan=union_plan,
-    )

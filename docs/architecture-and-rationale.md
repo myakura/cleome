@@ -90,7 +90,7 @@ A variable font shares one set of 124 `.woff2` URLs across `font-weight: 400` an
 
 ## How Cleome slices a font
 
-Cleome replaces static templates with a 4-tier slicing planner ([`cleome/slicer.py`](../src/cleome/slicer.py)) and `stixis` `unicode-range` formatting and compaction (`stixis.format_urange` and `stixis.compact_urange`, wrapped by [`cleome/urange.py`](../src/cleome/urange.py)) that read each input font's `cmap`. It orders `@font-face` rules from lowest priority (Tier 4, at the top of the stylesheet) to highest priority (Tier 1, at the bottom of the stylesheet):
+Cleome replaces static templates with a 4-tier slicing planner ([`cleome/_plan/builder.py`](../src/cleome/_plan/builder.py)) and `stixis` `unicode-range` formatting and compaction (`stixis.format_urange` and `stixis.compact_urange`, wrapped by [`cleome/_plan/urange.py`](../src/cleome/_plan/urange.py)) that read each input font's `cmap`. It orders `@font-face` rules from lowest priority (Tier 4, at the top of the stylesheet) to highest priority (Tier 1, at the bottom of the stylesheet):
 
 | Tier (CSS order) | Slice ID pattern | Target characters | `unicode-range` strategy |
 | :--- | :--- | :--- | :--- |
@@ -123,7 +123,7 @@ Cleome separates non-Kanji characters from Kanji slices and groups them into fou
 * Tier 2 `symbols-ui` holds common UI and article symbols (~16 KB VF, ~7-9 KB Static), including `℃` (`U+2103`), Roman numerals (`U+2160-216B`: `Ⅰ-Ⅻ`), arrows (`U+2190-21FF`: `←↑→↓↔⇒`), CJK math and comparison symbols (`∞`, `≒`, `≠`, `≦`, `≧`), circled numbers (`①-⑳`, `⓪`, `❶-❿`), geometric shapes (`■□▲△▶▷▼▽◀◁◆◇◈○◎●`), and stars, notes, and marks (`★☆♪♫♡♥⚠✓✔✕✖`).
 * Tier 2 `symbols-ext` (`symbols-ext-01..NN`) holds the remaining non-Kanji characters in the font's `cmap` (Greek, Cyrillic, box drawing, math symbols, enclosed CJK letters and ideographs, halfwidth katakana), split into chunks of ~350 characters.
 
-Because Cleome builds every slice from the input font's `cmap`, smaller-charset fonts (~7,000- to 9,300-character JIS Level 1+2 static fonts) scale down from 91 slices to 55-65 slices and never emit ghost `unicode-range` declarations for characters outside their repertoire. In Tiers 1, 2, and 3, Cleome compacts only the codepoints present in the font via `stixis.compact_urange` (wrapped by `compact_unicode_range` in [`cleome/urange.py`](../src/cleome/urange.py)), bridging small unmapped gaps (`<= 0x80`) in Tiers 1 and 2 only when the gap contains zero codepoints from any lower-priority slice.
+Because Cleome builds every slice from the input font's `cmap`, smaller-charset fonts (~7,000- to 9,300-character JIS Level 1+2 static fonts) scale down from 91 slices to 55-65 slices and never emit ghost `unicode-range` declarations for characters outside their repertoire. In Tiers 1, 2, and 3, Cleome compacts only the codepoints present in the font via `stixis.compact_urange` (wrapped by `compact_unicode_range` in [`cleome/_plan/urange.py`](../src/cleome/_plan/urange.py)), bridging small unmapped gaps (`<= 0x80`) in Tiers 1 and 2 only when the gap contains zero codepoints from any lower-priority slice.
 
 
 ### 3. Inverted-pyramid Kanji granularity (Tier 3)
@@ -132,7 +132,7 @@ To decide how to group Kanji, we simulated four Japanese text scenarios against 
 
 * Model A (pure Unicode block slicing, 24 slices, no frequency ranking) splits `U+4E00-9FFF` into 16 contiguous hex blocks. CSS shrinks to 5.4 KB, but Unicode CJK Unified Ideographs are ordered by Kangxi radical and stroke count rather than frequency. Everyday Kanji (`一`, `人`, `日`, `月`, `語`, `駅`) are spread across almost every block, so a 25-character UI label hits 7 Kanji blocks (1,940.6 KB) and a 4,500-character article downloads 4,196.9 KB.
 * Model B (coarse fixed frequency granularity, 30 slices, 250 chars x 10) handles short UI labels in 3 files (232.4 KB), but downloads 17 files (2,059.4 KB vs. Google Fonts' 1,026.3 KB) on a 4,500-character article. In a long article (~400 unique Kanji), mid-to-low frequency Kanji (ranks 1,000 to 3,000) appear only 1 or 2 times per chunk. When those chunks hold 100 to 250 characters each, a single hit pulls in 99 to 249 unused Kanji.
-* Model C (inverted-pyramid progressive granularity, used by Cleome) matches chunk sizes to Zipf's law across 3,169 Tier 3 Kanji ([`cleome/data/kanji_freq.py`](../src/cleome/data/kanji_freq.py)):
+* Model C (inverted-pyramid progressive granularity, used by Cleome) matches chunk sizes to Zipf's law across 3,169 Tier 3 Kanji ([`cleome/_plan/data/kanji_freq.py`](../src/cleome/_plan/data/kanji_freq.py)):
   * Rank 1 to 400 (`kanji-freq-01..02`, 200 chars x 2 slices): Hit on almost every article. Grouping them into 2 slices instead of 8 fifty-character slices saves 6 HTTP requests without adding unused bandwidth on articles.
   * Rank 401 to 1,200 (`kanji-freq-03..12`, 80 chars x 10 slices): Medium granularity for moderately frequent Kanji.
   * Rank 1,201 to 3,169 (`kanji-freq-13..40`, ~70 chars x 28 slices): Fine granularity covering all 2,136 Joyo Kanji (including the 2010 JIS Level 3 additions `𠮟`, `塡`, `剝`, `頰`), all 2,965 JIS Level 1 Kanji, frequent JIS Level 2/3 and Hyogai print-standard Kanji (`鷗`, `噓`, `繫`, `禱`, `屛`, `焰`, `摑`, `俱`, `吞`, `啞`, `麴`, `麵`), and `𠮷` (`U+20BB7`). This limits collateral downloads when 1 or 2 mid-low frequency Kanji appear in a long article and keeps Joyo and JIS Level 1 Kanji out of Tier 4.
@@ -157,7 +157,7 @@ Combining 1-token Tier 4 cascade shadowing with Tier 3 inverted-pyramid Kanji gr
 
 ## OpenType shaping and subsetting details
 
-Slicing arbitrary Japanese `.ttf` and `.otf` fonts surfaced several OpenType and CSS edge cases handled in [`cleome/metadata.py`](../src/cleome/metadata.py), [`cleome/subsetter.py`](../src/cleome/subsetter.py), [`cleome/css.py`](../src/cleome/css.py), and [`cleome/pipeline.py`](../src/cleome/pipeline.py).
+Slicing arbitrary Japanese `.ttf` and `.otf` fonts surfaced several OpenType and CSS edge cases handled in [`cleome/_font/metadata.py`](../src/cleome/_font/metadata.py), [`cleome/_font/uvs.py`](../src/cleome/_font/uvs.py), [`cleome/_font/subset.py`](../src/cleome/_font/subset.py), [`cleome/_output/css.py`](../src/cleome/_output/css.py), and [`cleome/_pipeline.py`](../src/cleome/_pipeline.py).
 
 
 ### 1. Intra-slice OpenType shaping and cross-slice lookup pruning

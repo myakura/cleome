@@ -8,11 +8,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import quote
 
-from cleome.metadata import (
-    FontMetadata,
-    _validate_filename_token,
-)
-from cleome.slicer import SliceConfig, SliceSpec
+from cleome._font.metadata import FontMetadata
+from cleome._names import _validate_filename_token
+from cleome._plan.config import SliceConfig, SliceSpec
 
 
 def _ensure_directory_creatable(dir_path: Path, label: str) -> None:

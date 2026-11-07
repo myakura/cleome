@@ -9,6 +9,8 @@ Cleome (`cleome`) is a Python 3.15+ CLI tool and library that inspects a font's 
 
 ## Core API signatures
 
+Only the top-level `cleome` package (`cleome.__all__`) is public.
+
 ```python
 from cleome import (
     BuiltSliceFile,
@@ -88,7 +90,7 @@ See [`docs/hosting-and-usage.md`](../../docs/hosting-and-usage.md) for complete 
 
 When filing a GitHub Issue on `myakura/cleome` from a consumer project:
 
-1. **Put one concern in each Issue.** Group related edge cases in the same module (such as `slicer.py`, `subsetter.py`, or `metadata.py`) into one Issue, and split unrelated changes into separate Issues.
+1. **Put one concern in each Issue.** Group related edge cases in the same area (such as slice planning, subsetting, or metadata extraction) into one Issue, and split unrelated changes into separate Issues.
 2. **Use the three-section layout (`What Happens?`, `How to Reproduce?`, `What Should Happen?`).**
    * Name the Cleome function, class, or CLI command and its observed behavior.
    * Write a self-contained Python 3.15+ snippet using `cleome` and `fontTools` imports, or provide `cleome plan --json` output.
