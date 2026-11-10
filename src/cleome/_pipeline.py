@@ -173,7 +173,8 @@ def _try_load_cached_bundle(
     *,
     resolved_locale: str,
 ) -> SliceBundleResult | None:
-    if not css_path.is_file() or not slices_dir.is_dir():
+    has_active_slices = any(active_variant_plans)
+    if not css_path.is_file() or (has_active_slices and not slices_dir.is_dir()):
         return None
     try:
         css_text = css_path.read_text(encoding="utf-8")
@@ -208,7 +209,7 @@ def _try_load_cached_bundle(
 
     slices_dir_resolved = slices_dir.resolve()
     hashed_by_stem: dict[str, str] = {}
-    if config.filename_hash:
+    if has_active_slices and config.filename_hash:
         try:
             for existing in slices_dir.iterdir():
                 if not existing.is_file() or existing.suffix != ".woff2":
@@ -464,12 +465,12 @@ def slice_fonts(
         with _atomic_output_file(outputs.css_path, mode="w", encoding="utf-8") as tf:
             tf.write(css_text)
 
-        if config.filename_hash:
-            _prune_superseded_hashed_slices(
-                outputs.slices_dir,
-                all_built_files,
-                prepared.metas,
-            )
+        _prune_superseded_hashed_slices(
+            outputs.slices_dir,
+            all_built_files,
+            prepared.metas,
+            bundle_slug=prepared.slug,
+        )
 
         return SliceBundleResult(
             family_name=prepared.family_name,

@@ -62,10 +62,14 @@ def _resolve_url_prefix(
         if not encoded_rel.startswith("."):
             return f"./{encoded_rel}/"
         return f"{encoded_rel}/"
-    subdir = config.slices_subdir.strip().strip("/")
-    if not subdir or subdir == ".":
+    parts = [
+        quote(part, safe="-._~:@!$&()*+,;=")
+        for part in config.slices_subdir.strip().split("/")
+        if part and part != "."
+    ]
+    if not parts:
         return "./"
-    return f"./{subdir}/"
+    return f"./{'/'.join(parts)}/"
 
 
 @dataclass(frozen=True, slots=True)

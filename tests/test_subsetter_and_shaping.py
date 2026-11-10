@@ -1855,6 +1855,205 @@ class TestSubsetterAndShaping(unittest.TestCase):
                     slice_fonts([f1, f2], out_dir=err_dir, workers=1, **kw)
                 self.assertFalse(err_dir.exists())
 
+    def test_slice_config_empty_cmap_cache_and_orphan_pruning(self) -> None:
+        """
+        Issue 56 verification:
+        1. `SliceConfig` normalizes `slices_subdir` (`"  slices/ "`, `"./slices"`, `"./"`) so URL prefixes
+           and cache keys match across equivalent spellings, and rejects `bool` / non-`int` chunk sizes.
+        2. Empty-`cmap` fonts hit `_try_load_cached_bundle` (`cached=True`) on repeat runs.
+        3. Rebuilding a bundle prunes orphaned `<slug>` `.woff2` slices in `slices_dir` when chunk counts
+           shrink, `locale` changes, variants change, `filename_hash` toggles, or `cmap` becomes empty,
+           while preserving slices of other font slugs in a shared `slices_dir`.
+        """
+        from fontTools.fontBuilder import FontBuilder
+        from fontTools.ttLib.tables._g_l_y_f import Glyph
+
+        from cleome._output.paths import _resolve_url_prefix
+
+        # 1. SliceConfig slices_subdir normalization and bool/non-int rejection
+        self.assertEqual(
+            SliceConfig(slices_subdir="  slices/ ").slices_subdir, "slices"
+        )
+        self.assertEqual(SliceConfig(slices_subdir="./slices").slices_subdir, "slices")
+        self.assertEqual(
+            SliceConfig(slices_subdir="././assets//woff2/").slices_subdir,
+            "assets/woff2",
+        )
+        self.assertEqual(SliceConfig(slices_subdir="./").slices_subdir, ".")
+        self.assertEqual(
+            _resolve_url_prefix(SliceConfig(slices_subdir="./slices")), "./slices/"
+        )
+        self.assertEqual(
+            _resolve_url_prefix(SliceConfig(slices_subdir="  slices/ ")), "./slices/"
+        )
+        self.assertEqual(_resolve_url_prefix(SliceConfig(slices_subdir="./")), "./")
+
+        for bad_kwargs in (
+            {"rare_chunk_size": True},
+            {"rare_chunk_size": "250"},
+            {"freq_tail_chunk_size": False},
+            {"symbols_ext_chunk_size": True},
+            {"freq_chunks": ((True, 2),)},
+            {"freq_chunks": ((200, False),)},
+        ):
+            with self.assertRaises(
+                TypeError, msg=f"Expected TypeError for {bad_kwargs}"
+            ):
+                SliceConfig(**bad_kwargs)  # type: ignore[arg-type]
+
+        with self.assertRaises(ValueError):
+            SliceConfig(freq_chunks=((200, 2, 1),))  # type: ignore[arg-type]
+
+        # 2. Empty-cmap font cache hit + equivalent slices_subdir cache hit
+        fb_empty = FontBuilder(1000, isTTF=True)
+        fb_empty.setupGlyphOrder([".notdef"])
+        fb_empty.setupCharacterMap({})
+        fb_empty.setupGlyf({".notdef": Glyph()})
+        fb_empty.setupHorizontalMetrics({".notdef": (500, 0)})
+        fb_empty.setupHorizontalHeader(ascent=800, descent=-200)
+        fb_empty.setupNameTable({"familyName": "EmptyFont", "styleName": "Regular"})
+        fb_empty.setupOS2()
+        fb_empty.setupPost()
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            empty_out = tmp_path / "empty_out"
+            r1 = slice_font(fb_empty.font, empty_out, workers=1)
+            r2 = slice_font(fb_empty.font, empty_out, workers=1)
+            self.assertFalse(r1.cached)
+            self.assertTrue(r2.cached)
+            self.assertEqual(r2.built_files, [])
+            self.assertEqual(r2.css_text, r1.css_text)
+
+            # Equivalent slices_subdir spellings hit the same cache entry
+            norm_out = tmp_path / "norm_subdir_out"
+            f_reg = create_synthetic_ttfont(
+                [ord("A"), ord("あ"), 0x4E02, 0x4E04],
+                family_name="Orphan Sans",
+                weight=400,
+            )
+            f_bold = create_synthetic_ttfont(
+                [ord("A"), ord("あ"), 0x4E02, 0x4E04],
+                family_name="Orphan Sans",
+                weight=700,
+            )
+            sub_r1 = slice_font(
+                f_reg,
+                norm_out,
+                config=SliceConfig(slices_subdir="slices"),
+                workers=1,
+            )
+            sub_r2 = slice_font(
+                f_reg,
+                norm_out,
+                config=SliceConfig(slices_subdir="  ./slices/ "),
+                workers=1,
+            )
+            self.assertFalse(sub_r1.cached)
+            self.assertTrue(sub_r2.cached)
+
+            # 3. Orphan .woff2 slice pruning across chunk size, locale, variants, filename_hash, and empty cmap
+            orphan_out = tmp_path / "orphan_out"
+
+            # 3a. Shrinking rare_chunk_size (2 rare chunks -> 1 rare chunk)
+            res_many = slice_font(
+                f_reg,
+                orphan_out,
+                config=SliceConfig(locale="jp", rare_chunk_size=1),
+                workers=1,
+            )
+            self.assertIn(
+                "kanji-rare-02", [bf.spec.slice_id for bf in res_many.built_files]
+            )
+            res_fewer = slice_font(
+                f_reg,
+                orphan_out,
+                config=SliceConfig(locale="jp", rare_chunk_size=250),
+                workers=1,
+            )
+            self.assertEqual(
+                sorted(p.name for p in res_fewer.slices_dir.glob("*.woff2")),
+                sorted(bf.filename for bf in res_fewer.built_files),
+            )
+
+            # 3b. Changing locale ("jp" -> "sc") prunes kana-core / kanji-rare slices
+            res_sc = slice_font(
+                f_reg,
+                orphan_out,
+                config=SliceConfig(locale="sc"),
+                workers=1,
+            )
+            self.assertEqual(
+                sorted(p.name for p in res_sc.slices_dir.glob("*.woff2")),
+                sorted(bf.filename for bf in res_sc.built_files),
+            )
+
+            # 3c. Changing bundled variants ([Regular, Bold] -> [Regular]) prunes -400- and -700- slices
+            res_multi = slice_fonts([f_reg, f_bold], orphan_out, workers=1)
+            self.assertTrue(any("-700-" in bf.filename for bf in res_multi.built_files))
+            res_single = slice_font(f_reg, orphan_out, workers=1)
+            self.assertEqual(
+                sorted(p.name for p in res_single.slices_dir.glob("*.woff2")),
+                sorted(bf.filename for bf in res_single.built_files),
+            )
+
+            # 3d. Toggling filename_hash (True -> False -> True) prunes hashed and unhashed slices
+            res_nohash = slice_font(
+                f_reg,
+                orphan_out,
+                config=SliceConfig(filename_hash=False),
+                workers=1,
+            )
+            self.assertEqual(
+                sorted(p.name for p in res_nohash.slices_dir.glob("*.woff2")),
+                sorted(bf.filename for bf in res_nohash.built_files),
+            )
+            res_rehash = slice_font(
+                f_reg,
+                orphan_out,
+                config=SliceConfig(filename_hash=True),
+                workers=1,
+            )
+            self.assertEqual(
+                sorted(p.name for p in res_rehash.slices_dir.glob("*.woff2")),
+                sorted(bf.filename for bf in res_rehash.built_files),
+            )
+
+            # 3e. Rebuilding an empty-cmap font with the same slug prunes all previous slices
+            res_now_empty = slice_font(
+                fb_empty.font,
+                orphan_out,
+                family_name="Orphan Sans",
+                workers=1,
+            )
+            self.assertEqual(res_now_empty.built_files, [])
+            self.assertEqual(list(res_now_empty.slices_dir.glob("*.woff2")), [])
+
+            # 3f. Shared flat slices_dir preserves other font families sharing a slug prefix
+            flat_dir = tmp_path / "flat_shared"
+            f_base = create_synthetic_ttfont([ord("A")], family_name="Noto Sans")
+            f_jp = create_synthetic_ttfont(
+                [ord("A"), ord("あ")], family_name="Noto Sans JP"
+            )
+            f_cond_fam = create_synthetic_ttfont(
+                [ord("A")], family_name="Noto Sans Condensed"
+            )
+            flat_cfg = SliceConfig(slices_subdir=".")
+            r_jp = slice_font(f_jp, flat_dir, config=flat_cfg, workers=1)
+            r_cond_fam = slice_font(f_cond_fam, flat_dir, config=flat_cfg, workers=1)
+            r_base_1 = slice_font(
+                f_base,
+                flat_dir,
+                config=SliceConfig(slices_subdir=".", filename_hash=False),
+                workers=1,
+            )
+            self.assertTrue(all(bf.path.is_file() for bf in r_base_1.built_files))
+            r_base_2 = slice_font(f_base, flat_dir, config=flat_cfg, workers=1)
+            self.assertTrue(all(bf.path.is_file() for bf in r_jp.built_files))
+            self.assertTrue(all(bf.path.is_file() for bf in r_cond_fam.built_files))
+            self.assertTrue(all(bf.path.is_file() for bf in r_base_2.built_files))
+            self.assertTrue(all(not bf.path.exists() for bf in r_base_1.built_files))
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -2,12 +2,21 @@
 Configuration and specification types for dynamic `unicode-range` slicing.
 """
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
 from stixis import canonicalize
 
 from cleome._plan.locale import SUPPORTED_LOCALES
+
+
+def _require_positive_int(val: object, field_name: str) -> int:
+    if isinstance(val, bool) or not isinstance(val, int):
+        raise TypeError(f"{field_name} must be an integer, got {type(val).__name__}")
+    if val <= 0:
+        raise ValueError(f"{field_name} must be > 0, got {val}")
+    return val
 
 
 @dataclass(frozen=True, slots=True)
@@ -50,42 +59,70 @@ class SliceConfig:
                 f"Unsupported locale {self.locale!r}; expected one of {SUPPORTED_LOCALES}"
             )
         object.__setattr__(self, "locale", norm_locale)
-        for chunk_size, num_chunks in self.freq_chunks:
+        if isinstance(self.freq_chunks, (str, bytes)) or not isinstance(
+            self.freq_chunks, Sequence
+        ):
+            raise TypeError(
+                f"freq_chunks must be a sequence of (chunk_size, num_chunks) pairs, got {type(self.freq_chunks).__name__}"
+            )
+        norm_freq_chunks: list[tuple[int, int]] = []
+        for entry in self.freq_chunks:
+            if (
+                isinstance(entry, (str, bytes))
+                or not isinstance(entry, Sequence)
+                or len(entry) != 2
+            ):
+                raise ValueError(
+                    f"freq_chunks entries must be 2-element (chunk_size, num_chunks) pairs, got {entry!r}"
+                )
+            chunk_size, num_chunks = entry[0], entry[1]
+            if (
+                isinstance(chunk_size, bool)
+                or not isinstance(chunk_size, int)
+                or isinstance(num_chunks, bool)
+                or not isinstance(num_chunks, int)
+            ):
+                raise TypeError(
+                    f"freq_chunks entries must contain integers, got {entry!r}"
+                )
             if chunk_size <= 0 or num_chunks <= 0:
                 raise ValueError(
                     f"freq_chunks entries must have positive (chunk_size, num_chunks), got {(chunk_size, num_chunks)}"
                 )
-        if self.freq_tail_chunk_size <= 0:
-            raise ValueError(
-                f"freq_tail_chunk_size must be > 0, got {self.freq_tail_chunk_size}"
-            )
-        if self.rare_chunk_size <= 0:
-            raise ValueError(f"rare_chunk_size must be > 0, got {self.rare_chunk_size}")
-        if self.symbols_ext_chunk_size <= 0:
-            raise ValueError(
-                f"symbols_ext_chunk_size must be > 0, got {self.symbols_ext_chunk_size}"
-            )
+            norm_freq_chunks.append((chunk_size, num_chunks))
+        object.__setattr__(self, "freq_chunks", tuple(norm_freq_chunks))
+        _require_positive_int(self.freq_tail_chunk_size, "freq_tail_chunk_size")
+        _require_positive_int(self.rare_chunk_size, "rare_chunk_size")
+        _require_positive_int(self.symbols_ext_chunk_size, "symbols_ext_chunk_size")
         cleaned_features = tuple(
             t.strip() for t in self.layout_features if isinstance(t, str) and t.strip()
         )
         if not cleaned_features:
             raise ValueError("layout_features cannot be empty")
         object.__setattr__(self, "layout_features", cleaned_features)
+        if not isinstance(self.slices_subdir, str):
+            raise TypeError(
+                f"slices_subdir must be a string, got {type(self.slices_subdir).__name__}"
+            )
         subdir_str = self.slices_subdir.strip()
         if not subdir_str:
             raise ValueError("slices_subdir cannot be empty")
-        subdir_norm = subdir_str.rstrip("/") or "."
-        subdir_path = Path(subdir_norm)
+        raw_parts = [p for p in subdir_str.split("/") if p]
+        subdir_probe = Path(subdir_str)
         if (
             "\\" in subdir_str
             or "\x00" in subdir_str
             or subdir_str.startswith("/")
-            or subdir_path.is_absolute()
-            or ".." in subdir_path.parts
+            or subdir_probe.is_absolute()
+            or bool(subdir_probe.drive)
+            or ".." in raw_parts
         ):
             raise ValueError(
                 f"slices_subdir must be a relative path inside out_dir without '..', got {self.slices_subdir!r}"
             )
+        clean_parts = [p for p in raw_parts if p != "."]
+        subdir_norm = "/".join(clean_parts) if clean_parts else "."
+        object.__setattr__(self, "slices_subdir", subdir_norm)
         display_str = self.font_display.strip()
         if not display_str:
             raise ValueError("font_display cannot be empty")
