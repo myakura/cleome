@@ -4,6 +4,7 @@ descriptor extraction for Cleome.
 """
 
 import hashlib
+import math
 import re
 import unicodedata
 from collections.abc import Sequence
@@ -30,6 +31,154 @@ OS2_WIDTH_CLASS_TO_CSS: frozendict[int, str] = frozendict(
 )
 
 _CLEOME_CSS_OPTIONS = SerializationOptions.cleome()
+
+_CSS_WIDTH_KEYWORD_PCT: frozendict[str, float] = frozendict(
+    {
+        "ultra-condensed": 50.0,
+        "extra-condensed": 62.5,
+        "condensed": 75.0,
+        "semi-condensed": 87.5,
+        "normal": 100.0,
+        "semi-expanded": 112.5,
+        "expanded": 125.0,
+        "extra-expanded": 150.0,
+        "ultra-expanded": 200.0,
+    }
+)
+
+
+def _reject_multi_font_axis_overrides(
+    font_count: int,
+    *,
+    weight: str | None = None,
+    stretch: str | None = None,
+    style: str | None = None,
+) -> None:
+    """Reject scalar single-font axis overrides when bundling multiple input fonts."""
+    if font_count <= 1:
+        return
+    overridden = [
+        name
+        for name, val in (("weight", weight), ("stretch", stretch), ("style", style))
+        if val is not None
+    ]
+    if overridden:
+        names = ", ".join(overridden)
+        raise ValueError(
+            f"Cannot apply single-font descriptor override ({names}) across {font_count} input fonts; "
+            "omit weight/stretch/style overrides to use per-font OpenType detection, or slice each font separately."
+        )
+
+
+def _fmt_norm_num(val: float) -> str:
+    rounded = round(val, 6)
+    if abs(rounded - round(rounded)) < 1e-6:
+        return str(round(rounded))
+    return f"{rounded:.6f}".rstrip("0").rstrip(".")
+
+
+def _fmt_suffix_num(num_str: str) -> str:
+    if num_str.startswith("-"):
+        return "neg" + num_str[1:].replace(".", "p")
+    return num_str.replace(".", "p")
+
+
+def _parse_weight_token(tok: str) -> float:
+    low = tok.lower()
+    if low == "normal":
+        return 400.0
+    if low == "bold":
+        return 700.0
+    return float(low)
+
+
+def _normalize_weight_descriptor(weight_css: str) -> tuple[str, ...]:
+    cleaned = _validate_css_descriptor(weight_css, "font-weight").strip().lower()
+    if cleaned == "auto":
+        return ("auto",)
+    vals = [_parse_weight_token(t) for t in cleaned.split()]
+    lo_s, hi_s = _fmt_norm_num(min(vals)), _fmt_norm_num(max(vals))
+    if lo_s == hi_s:
+        return ("scalar", lo_s)
+    return ("range", lo_s, hi_s)
+
+
+def _format_weight_suffix_token(weight_key: tuple[str, ...]) -> str:
+    if weight_key[0] == "auto":
+        return "auto"
+    if weight_key[0] == "scalar":
+        return _fmt_suffix_num(weight_key[1])
+    return f"{_fmt_suffix_num(weight_key[1])}_{_fmt_suffix_num(weight_key[2])}"
+
+
+def _parse_stretch_token(tok: str) -> float:
+    low = tok.lower()
+    if low in _CSS_WIDTH_KEYWORD_PCT:
+        return _CSS_WIDTH_KEYWORD_PCT[low]
+    if low.endswith("%"):
+        return float(low[:-1])
+    return float(low)
+
+
+def _normalize_stretch_descriptor(stretch_css: str | None) -> tuple[str, ...]:
+    if stretch_css is None:
+        return ("scalar", "100")
+    cleaned = _validate_css_descriptor(stretch_css, "font-stretch").strip().lower()
+    if cleaned == "auto":
+        return ("auto",)
+    vals = [_parse_stretch_token(t) for t in cleaned.split()]
+    lo_s, hi_s = _fmt_norm_num(min(vals)), _fmt_norm_num(max(vals))
+    if lo_s == hi_s:
+        return ("scalar", lo_s)
+    return ("range", lo_s, hi_s)
+
+
+def _format_stretch_suffix_token(stretch_key: tuple[str, ...]) -> str:
+    if stretch_key[0] == "auto":
+        return "wauto"
+    if stretch_key[0] == "scalar":
+        return f"w{_fmt_suffix_num(stretch_key[1])}"
+    return f"w{_fmt_suffix_num(stretch_key[1])}_{_fmt_suffix_num(stretch_key[2])}"
+
+
+def _parse_angle_deg(tok: str) -> float:
+    low = tok.strip().lower()
+    if low.endswith("grad"):
+        return float(low[:-4]) * 0.9
+    if low.endswith("rad"):
+        return float(low[:-3]) * (180.0 / math.pi)
+    if low.endswith("turn"):
+        return float(low[:-4]) * 360.0
+    if low.endswith("deg"):
+        return float(low[:-3])
+    return float(low)
+
+
+def _normalize_style_descriptor(style_css: str) -> tuple[str, ...]:
+    cleaned = _validate_css_descriptor(style_css, "font-style").strip().lower()
+    if cleaned in ("normal", "italic", "oblique", "left", "right", "auto"):
+        return (cleaned,)
+    if cleaned.startswith("oblique") and len(cleaned) > 7 and cleaned[7].isspace():
+        degs = [_parse_angle_deg(t) for t in cleaned[7:].split()]
+        lo_s, hi_s = _fmt_norm_num(min(degs)), _fmt_norm_num(max(degs))
+        if lo_s == "0" and hi_s == "0":
+            return ("normal",)
+        if lo_s == hi_s:
+            return ("oblique-scalar", lo_s)
+        return ("oblique-range", lo_s, hi_s)
+    return (cleaned,)
+
+
+def _format_style_suffix_token(style_key: tuple[str, ...]) -> str:
+    kind = style_key[0]
+    if kind == "oblique-scalar":
+        return f"oblique_{_fmt_suffix_num(style_key[1])}deg"
+    if kind == "oblique-range":
+        return (
+            f"oblique_{_fmt_suffix_num(style_key[1])}deg_"
+            f"{_fmt_suffix_num(style_key[2])}deg"
+        )
+    return kind
 
 
 def _validate_css_descriptor(val: str, field_name: str) -> str:
@@ -313,7 +462,7 @@ def validate_and_compute_variant_suffixes(
     """
     Validate that multiple input fonts can be safely bundled into a single `@font-face`
     stylesheet without silent family mismatches or duplicate `(weight, stretch, style)` descriptors,
-    and return collision-free filename suffixes (`400`, `700`, `75-400`, `400-italic`, etc.).
+    and return collision-free filename suffixes (`400`, `700`, `w75-400`, `w75_100-400`, `400-italic`, etc.).
     """
     if len(raw_metas) <= 1:
         return [m.variant_suffix for m in raw_metas]
@@ -325,40 +474,58 @@ def validate_and_compute_variant_suffixes(
             "Slice each family separately, or pass `--family` / `family_name=...` explicitly if unifying them."
         )
 
-    seen_descriptors: set[tuple[str, str, str]] = set()
+    normalized_axes: list[
+        tuple[tuple[str, ...], tuple[str, ...], tuple[tuple[str, ...], ...]]
+    ] = []
+    seen_descriptors: set[tuple[tuple[str, ...], tuple[str, ...], tuple[str, ...]]] = (
+        set()
+    )
     for m in raw_metas:
-        for st in m.styles_css:
-            desc_key = (m.weight_css, m.stretch_css or "100%", st)
+        w_key = _normalize_weight_descriptor(m.weight_css)
+        s_key = _normalize_stretch_descriptor(m.stretch_css)
+        raw_styles = m.styles_css or (m.style_css,)
+        st_keys = tuple(
+            dict.fromkeys(_normalize_style_descriptor(st) for st in raw_styles)
+        )
+        for st_raw, st_key in zip(
+            raw_styles, (_normalize_style_descriptor(s) for s in raw_styles)
+        ):
+            desc_key = (w_key, s_key, st_key)
             if desc_key in seen_descriptors:
                 raise ValueError(
                     f"Duplicate @font-face descriptors across input fonts: "
-                    f"weight={m.weight_css!r}, stretch={m.stretch_css or 'normal'!r}, style={st!r}. "
+                    f"weight={m.weight_css!r}, stretch={m.stretch_css or 'normal'!r}, style={st_raw!r}. "
                     "Each font in a multi-file bundle must have a unique (weight, stretch, style) combination."
                 )
-            seen_descriptors.add(desc_key)
+        for st_key in st_keys:
+            seen_descriptors.add((w_key, s_key, st_key))
+        normalized_axes.append((w_key, s_key, st_keys))
 
-    has_multiple_styles = len({m.styles_css for m in raw_metas}) > 1
-    has_multiple_stretches = len({m.stretch_css for m in raw_metas}) > 1
+    has_multiple_stretches = len({s_key for _, s_key, _ in normalized_axes}) > 1
+    has_multiple_styles = len({st_keys for _, _, st_keys in normalized_axes}) > 1
 
     suffixes: list[str] = []
-    for m in raw_metas:
+    seen_suffixes: set[str] = set()
+    for m, (w_key, s_key, st_keys) in zip(raw_metas, normalized_axes):
         if m.variant_suffix:
             suf = m.variant_suffix
         else:
             parts: list[str] = []
             if has_multiple_stretches:
-                stretch_label = (
-                    (m.stretch_css or "100%")
-                    .replace("%", "")
-                    .replace(".", "_")
-                    .replace(" ", "-")
-                    .lower()
+                parts.append(_format_stretch_suffix_token(s_key))
+            parts.append(_format_weight_suffix_token(w_key))
+            non_normal_styles = [sk for sk in st_keys if sk != ("normal",)]
+            if has_multiple_styles and non_normal_styles:
+                parts.append(
+                    "-".join(_format_style_suffix_token(sk) for sk in non_normal_styles)
                 )
-                parts.append(f"w{stretch_label}")
-            parts.append(m.weight_css.replace(".", "_").replace(" ", "-"))
-            if has_multiple_styles and m.style_css != "normal":
-                parts.append(m.style_css.replace(".", "_").replace(" ", "-").lower())
             suf = "-".join(parts)
+        if suf in seen_suffixes:
+            raise ValueError(
+                f"Duplicate variant_suffix across input fonts: {suf!r}. "
+                "Each font in a multi-file bundle must produce a unique slice filename suffix."
+            )
+        seen_suffixes.add(suf)
         suffixes.append(suf)
     return suffixes
 

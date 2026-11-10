@@ -243,6 +243,32 @@ class TestSlicerAndLocales(unittest.TestCase):
             [s.slice_id for s in b2.union_plan], ["hanzi-freq-01", "cjk-core", "latin"]
         )
 
+        # Colliding planned slice filenames across variants in _prepare_font_bundle raise ValueError
+        m_dup_a = FontMetadata(
+            family_name="Custom Sans",
+            slug="custom-sans",
+            is_variable=False,
+            weight_css="400",
+            stretch_css=None,
+            style_css="normal",
+            variant_suffix="same",
+            codepoints=ascii_cps,
+        )
+        m_dup_b = FontMetadata(
+            family_name="Custom Sans",
+            slug="custom-sans",
+            is_variable=False,
+            weight_css="700",
+            stretch_css=None,
+            style_css="normal",
+            variant_suffix="same",
+            codepoints=ascii_cps,
+        )
+        with self.assertRaisesRegex(
+            ValueError, "Duplicate (variant_suffix|slice output path) across"
+        ):
+            _prepare_font_bundle([m_dup_a, m_dup_b], SliceConfig(locale="jp"))
+
     def test_korean_profile_cascade_shadowing_and_jamo_colocation(self) -> None:
         """
         Verify the Korean (`kr`) 4-tier profile:

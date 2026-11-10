@@ -6,6 +6,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass, replace
 
 from cleome._font.metadata import FontMetadata, validate_and_compute_variant_suffixes
+from cleome._names import _validate_filename_token
 from cleome._plan.builder import _resolve_locale, build_slice_plan
 from cleome._plan.config import SliceConfig, SliceSpec
 
@@ -78,6 +79,17 @@ def _prepare_font_bundle(
         [spec for spec, _ in _filter_active_slices(m, plan)]
         for m, plan in zip(metas, variant_plans)
     ]
+    seen_slice_paths: set[str] = set()
+    for m, active_plan in zip(metas, active_variant_plans):
+        for spec in active_plan:
+            fname = _validate_filename_token(
+                spec.filename(m.slug, m.variant_suffix), "slice filename"
+            )
+            if fname in seen_slice_paths:
+                raise ValueError(
+                    f"Duplicate slice output path across variants: {fname}"
+                )
+            seen_slice_paths.add(fname)
     union_plan = plan_cache.get(union_codepoints) or build_slice_plan(
         union_codepoints, config=resolved_config, family_name=unified_family
     )

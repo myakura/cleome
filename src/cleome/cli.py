@@ -17,6 +17,7 @@ from fontTools.ttLib import TTFont, TTLibError
 
 from cleome._font.metadata import (
     FontMetadata,
+    _reject_multi_font_axis_overrides,
     extract_font_metadata,
 )
 from cleome._plan.bundle import _prepare_font_bundle
@@ -72,6 +73,12 @@ def _load_cli_input_metas(
     args: argparse.Namespace, config: SliceConfig
 ) -> list[FontMetadata]:
     """Open input font files and extract `FontMetadata` with CLI overrides applied."""
+    _reject_multi_font_axis_overrides(
+        len(args.inputs),
+        weight=args.weight,
+        stretch=args.stretch,
+        style=args.style,
+    )
     metas: list[FontMetadata] = []
     for p in args.inputs:
         with TTFont(p, lazy=True, recalcTimestamp=False) as tt:
@@ -393,7 +400,20 @@ def _run_plan(args: argparse.Namespace, config: SliceConfig) -> int:
     except (ValueError, TTLibError, EOFError, struct.error, OSError) as exc:
         return _handle_cli_exception(exc, input_paths=args.inputs)
 
-    first = prepared.metas[0]
+    all_variable = all(m.is_variable for m in prepared.metas)
+    any_variable = any(m.is_variable for m in prepared.metas)
+    if all_variable:
+        top_is_variable: bool | None = True
+        font_type = "variable"
+        type_label = "Variable"
+    elif not any_variable:
+        top_is_variable = False
+        font_type = "static"
+        type_label = "Static"
+    else:
+        top_is_variable = None
+        font_type = "mixed"
+        type_label = "Mixed (Variable + Static)"
     resolved_loc = prepared.resolved_locale
 
     if args.json_output:
@@ -404,10 +424,12 @@ def _run_plan(args: argparse.Namespace, config: SliceConfig) -> int:
             "slug": prepared.slug,
             "locale": resolved_loc,
             "configured_locale": config.locale,
-            "is_variable": first.is_variable,
+            "is_variable": top_is_variable,
+            "font_type": font_type,
             "file_count": len(prepared.metas),
             "variants": [
                 {
+                    "is_variable": meta.is_variable,
                     "weight": meta.weight_css,
                     "stretch": meta.stretch_css or "normal",
                     "styles": list(meta.styles_css or (meta.style_css,)),
@@ -431,13 +453,12 @@ def _run_plan(args: argparse.Namespace, config: SliceConfig) -> int:
 
     print(f"Font Family : {prepared.family_name} (slug: {prepared.slug})")
     print(f"Locale      : {resolved_loc} (config: {config.locale})")
-    print(
-        f"Type        : {'Variable' if first.is_variable else 'Static'} ({len(prepared.metas)} file(s))"
-    )
+    print(f"Type        : {type_label} ({len(prepared.metas)} file(s))")
     for m, plan in zip(prepared.metas, prepared.variant_plans):
         style_label = " + ".join(m.styles_css or (m.style_css,))
+        var_label = "variable" if m.is_variable else "static"
         print(
-            f"Variant     : weight={m.weight_css}, stretch={m.stretch_css or 'normal'}, "
+            f"Variant     : type={var_label}, weight={m.weight_css}, stretch={m.stretch_css or 'normal'}, "
             f"style={style_label} | {len(m.codepoints):,d} chars -> {len(plan)} slices"
         )
         for tier_num, (sc, t_chars, t_ur_len) in _summarize_plan_tiers(plan).items():
