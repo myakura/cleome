@@ -45,8 +45,8 @@ if __name__ == "__main__":
         [0x3041, 0x3043], forbidden_sorted=[0x3042], max_gap=0x80
     )
     assert parse_unicode_range(ur_text) == {0x3041, 0x3043}
-    assert format_unicode_range([0x3041, 0x3043]) == "U+3041, U+3043"
-    assert format_unicode_range((0x3041, 0x3043)) == "U+3041-3043"
+    assert format_unicode_range([0x3041, 0x3042, 0x3044]) == "U+3041-3042, U+3044"
+    assert format_unicode_range((0x3041, 0x3044)) == "U+3041-3044"
 ```
 
 * `SliceConfig(locale="auto", freq_chunks=((200, 2), (80, 10)), freq_tail_chunk_size=70, rare_chunk_size=250, symbols_ext_chunk_size=350, layout_closure=True, layout_features=("*",), drop_tables=(), uvs_base_repair=True, slices_subdir="slices", url_prefix=None, font_display="swap", filename_hash=True)`. Frozen configuration dataclass validated in `__post_init__`. `locale` accepts any value in `SUPPORTED_LOCALES` (`"auto"`, `"jp"`, `"kr"`, `"sc"`, `"tc"`, `"hk"`). When `filename_hash=True` (default), each built `.woff2` filename includes an 8-character SHA-256 content digest (`<slug>(-<variant>)-<slice_id>-<hash8>.woff2`).
@@ -60,7 +60,7 @@ if __name__ == "__main__":
 * `generate_css(fonts_and_files, config=None, *, cache_key=None, out_digest=None, css_path=None, slices_dir=None) -> str`. Render the `@font-face` stylesheet using Stixis (`SerializationOptions.cleome()`).
 * `patch_uvs_missing_base_cmap(font) -> list[int]`. In-place helper that restores characters mapped in `cmap` Format 14 (UVS/IVS) that upstream fonts omitted from Format 4 or Format 12, prioritizing IVS (`U+E0100..U+E01EF`) over `VS1..VS16`.
 * `slugify_family(name) -> str`. Convert a font family name into a kebab-case filename slug.
-* `format_unicode_range(codepoints: set[int] | frozenset[int] | list[int] | tuple[int, int]) -> str`, `parse_unicode_range(ur_str: str) -> set[int]`, and `compact_unicode_range(sorted_target_cps: list[int], forbidden_sorted: list[int], max_gap: int = 0x80) -> str`. Format, parse, and compact CSS `unicode-range` strings without shadowing lower-priority slices. In `format_unicode_range`, a `set`, `frozenset`, or `list` (including a 2-element `list` like `[0x3041, 0x3043]`) is formatted as individual codepoints (`"U+3041, U+3043"`), whereas a 2-element `tuple[int, int]` like `(0x3041, 0x3043)` is formatted as an inclusive `(start, end)` interval (`"U+3041-3043"`). In `compact_unicode_range`, `max_gap` (`>= 0`) is the maximum codepoint difference `cp - prev` (`<= max_gap`) bridged when the open interval `(prev, cp)` contains no codepoints from `forbidden_sorted`; a negative `max_gap` raises `ValueError`.
+* `format_unicode_range(codepoints: set[int] | frozenset[int] | list[int] | tuple[int, int]) -> str`, `parse_unicode_range(ur_str: str) -> set[int]`, and `compact_unicode_range(sorted_target_cps: list[int], forbidden_sorted: list[int], max_gap: int = 0x80) -> str`. Format, parse, and compact CSS `unicode-range` strings without shadowing lower-priority slices. In `format_unicode_range`, a `set`, `frozenset`, or `list` of integer codepoints sorts, deduplicates, and coalesces contiguous runs without bridging gaps (`[0x3041, 0x3042, 0x3044]` -> `"U+3041-3042, U+3044"`), whereas a 2-element `tuple[int, int]` like `(0x3041, 0x3044)` formats an inclusive `(start, end)` interval (`"U+3041-3044"`); scalar non-collections or non-integer elements raise `TypeError`, and tuples whose length is not `2` raise `ValueError`. In `compact_unicode_range`, `max_gap` (`>= 0`) is the maximum codepoint difference `cp - prev` (`<= max_gap`) bridged when the open interval `(prev, cp)` contains no codepoints from `forbidden_sorted` (so `max_gap=0` emits discrete `U+XXXX` tokens without merging adjacent codepoints, and `max_gap=1` merges only contiguous runs); a non-integer or `bool` `max_gap` raises `TypeError` and a negative `max_gap` raises `ValueError`.
 
 ## Slicing tiers and runtime rules
 
