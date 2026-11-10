@@ -191,7 +191,7 @@ Without `Access-Control-Allow-Origin`, browsers reject cross-origin `@font-face`
 
 ### Cache invalidation and content hashes (`Cache-Control`)
 
-When content hashes are enabled (the default; see section 1 and [`skills/cleome/SKILL.md`](../skills/cleome/SKILL.md) for `SliceConfig.filename_hash`), Cleome removes superseded `<slug>(-<variant>)-<slice_id>-[0-9a-f]{8}.woff2` files on rebuild:
+When content hashes are enabled (the default; see section 1 and [`skills/cleome/SKILL.md`](../skills/cleome/SKILL.md) for `SliceConfig.filename_hash`), Cleome removes superseded or orphaned `<slug>(-<variant>)-<slice_id>(-[0-9a-f]{8}).woff2` files belonging to `<slug>` on rebuild:
 
 1. **Serve `.woff2` slices with immutable caching**:
 
@@ -199,6 +199,6 @@ When content hashes are enabled (the default; see section 1 and [`skills/cleome/
    Cache-Control: public, max-age=31536000, immutable
    ```
 
-2. **When updating the font or slicing configuration**, re-run `cleome build` into the same directory. Unchanged slices (such as `latin` or `kana-core`) keep their filename and stay cached in browsers and CDN edge nodes, while slices whose `.woff2` bytes changed get a new `<hash8>` filename in `<slug>.css`. Use one slices directory per CSS file: because Cleome prunes superseded `<slug>(-<variant>)-<slice_id>-<hash8>.woff2` files in `slices_dir` after writing the stylesheet, running two builds with the same slug and different `--css-name` or subsetting options into a shared `slices_dir` will delete the other stylesheet's slices.
+2. **When updating the font or slicing configuration**, re-run `cleome build` into the same directory. Unchanged slices (such as `latin` or `kana-core`) keep their filename and stay cached in browsers and CDN edge nodes, while slices whose `.woff2` bytes changed get a new `<hash8>` filename in `<slug>.css` and superseded or orphaned slices for `<slug>` are pruned. Use one slices directory per CSS file per slug: because Cleome prunes superseded `<slug>(-<variant>)-<slice_id>(-<hash8>).woff2` files in `slices_dir` after writing the stylesheet, running two builds with the same slug and different `--css-name` or subsetting options into a shared `slices_dir` will delete the other stylesheet's slices.
 
 3. **When using `--no-filename-hash`**, include a version segment in your hosting directory path (such as `/fonts/source-han-sans-jp/v1/` to `/v2/`) whenever you set `Cache-Control: public, max-age=31536000, immutable` so `<slug>.css` and all `.woff2` slices rotate together.
