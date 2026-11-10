@@ -28,6 +28,7 @@ from cleome import (
     build_slice_plan,
     compact_unicode_range,
     detect_font_locale,
+    format_unicode_range,
     parse_unicode_range,
     slice_font,
 )
@@ -475,6 +476,59 @@ class TestSlicerAndLocales(unittest.TestCase):
                     for info, pos in zip(hb_buf.glyph_infos, hb_buf.glyph_positions)
                 ]
                 self.assertEqual(shaped, [(lig_cc.LigGlyph, 875)])
+
+    def test_unicode_range_formatting_and_compaction_validation(self) -> None:
+        """
+        Verify `compact_unicode_range` honors `cp - prev <= max_gap` at `max_gap=0` vs `max_gap=1`,
+        and `format_unicode_range` validates collection types, 2-element `(start, end)` tuples,
+        and integer codepoints.
+        """
+        # compact_unicode_range: cp - prev <= max_gap
+        self.assertEqual(
+            compact_unicode_range([0x41, 0x42], [], max_gap=0), "U+41, U+42"
+        )
+        self.assertEqual(
+            compact_unicode_range([0x41, 0x41, 0x42], [], max_gap=0), "U+41, U+42"
+        )
+        self.assertEqual(compact_unicode_range([0x41, 0x42], [], max_gap=1), "U+41-42")
+        self.assertEqual(
+            compact_unicode_range([0x41, 0x43], [], max_gap=1), "U+41, U+43"
+        )
+        self.assertEqual(compact_unicode_range([0x41, 0x43], [], max_gap=2), "U+41-43")
+        self.assertEqual(compact_unicode_range([], [], max_gap=0), "")
+        for bad_gap in (False, True, "1"):
+            with self.assertRaises(TypeError):
+                compact_unicode_range([0x41, 0x42], [], max_gap=bad_gap)  # type: ignore[arg-type]
+
+        # format_unicode_range: valid sets, lists, and 2-tuples
+        self.assertEqual(format_unicode_range(set()), "")
+        self.assertEqual(format_unicode_range(frozenset()), "")
+        self.assertEqual(format_unicode_range([]), "")
+        self.assertEqual(
+            format_unicode_range([0x3041, 0x3042, 0x3044]), "U+3041-3042, U+3044"
+        )
+        self.assertEqual(format_unicode_range([0x3041, 0x3043]), "U+3041, U+3043")
+        self.assertEqual(format_unicode_range((0x3041, 0x3044)), "U+3041-3044")
+        self.assertEqual(format_unicode_range((0, 0)), "U+0")
+
+        # format_unicode_range: reject scalar int/bool/str and non-int elements
+        for scalar_or_str in (0, 0x41, False, True, "U+41", None):
+            with self.assertRaises(TypeError):
+                format_unicode_range(scalar_or_str)  # type: ignore[arg-type]
+        for bad_elem_seq in (
+            [True],
+            ["U+41"],
+            [(0x41, 0x42)],
+            (True, 0x3043),
+            ("a", "b"),
+        ):
+            with self.assertRaises(TypeError):
+                format_unicode_range(bad_elem_seq)  # type: ignore[arg-type]
+
+        # format_unicode_range: reject tuples whose length != 2 or reversed bounds
+        for bad_tuple in ((), (0x3041,), (0x3041, 0x3043, 0x3045), (0x3045, 0x3041)):
+            with self.assertRaises(ValueError):
+                format_unicode_range(bad_tuple)  # type: ignore[arg-type]
 
 
 if __name__ == "__main__":
