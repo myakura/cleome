@@ -13,11 +13,21 @@ def _uvs_selector_sort_key(
     return (0 if 0xE0100 <= sel <= 0xE01EF else 1, sel)
 
 
+def _is_unicode_base_subtable(table: object, fmt: int) -> bool:
+    is_uni = getattr(table, "isUnicode", None)
+    return (
+        getattr(table, "format", None) == fmt
+        and hasattr(table, "cmap")
+        and callable(is_uni)
+        and bool(is_uni())
+    )
+
+
 def _collect_uvs_missing_base_additions(font: TTFont) -> dict[int, str]:
     """
     Compute `{cp: glyph_name}` for base characters that exist in `cmap` Format 14 (UVS)
     with a concrete variant glyph (`gname is not None`), are absent from `getBestCmap()`,
-    and can be represented in at least one Format 4 or Format 12 subtable of `font`,
+    and can be represented in at least one Unicode Format 4 or Format 12 subtable of `font`,
     without mutating `font`.
     """
     if "cmap" not in font:
@@ -27,12 +37,8 @@ def _collect_uvs_missing_base_additions(font: TTFont) -> dict[int, str]:
         getattr(t, "format", None) == 14 and hasattr(t, "uvsDict") for t in tables
     ):
         return {}
-    has_format4 = any(
-        getattr(t, "format", None) == 4 and hasattr(t, "cmap") for t in tables
-    )
-    has_format12 = any(
-        getattr(t, "format", None) == 12 and hasattr(t, "cmap") for t in tables
-    )
+    has_format4 = any(_is_unicode_base_subtable(t, 4) for t in tables)
+    has_format12 = any(_is_unicode_base_subtable(t, 12) for t in tables)
     if not has_format4 and not has_format12:
         return {}
     best_cmap = font.getBestCmap() or {}
@@ -57,7 +63,7 @@ def patch_uvs_missing_base_cmap(font: TTFont) -> list[int]:
     """
     Detect characters that exist in cmap Format 14 (UVS) with a concrete variant glyph
     but were accidentally omitted from Format 4/12 (such as U+553E '唾' in Adobe SourceHanSansJP-VF.otf v2.005)
-    and patch them into the base cmap tables in-memory.
+    and patch them into the Unicode base cmap tables in-memory.
     Prioritizes IVS selectors (U+E0100..U+E01EF) in ascending order so U+E0100 (standard base form) always wins.
     """
     uvs_additions = _collect_uvs_missing_base_additions(font)
@@ -66,10 +72,13 @@ def patch_uvs_missing_base_cmap(font: TTFont) -> list[int]:
 
     patched: set[int] = set()
     for table in font["cmap"].tables:
-        if getattr(table, "format", None) in (4, 12) and hasattr(table, "cmap"):
+        if _is_unicode_base_subtable(table, 4):
             for cp, gname in uvs_additions.items():
-                if table.format == 4 and cp > 0xFFFF:
-                    continue
+                if cp <= 0xFFFF:
+                    table.cmap[cp] = gname
+                    patched.add(cp)
+        elif _is_unicode_base_subtable(table, 12):
+            for cp, gname in uvs_additions.items():
                 table.cmap[cp] = gname
                 patched.add(cp)
     return sorted(patched)

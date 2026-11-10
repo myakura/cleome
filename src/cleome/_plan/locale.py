@@ -4,6 +4,7 @@ Unicode character classification predicates and CJK locale auto-detection
 """
 
 import re
+import unicodedata
 
 from cleome._plan.data.kanji_freq import KANJI_FREQ_RANK
 from cleome._plan.data.sc_freq import SC_HANZI_FREQ_RANK
@@ -153,6 +154,10 @@ def is_tier2_symbols_ui(cp: int) -> bool:
     )
 
 
+_CAMEL_TOKEN_RE = re.compile(r"[A-Z]+(?=[A-Z][a-z]|\d|$|[^a-zA-Z0-9])|[A-Z]?[a-z]+|\d+")
+_CONCAT_REGION_RE = re.compile(r"(?:cjk|hw)(jp|kr|sc|tc|hk)(?=$|[^a-z])")
+
+
 def detect_font_locale(codepoints: CodepointSet, family_name: str = "") -> str:
     """
     Detect the optimal CJK slicing profile (`"jp"`, `"kr"`, `"sc"`, `"tc"`, or `"hk"`)
@@ -160,8 +165,14 @@ def detect_font_locale(codepoints: CodepointSet, family_name: str = "") -> str:
     Defaults to `"jp"` when ambiguous or for Japanese/Western charsets.
     """
     if family_name:
-        lower_name = family_name.lower()
-        tokens = set(re.findall(r"[a-z0-9]+", lower_name))
+        norm_name = unicodedata.normalize("NFKC", family_name)
+        lower_name = norm_name.lower()
+        camel_list = [t.lower() for t in _CAMEL_TOKEN_RE.findall(norm_name)]
+        tokens = (
+            set(re.findall(r"[a-z0-9]+", lower_name))
+            | set(camel_list)
+            | set(_CONCAT_REGION_RE.findall(lower_name))
+        )
         if tokens & {"jp", "jpn", "japanese", "kana", "mincho", "kaku", "maru"}:
             return "jp"
         if tokens & {
@@ -178,14 +189,75 @@ def detect_font_locale(codepoints: CodepointSet, family_name: str = "") -> str:
             "myeongjo",
         }:
             return "kr"
-        if tokens & {"sc", "chs", "cn", "zhs", "hans", "simplified"}:
+        if tokens & {
+            "sc",
+            "chs",
+            "cn",
+            "gb",
+            "gbk",
+            "gb2312",
+            "gb18030",
+            "zhs",
+            "hans",
+            "simplified",
+        }:
             return "sc"
-        if (tokens & {"hk", "hkg", "hongkong", "cantonese", "yue"}) or (
-            "hong kong" in lower_name
+        if (
+            (tokens & {"hk", "hkg", "hongkong", "cantonese", "yue"})
+            or ("hong kong" in lower_name)
+            or ("hong kong" in " ".join(camel_list))
         ):
             return "hk"
-        if tokens & {"tc", "cht", "tw", "zht", "hant", "traditional"}:
+        if tokens & {
+            "tc",
+            "cht",
+            "tw",
+            "cns",
+            "cns11643",
+            "big5",
+            "zht",
+            "hant",
+            "traditional",
+        }:
             return "tc"
+
+        name_cps = {ord(ch) for ch in norm_name}
+        if any(
+            (0xAC00 <= cp <= 0xD7A3)
+            or (0x1100 <= cp <= 0x11FF)
+            or (0x3130 <= cp <= 0x318F)
+            for cp in name_cps
+        ):
+            return "kr"
+        if any(
+            (0x3041 <= cp <= 0x309F)
+            or (0x30A1 <= cp <= 0x30FA)
+            or (0x31F0 <= cp <= 0x31FF)
+            for cp in name_cps
+        ) or any(kw in norm_name for kw in ("明朝", "角ゴ", "丸ゴ", "源ノ")):
+            return "jp"
+        if any(kw in norm_name for kw in ("香港", "粵", "粤")):
+            return "hk"
+        if any(
+            kw in norm_name
+            for kw in ("黑体", "宋体", "楷体", "圆体", "仿宋", "雅黑", "简体")
+        ):
+            return "sc"
+        if any(
+            kw in norm_name
+            for kw in ("黑體", "宋體", "明體", "楷體", "圓體", "繁體", "正體")
+        ) or any(0x3105 <= cp <= 0x312F for cp in name_cps):
+            return "tc"
+
+        name_sc = len(name_cps & _SC_ONLY_FREQ)
+        name_tc = len(name_cps & _TC_ONLY_FREQ)
+        name_jp = len(name_cps & _JP_ONLY_FREQ)
+        if name_sc > name_tc and name_sc > name_jp:
+            return "sc"
+        if name_tc > name_sc and name_tc > name_jp:
+            return "tc"
+        if name_jp > name_sc and name_jp > name_tc:
+            return "jp"
 
     cps = codepoints if isinstance(codepoints, (set, frozenset)) else set(codepoints)
     if not cps:

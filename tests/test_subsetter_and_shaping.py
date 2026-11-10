@@ -683,8 +683,8 @@ class TestSubsetterAndShaping(unittest.TestCase):
         # 3. Variable slnt (-12..0) vs Fixed slnt (-12..-12 and 0..0)
         tt_slnt_var = _make_vf_with_axes("Slnt VF", _make_axis("slnt", -12.0, 0.0, 0.0))
         meta_slnt_var = extract_font_metadata(tt_slnt_var)
-        self.assertEqual(meta_slnt_var.style_css, "oblique 0deg 12deg")
-        self.assertEqual(meta_slnt_var.styles_css, ("oblique 0deg 12deg",))
+        self.assertEqual(meta_slnt_var.style_css, "normal")
+        self.assertEqual(meta_slnt_var.styles_css, ("normal", "oblique 0deg 12deg"))
 
         tt_slnt_fix = _make_vf_with_axes(
             "Slnt Fixed", _make_axis("slnt", -12.0, -12.0, -12.0)
@@ -717,7 +717,7 @@ class TestSubsetterAndShaping(unittest.TestCase):
             ((0.0, 0.0, 0.0), (0.0, 0.0, 0.0), ("normal",)),
             ((0.0, 0.0, 0.0), (-12.0, -12.0, -12.0), ("oblique 12deg",)),
             ((0.0, 0.0, 0.0), (-12.0, -8.0, -5.0), ("oblique 5deg 12deg",)),
-            ((0.0, 0.0, 0.0), (-12.0, 0.0, 0.0), ("oblique 0deg 12deg",)),
+            ((0.0, 0.0, 0.0), (-12.0, 0.0, 0.0), ("normal", "oblique 0deg 12deg")),
             ((1.0, 1.0, 1.0), (0.0, 0.0, 0.0), ("italic",)),
             ((1.0, 1.0, 1.0), (-12.0, -12.0, -12.0), ("italic", "oblique 12deg")),
             ((1.0, 1.0, 1.0), (-12.0, 0.0, 0.0), ("italic", "oblique 0deg 12deg")),
@@ -758,6 +758,13 @@ class TestSubsetterAndShaping(unittest.TestCase):
             self.assertEqual(res_both.css_text.count("font-style: italic;"), 3)
             self.assertEqual(
                 res_both.css_text.count("font-style: oblique 0deg 12deg;"), 3
+            )
+
+            res_slnt = slice_font(tt_slnt_var, out_dir=Path(tmp) / "slnt_vf", workers=1)
+            self.assertEqual(len(res_slnt.built_files), 3)
+            self.assertEqual(res_slnt.css_text.count("font-style: normal;"), 3)
+            self.assertEqual(
+                res_slnt.css_text.count("font-style: oblique 0deg 12deg;"), 3
             )
 
             # Pairing an upright font (ital=0, slnt=0) with a fixed oblique font (ital=0, slnt=-12)
@@ -1507,6 +1514,111 @@ class TestSubsetterAndShaping(unittest.TestCase):
                 "export_woff2_slices must prune superseded hashed slice immediately",
             )
             self.assertTrue(v2_by_id["kanji-rare-01"].path.is_file())
+
+    def test_metadata_oblique_ucs4_slug_and_non_unicode_cmap_uvs(self) -> None:
+        """
+        Issue 54 verification:
+        1. Static fonts with `OS/2.fsSelection` bit 9 (`0x0200`, `OBLIQUE`) emit `("oblique",)`
+           regardless of `post.italicAngle` or co-set `ITALIC` bit 0 (`0x0201`).
+        2. Windows UCS-4 `(3, 10, 0x0409)` `name` records are checked before legacy Mac `(1, 0, 0)`.
+        3. `slugify_family` preserves ASCII slugs while producing distinct deterministic ASCII-safe
+           slugs for CJK/non-ASCII family names.
+        4. `patch_uvs_missing_base_cmap` and `_collect_uvs_missing_base_additions` only inspect/mutate
+           Unicode `cmap` subtables (`table.isUnicode()`), leaving Macintosh Roman `(1, 0)` untouched.
+        """
+        from fontTools.fontBuilder import FontBuilder
+        from fontTools.ttLib.tables._g_l_y_f import Glyph
+        from fontTools.ttLib.tables._n_a_m_e import table__n_a_m_e
+
+        from cleome import patch_uvs_missing_base_cmap, slugify_family
+
+        # 1. Static OS/2.fsSelection bit 9 (OBLIQUE)
+        for fs_sel, angle in ((0x0200, 0.0), (0x0200, -12.0), (0x0201, -12.0)):
+            fb_obl = FontBuilder(1000, isTTF=True)
+            fb_obl.setupGlyphOrder([".notdef", "A"])
+            fb_obl.setupCharacterMap({0x41: "A"})
+            fb_obl.setupGlyf({".notdef": Glyph(), "A": Glyph()})
+            fb_obl.setupHorizontalMetrics({".notdef": (500, 0), "A": (500, 0)})
+            fb_obl.setupHorizontalHeader(ascent=800, descent=-200)
+            fb_obl.setupNameTable({"familyName": "TestOblique", "styleName": "Oblique"})
+            fb_obl.setupOS2(fsSelection=fs_sel)
+            fb_obl.setupPost(italicAngle=angle)
+            desc = extract_font_face_descriptors(fb_obl.font)
+            self.assertEqual(desc.styles_css, ("oblique",))
+            self.assertEqual(desc.style_css, "oblique")
+
+        # 2. Windows UCS-4 (3, 10, 0x0409) preferred over Mac Roman (1, 0, 0)
+        tt_ucs4 = create_synthetic_ttfont([ord("A")], family_name="Fallback")
+        nt = table__n_a_m_e()
+        nt.names = []
+        nt.setName("Legacy Mac Name", 1, 1, 0, 0)
+        nt.setName("Win UCS4 Sans", 1, 3, 10, 0x0409)
+        tt_ucs4["name"] = nt
+        self.assertEqual(
+            extract_font_face_descriptors(tt_ucs4).family_name, "Win UCS4 Sans"
+        )
+
+        # 3. slugify_family: ASCII preserved, CJK/non-ASCII distinct and deterministic
+        self.assertEqual(slugify_family("GenSou Sans JP"), "gensou-sans-jp")
+        self.assertEqual(slugify_family("My Font®"), "my-font")
+        self.assertEqual(slugify_family("Café Sans"), "cafe-sans")
+        self.assertEqual(slugify_family("   "), "font")
+        self.assertEqual(slugify_family("---"), "font")
+
+        cjk_names = ("源ノ角ゴシック", "源ノ明朝", "思源黑体", "思源宋體", "본고딕")
+        cjk_slugs = [slugify_family(n) for n in cjk_names]
+        self.assertEqual(len(set(cjk_slugs)), len(cjk_names))
+        for n, slug_val in zip(cjk_names, cjk_slugs):
+            self.assertNotEqual(slug_val, "font")
+            self.assertRegex(slug_val, r"^font-[0-9a-f]{8}$")
+            self.assertEqual(slugify_family(n), slug_val)
+
+        mixed_a = slugify_family("源ノ角ゴシック JP")
+        mixed_b = slugify_family("源ノ明朝 JP")
+        self.assertNotEqual(mixed_a, mixed_b)
+        self.assertRegex(mixed_a, r"^jp-[0-9a-f]{8}$")
+        self.assertRegex(mixed_b, r"^jp-[0-9a-f]{8}$")
+
+        # 4. patch_uvs_missing_base_cmap: preserve non-Unicode Mac Roman (1, 0) subtable
+        fb_mac = FontBuilder(1000, isTTF=True)
+        fb_mac.setupGlyphOrder([".notdef", "A", "uni553E"])
+        fb_mac.setupCharacterMap({0x41: "A"})
+        fb_mac.setupGlyf({".notdef": Glyph(), "A": Glyph(), "uni553E": Glyph()})
+        fb_mac.setupHorizontalMetrics(
+            {".notdef": (500, 0), "A": (500, 0), "uni553E": (1000, 0)}
+        )
+        fb_mac.setupHorizontalHeader(ascent=800, descent=-200)
+        fb_mac.setupNameTable({"familyName": "MacUvsTest", "styleName": "Regular"})
+        fb_mac.setupOS2()
+        fb_mac.setupPost()
+
+        mac_sub = CmapSubtable.newSubtable(4)
+        mac_sub.platformID, mac_sub.platEncID, mac_sub.language = 1, 0, 0
+        mac_sub.cmap = {0x41: "A"}
+        uvs_sub = CmapSubtable.newSubtable(14)
+        uvs_sub.platformID, uvs_sub.platEncID, uvs_sub.language = 0, 5, 0
+        uvs_sub.uvsDict = {0xE0100: [(0x553E, "uni553E")]}
+        fb_mac.font["cmap"].tables.extend([mac_sub, uvs_sub])
+
+        patched = patch_uvs_missing_base_cmap(fb_mac.font)
+        self.assertEqual(patched, [0x553E])
+        self.assertIn(0x553E, fb_mac.font.getBestCmap())
+        self.assertNotIn(0x553E, mac_sub.cmap)
+        self.assertEqual(mac_sub.cmap, {0x41: "A"})
+
+        # Font with ONLY Mac Roman (1, 0) + UVS (0, 5) has no Unicode base subtable -> returns []
+        fb_mac_only = FontBuilder(1000, isTTF=True)
+        fb_mac_only.setupGlyphOrder([".notdef", "A"])
+        fb_mac_only.setupCharacterMap({0x41: "A"})
+        mac_only_sub = CmapSubtable.newSubtable(4)
+        mac_only_sub.platformID, mac_only_sub.platEncID, mac_only_sub.language = 1, 0, 0
+        mac_only_sub.cmap = {0x41: "A"}
+        fb_mac_only.font["cmap"].tables = [mac_only_sub, copy.deepcopy(uvs_sub)]
+        self.assertEqual(
+            extract_font_metadata(fb_mac_only.font).patched_uvs_codepoints, ()
+        )
+        self.assertEqual(patch_uvs_missing_base_cmap(fb_mac_only.font), [])
+        self.assertNotIn(0x553E, mac_only_sub.cmap)
 
 
 if __name__ == "__main__":

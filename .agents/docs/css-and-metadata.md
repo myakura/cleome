@@ -4,8 +4,8 @@ Editing rules for [`cleome/_font/metadata.py`](../../src/cleome/_font/metadata.p
 
 ## Variable and static axis mapping
 
-* Extract `font-weight`, `font-stretch`, and `font-style` from `fvar` (`wght`, `wdth`, `ital`, `slnt`) for variable fonts and from `OS/2` and `post` for static fonts (`cleome/_font/metadata.py`).
-* In `generate_css` (`cleome/_output/css.py`), emit `font-style: normal` only when the font's axis ranges include an upright form (`ital < 0.5` and `0deg` within `slnt`).
+* Extract family names (including Windows BMP `(3, 1, 0x0409)` and UCS-4 `(3, 10, 0x0409)` `name` records) and `font-weight`, `font-stretch`, and `font-style` from `fvar` (`wght`, `wdth`, `ital`, `slnt`) for variable fonts and from `OS/2` (including `fsSelection` bit 9 `OBLIQUE` and bit 0 `ITALIC`) and `post` for static fonts (`extract_font_face_descriptors` in `cleome/_font/metadata.py`).
+* In `extract_font_face_descriptors` (`cleome/_font/metadata.py`), include `"normal"` in `styles_css` (which `generate_css` in `cleome/_output/css.py` expands into `@font-face` rules) only when the font's axis ranges include an upright form (`ital < 0.5` when `ital` is present and `0deg` within `slnt` when `slnt` is present), alongside `"italic"` (`ital >= 0.5`) and `"oblique <min>deg <max>deg"` (`slnt != 0`).
 
 ## Multi-font variant bundling and output integrity
 
