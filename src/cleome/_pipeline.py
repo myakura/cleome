@@ -14,6 +14,7 @@ from fontTools.ttLib import TTFont
 
 from cleome._font.metadata import (
     FontMetadata,
+    _reject_multi_font_axis_overrides,
     extract_font_metadata,
 )
 from cleome._font.subset import (
@@ -344,6 +345,9 @@ def slice_fonts(
         raise ValueError(f"workers must be >= 1, got {workers}")
     if config is None:
         config = SliceConfig()
+    _reject_multi_font_axis_overrides(
+        len(fonts), weight=weight, stretch=stretch, style=style
+    )
 
     loaded_fonts: list[_LoadedFont] = []
     with ExitStack() as stack:

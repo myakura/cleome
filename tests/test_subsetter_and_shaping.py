@@ -1620,6 +1620,241 @@ class TestSubsetterAndShaping(unittest.TestCase):
         self.assertEqual(patch_uvs_missing_base_cmap(fb_mac_only.font), [])
         self.assertNotIn(0x553E, mac_only_sub.cmap)
 
+    def test_variant_suffixes_delimiter_collision_css_equivalence_and_scalar_overrides(
+        self,
+    ) -> None:
+        """
+        Issue 55 verification:
+        1. `validate_and_compute_variant_suffixes` produces distinct suffixes for range/scalar
+           combinations such as `("400", "75% 100%")` vs `("100 400", "75%")`, while keeping
+           `["400", "700"]`, `["w75-400", "w100-400"]`, and `["400", "400-italic"]` for static fonts.
+        2. Semantically equivalent CSS `@font-face` descriptors (`normal` == `400`, `bold` == `700`,
+           `normal`/width keywords == percentages, `oblique 0deg` == `normal`) raise `ValueError`.
+        3. `slice_fonts` rejects scalar `weight`/`stretch`/`style` overrides when bundling 2+ fonts.
+        """
+        from cleome import FontMetadata
+        from cleome._font.metadata import validate_and_compute_variant_suffixes
+
+        # 1. Static suffixes stay clean and range combinations never collide
+        s_reg = FontMetadata("Test", "test", False, "400", None, "normal")
+        s_bold = FontMetadata("Test", "test", False, "700", None, "normal")
+        s_ital = FontMetadata("Test", "test", False, "400", None, "italic")
+        s_cond = FontMetadata("Test", "test", False, "400", "75%", "normal")
+        self.assertEqual(
+            validate_and_compute_variant_suffixes([s_reg, s_bold]), ["400", "700"]
+        )
+        self.assertEqual(
+            validate_and_compute_variant_suffixes([s_reg, s_ital]),
+            ["400", "400-italic"],
+        )
+        self.assertEqual(
+            validate_and_compute_variant_suffixes([s_cond, s_reg]),
+            ["w75-400", "w100-400"],
+        )
+
+        vf_wdth_range = FontMetadata(
+            family_name="Test",
+            slug="test",
+            is_variable=True,
+            weight_css="400",
+            stretch_css="75% 100%",
+            style_css="normal",
+        )
+        vf_wght_range = FontMetadata(
+            family_name="Test",
+            slug="test",
+            is_variable=True,
+            weight_css="100 400",
+            stretch_css="75%",
+            style_css="normal",
+        )
+        range_suffixes = validate_and_compute_variant_suffixes(
+            [vf_wdth_range, vf_wght_range]
+        )
+        self.assertEqual(len(set(range_suffixes)), 2)
+        self.assertEqual(range_suffixes, ["w75_100-400", "w75-100_400"])
+
+        # Decimal stretch percentages vs range bounds and negative oblique angles never collide
+        s_extra_cond = FontMetadata(
+            "Test", "test", False, "400", "extra-condensed", "oblique -12deg"
+        )
+        s_range_50_62 = FontMetadata(
+            "Test", "test", True, "400", "50% 62%", "oblique 0deg 12deg"
+        )
+        self.assertEqual(
+            validate_and_compute_variant_suffixes([s_extra_cond, s_range_50_62]),
+            ["w62p5-400-oblique_neg12deg", "w50_62-400-oblique_0deg_12deg"],
+        )
+
+        # End-to-end slice_fonts with ("400", "75% 100%") and ("100 400", "75%") succeeds cleanly
+        tt_a = create_synthetic_ttfont(
+            [ord("A"), ord("あ")], family_name="Range Pair", is_variable=True
+        )
+        tt_a["fvar"].axes[0].minValue = 400.0
+        tt_a["fvar"].axes[0].defaultValue = 400.0
+        tt_a["fvar"].axes[0].maxValue = 400.0
+        tt_a["fvar"].axes[1].minValue = 75.0
+        tt_a["fvar"].axes[1].defaultValue = 100.0
+        tt_a["fvar"].axes[1].maxValue = 100.0
+
+        tt_b = create_synthetic_ttfont(
+            [ord("A"), ord("あ")], family_name="Range Pair", is_variable=True
+        )
+        tt_b["fvar"].axes[0].minValue = 100.0
+        tt_b["fvar"].axes[0].defaultValue = 400.0
+        tt_b["fvar"].axes[0].maxValue = 400.0
+        tt_b["fvar"].axes[1].minValue = 75.0
+        tt_b["fvar"].axes[1].defaultValue = 75.0
+        tt_b["fvar"].axes[1].maxValue = 75.0
+
+        with tempfile.TemporaryDirectory() as tmp:
+            res_pair = slice_fonts(
+                [tt_a, tt_b], out_dir=Path(tmp) / "range_pair_out", workers=1
+            )
+            self.assertEqual(len(res_pair.built_files), 4)
+
+            # 2. CSS descriptor equivalence normalization
+            equiv_pairs = (
+                (
+                    FontMetadata("Test", "test", False, "normal", None, "normal"),
+                    FontMetadata(
+                        "Test", "test", False, "400", "normal", "oblique 0deg"
+                    ),
+                ),
+                (
+                    FontMetadata("Test", "test", False, "bold", "100%", "normal"),
+                    FontMetadata("Test", "test", False, "700", None, "oblique 0rad"),
+                ),
+                (
+                    FontMetadata("Test", "test", False, "400", "condensed", "normal"),
+                    FontMetadata(
+                        "Test", "test", False, "400", "75%", "oblique 0deg 0deg"
+                    ),
+                ),
+                (
+                    FontMetadata("Test", "test", True, "normal bold", None, "normal"),
+                    FontMetadata(
+                        "Test", "test", True, "700 400", "100% 100%", "normal"
+                    ),
+                ),
+            )
+            for left_m, right_m in equiv_pairs:
+                with self.assertRaisesRegex(
+                    ValueError, "Duplicate @font-face descriptors"
+                ):
+                    validate_and_compute_variant_suffixes([left_m, right_m])
+
+            # 2b. Stixis-validated CSS math expressions (`calc(...)`, `min(...)`) remain valid
+            m_calc_401 = FontMetadata(
+                "Test",
+                "test",
+                False,
+                "calc(401)",
+                None,
+                "normal",
+                variant_suffix="regular",
+            )
+            m_700 = FontMetadata("Test", "test", False, "700", None, "normal")
+            self.assertEqual(
+                validate_and_compute_variant_suffixes([m_calc_401, m_700]),
+                ["regular", "700"],
+            )
+            self.assertEqual(
+                validate_and_compute_variant_suffixes(
+                    [
+                        FontMetadata(
+                            "Test", "test", False, "calc(401)", None, "normal"
+                        ),
+                        m_700,
+                    ]
+                ),
+                ["401", "700"],
+            )
+            m_min_expr = FontMetadata(
+                "Test",
+                "test",
+                False,
+                "min(401, 500)",
+                "min(75%, 90%)",
+                "oblique min(10deg, 20deg)",
+            )
+            math_suffixes = validate_and_compute_variant_suffixes([m_min_expr, m_700])
+            self.assertEqual(len(set(math_suffixes)), 2)
+            self.assertEqual(math_suffixes[1], "w100-700")
+            with self.assertRaisesRegex(ValueError, "Duplicate @font-face descriptors"):
+                validate_and_compute_variant_suffixes(
+                    [
+                        FontMetadata(
+                            "Test",
+                            "test",
+                            False,
+                            "calc(200 + 200)",
+                            "calc(75%)",
+                            "oblique calc(0deg)",
+                        ),
+                        FontMetadata(
+                            "Test", "test", False, "400", "condensed", "normal"
+                        ),
+                    ]
+                )
+            # Exact decimal precision (`400` vs `400.000001`) and non-finite CSS math constants (`calc(infinity)`, `calc(nan)`)
+            self.assertEqual(
+                validate_and_compute_variant_suffixes(
+                    [
+                        FontMetadata("Test", "test", False, "400", None, "normal"),
+                        FontMetadata(
+                            "Test", "test", False, "400.000001", None, "normal"
+                        ),
+                    ]
+                ),
+                ["400", "400p000001"],
+            )
+            m_nonfinite = FontMetadata(
+                "Test",
+                "test",
+                False,
+                "calc(infinity)",
+                "calc(infinity)",
+                "oblique calc(nan)",
+                variant_suffix="inf-var",
+            )
+            self.assertEqual(
+                validate_and_compute_variant_suffixes([m_nonfinite, m_700]),
+                ["inf-var", "w100-700"],
+            )
+            nonfinite_auto = validate_and_compute_variant_suffixes(
+                [
+                    FontMetadata(
+                        "Test",
+                        "test",
+                        False,
+                        "calc(infinity)",
+                        None,
+                        "normal",
+                    ),
+                    FontMetadata(
+                        "Test",
+                        "test",
+                        False,
+                        "calc(-infinity)",
+                        None,
+                        "normal",
+                    ),
+                ]
+            )
+            self.assertEqual(len(set(nonfinite_auto)), 2)
+
+            # 3. Scalar overrides across 2+ fonts in slice_fonts raise a clear ValueError
+            f1 = create_synthetic_ttfont([ord("A")], family_name="Multi", weight=400)
+            f2 = create_synthetic_ttfont([ord("A")], family_name="Multi", weight=700)
+            for kw in ({"weight": "400"}, {"stretch": "100%"}, {"style": "italic"}):
+                err_dir = Path(tmp) / f"override_{next(iter(kw))}"
+                with self.assertRaisesRegex(
+                    ValueError, "Cannot apply single-font descriptor override"
+                ):
+                    slice_fonts([f1, f2], out_dir=err_dir, workers=1, **kw)
+                self.assertFalse(err_dir.exists())
+
 
 if __name__ == "__main__":
     unittest.main()

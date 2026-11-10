@@ -189,8 +189,11 @@ class TestCleomeCLI(unittest.TestCase):
                 self.assertEqual(plan_data["command"], "plan")
                 self.assertEqual(plan_data["locale"], "kr")
                 self.assertEqual(plan_data["configured_locale"], "kr")
+                self.assertFalse(plan_data["is_variable"])
+                self.assertEqual(plan_data["font_type"], "static")
                 self.assertEqual(plan_data["file_count"], 1)
                 variant_info = plan_data["variants"][0]
+                self.assertFalse(variant_info["is_variable"])
                 self.assertEqual(variant_info["codepoints"], 4)
                 for tier_key in ("1", "2", "3", "4"):
                     self.assertIn(tier_key, variant_info["tiers"])
@@ -508,6 +511,76 @@ class TestCleomeCLI(unittest.TestCase):
             res = slice_fonts([font_latin, font_sc], out_dir=out_dir, workers=1)
             self.assertTrue(res.cached)
             self.assertEqual(res.locale, "sc")
+
+            # Issue 55: scalar axis overrides (--weight / --stretch / --style) with 2+ fonts fail with exit code 2
+            for axis_flag in (
+                ["--weight", "400"],
+                ["--stretch", "100%"],
+                ["--style", "italic"],
+            ):
+                for sub_args in (
+                    ["plan", str(font_latin), str(font_sc), *axis_flag],
+                    [
+                        "build",
+                        str(font_latin),
+                        str(font_sc),
+                        "-o",
+                        str(tmp_path / "never_override_dry"),
+                        "--dry-run",
+                        *axis_flag,
+                    ],
+                    [
+                        "build",
+                        str(font_latin),
+                        str(font_sc),
+                        "-o",
+                        str(tmp_path / "never_override_build"),
+                        *axis_flag,
+                    ],
+                ):
+                    err_ov = StringIO()
+                    with redirect_stderr(err_ov):
+                        rc_ov = cli_main(sub_args)
+                    self.assertEqual(rc_ov, 2)
+                    self.assertIn(
+                        "Cannot apply single-font descriptor override",
+                        err_ov.getvalue(),
+                    )
+            self.assertFalse((tmp_path / "never_override_dry").exists())
+            self.assertFalse((tmp_path / "never_override_build").exists())
+
+            # Issue 55: mixed static + variable bundle in `cleome plan` reports per-variant is_variable and top-level mixed
+            font_vf = tmp_path / "CustomSans-VF.ttf"
+            create_synthetic_ttfont(
+                latin_cps, family_name="Custom Sans", is_variable=True
+            ).save(font_vf, reorderTables=False)
+
+            for pair, expected_var_flags in (
+                ([str(font_latin), str(font_vf)], [False, True]),
+                ([str(font_vf), str(font_latin)], [True, False]),
+            ):
+                buf_mix_json = StringIO()
+                with redirect_stdout(buf_mix_json):
+                    rc_mix = cli_main(["plan", *pair, "--json"])
+                self.assertEqual(rc_mix, 0)
+                mix_data = json.loads(buf_mix_json.getvalue())
+                self.assertIsNone(mix_data["is_variable"])
+                self.assertEqual(mix_data["font_type"], "mixed")
+                self.assertEqual(
+                    [v["is_variable"] for v in mix_data["variants"]],
+                    expected_var_flags,
+                )
+
+                buf_mix_txt = StringIO()
+                with redirect_stdout(buf_mix_txt):
+                    rc_mix_t = cli_main(["plan", *pair])
+                self.assertEqual(rc_mix_t, 0)
+                self.assertIn(
+                    "Type        : Mixed (Variable + Static) (2 file(s))",
+                    buf_mix_txt.getvalue(),
+                )
+                self.assertIn("type=static,", buf_mix_txt.getvalue())
+                self.assertIn("type=variable,", buf_mix_txt.getvalue())
 
     def test_cli_build_css_out_and_relative_url_resolution(self) -> None:
         """

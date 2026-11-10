@@ -8,6 +8,7 @@ import re
 import unicodedata
 from collections.abc import Sequence
 from dataclasses import dataclass, field
+from decimal import Context, Decimal, InvalidOperation
 
 from fontTools.ttLib import TTFont
 from stixis import SerializationOptions, canonicalize
@@ -30,6 +31,289 @@ OS2_WIDTH_CLASS_TO_CSS: frozendict[int, str] = frozendict(
 )
 
 _CLEOME_CSS_OPTIONS = SerializationOptions.cleome()
+
+_DECIMAL_PI = Decimal(
+    "3.1415926535897932384626433832795028841971693993751058209749445923"
+)
+
+_CSS_WIDTH_KEYWORD_PCT: frozendict[str, Decimal] = frozendict(
+    {
+        "ultra-condensed": Decimal(50),
+        "extra-condensed": Decimal("62.5"),
+        "condensed": Decimal(75),
+        "semi-condensed": Decimal("87.5"),
+        "normal": Decimal(100),
+        "semi-expanded": Decimal("112.5"),
+        "expanded": Decimal(125),
+        "extra-expanded": Decimal(150),
+        "ultra-expanded": Decimal(200),
+    }
+)
+
+
+def _reject_multi_font_axis_overrides(
+    font_count: int,
+    *,
+    weight: str | None = None,
+    stretch: str | None = None,
+    style: str | None = None,
+) -> None:
+    """Reject scalar single-font axis overrides when bundling multiple input fonts."""
+    if font_count <= 1:
+        return
+    overridden = [
+        name
+        for name, val in (("weight", weight), ("stretch", stretch), ("style", style))
+        if val is not None
+    ]
+    if overridden:
+        names = ", ".join(overridden)
+        raise ValueError(
+            f"Cannot apply single-font descriptor override ({names}) across {font_count} input fonts; "
+            "omit weight/stretch/style overrides to use per-font OpenType detection, or slice each font separately."
+        )
+
+
+def _parse_finite_decimal(raw: str) -> Decimal | None:
+    s = raw.strip()
+    if not s or "_" in s:
+        return None
+    try:
+        dec = Decimal(s)
+    except InvalidOperation:
+        return None
+    if not dec.is_finite():
+        return None
+    return dec
+
+
+def _fmt_exact_decimal(dec: Decimal) -> str:
+    if dec == 0:
+        return "0"
+    t = dec.as_tuple()
+    digits_str = "".join(str(d) for d in t.digits).lstrip("0")
+    if not digits_str:
+        return "0"
+    orig_len = len(digits_str)
+    digits_str = digits_str.rstrip("0")
+    exp = int(t.exponent) + (orig_len - len(digits_str))
+    sign = "-" if t.sign else ""
+    if exp >= 0 and len(digits_str) + exp <= 24:
+        return f"{sign}{digits_str}{'0' * exp}"
+    if exp < 0 and -exp < len(digits_str):
+        split_idx = len(digits_str) + exp
+        return f"{sign}{digits_str[:split_idx]}.{digits_str[split_idx:]}"
+    if exp < 0 and -exp <= 24:
+        return f"{sign}0.{'0' * (-exp - len(digits_str))}{digits_str}"
+    sci_exp = exp + len(digits_str) - 1
+    mantissa = (
+        digits_str if len(digits_str) == 1 else f"{digits_str[0]}.{digits_str[1:]}"
+    )
+    return f"{sign}{mantissa}e{sci_exp}"
+
+
+def _fmt_suffix_num(num_str: str) -> str:
+    is_neg = num_str.startswith("-")
+    body = num_str[1:] if is_neg else num_str
+    prefix = "neg" if is_neg else ""
+    token = body.replace(".", "p").replace("-", "m").replace("+", "")
+    if len(token) > 16:
+        digest6 = hashlib.sha256(num_str.encode("utf-8")).hexdigest()[:6]
+        return f"{prefix}{token[:8]}h{digest6}"
+    return f"{prefix}{token}"
+
+
+def _split_top_level_css_tokens(text: str) -> list[str]:
+    tokens: list[str] = []
+    buf: list[str] = []
+    depth = 0
+    for ch in text:
+        if ch == "(":
+            depth += 1
+            buf.append(ch)
+        elif ch == ")":
+            depth = max(0, depth - 1)
+            buf.append(ch)
+        elif ch.isspace() and depth == 0:
+            if buf:
+                tokens.append("".join(buf))
+                buf.clear()
+        else:
+            buf.append(ch)
+    if buf:
+        tokens.append("".join(buf))
+    return tokens
+
+
+def _unwrap_simple_calc(tok: str) -> str:
+    low = tok.strip().lower()
+    if low.startswith("calc(") and low.endswith(")"):
+        inner = low[5:-1].strip()
+        if (
+            inner
+            and "(" not in inner
+            and ")" not in inner
+            and "," not in inner
+            and not any(ch.isspace() for ch in inner)
+        ):
+            return inner
+    return low
+
+
+def _format_expr_suffix_token(prefix: str, expr_parts: Sequence[str]) -> str:
+    joined = " ".join(expr_parts)
+    slug_part = re.sub(r"[^a-z0-9]+", "_", joined.lower()).strip("_")[:24].rstrip("_")
+    digest6 = hashlib.sha256(joined.encode("utf-8")).hexdigest()[:6]
+    if slug_part:
+        return f"{prefix}{slug_part}_{digest6}"
+    return f"{prefix}{digest6}"
+
+
+def _try_parse_weight_token(tok: str) -> Decimal | None:
+    low = _unwrap_simple_calc(tok)
+    if low == "normal":
+        return Decimal(400)
+    if low == "bold":
+        return Decimal(700)
+    return _parse_finite_decimal(low)
+
+
+def _normalize_weight_descriptor(weight_css: str) -> tuple[str, ...]:
+    cleaned = _validate_css_descriptor(weight_css, "font-weight").strip().lower()
+    if cleaned == "auto":
+        return ("auto",)
+    tokens = _split_top_level_css_tokens(cleaned)
+    parsed = [_try_parse_weight_token(t) for t in tokens]
+    if all(v is not None for v in parsed):
+        vals = [v for v in parsed if v is not None]
+        lo_s, hi_s = _fmt_exact_decimal(min(vals)), _fmt_exact_decimal(max(vals))
+        if lo_s == hi_s:
+            return ("scalar", lo_s)
+        return ("range", lo_s, hi_s)
+    canon_toks = sorted(
+        _fmt_exact_decimal(v) if v is not None else t for t, v in zip(tokens, parsed)
+    )
+    if len(canon_toks) == 2 and canon_toks[0] == canon_toks[1]:
+        canon_toks = [canon_toks[0]]
+    return ("expr", *canon_toks)
+
+
+def _format_weight_suffix_token(weight_key: tuple[str, ...]) -> str:
+    if weight_key[0] == "auto":
+        return "auto"
+    if weight_key[0] == "expr":
+        return _format_expr_suffix_token("expr_", weight_key[1:])
+    if weight_key[0] == "scalar":
+        return _fmt_suffix_num(weight_key[1])
+    return f"{_fmt_suffix_num(weight_key[1])}_{_fmt_suffix_num(weight_key[2])}"
+
+
+def _try_parse_stretch_token(tok: str) -> Decimal | None:
+    low = _unwrap_simple_calc(tok)
+    if low in _CSS_WIDTH_KEYWORD_PCT:
+        return _CSS_WIDTH_KEYWORD_PCT[low]
+    if low.endswith("%"):
+        return _parse_finite_decimal(low[:-1])
+    return _parse_finite_decimal(low)
+
+
+def _normalize_stretch_descriptor(stretch_css: str | None) -> tuple[str, ...]:
+    if stretch_css is None:
+        return ("scalar", "100")
+    cleaned = _validate_css_descriptor(stretch_css, "font-stretch").strip().lower()
+    if cleaned == "auto":
+        return ("auto",)
+    tokens = _split_top_level_css_tokens(cleaned)
+    parsed = [_try_parse_stretch_token(t) for t in tokens]
+    if all(v is not None for v in parsed):
+        vals = [v for v in parsed if v is not None]
+        lo_s, hi_s = _fmt_exact_decimal(min(vals)), _fmt_exact_decimal(max(vals))
+        if lo_s == hi_s:
+            return ("scalar", lo_s)
+        return ("range", lo_s, hi_s)
+    canon_toks = sorted(
+        f"{_fmt_exact_decimal(v)}%" if v is not None else t
+        for t, v in zip(tokens, parsed)
+    )
+    if len(canon_toks) == 2 and canon_toks[0] == canon_toks[1]:
+        canon_toks = [canon_toks[0]]
+    return ("expr", *canon_toks)
+
+
+def _format_stretch_suffix_token(stretch_key: tuple[str, ...]) -> str:
+    if stretch_key[0] == "auto":
+        return "wauto"
+    if stretch_key[0] == "expr":
+        return _format_expr_suffix_token("wexpr_", stretch_key[1:])
+    if stretch_key[0] == "scalar":
+        return f"w{_fmt_suffix_num(stretch_key[1])}"
+    return f"w{_fmt_suffix_num(stretch_key[1])}_{_fmt_suffix_num(stretch_key[2])}"
+
+
+def _try_parse_angle_deg(tok: str) -> Decimal | None:
+    low = _unwrap_simple_calc(tok)
+    if low.endswith("grad"):
+        val = _parse_finite_decimal(low[:-4])
+        if val is None:
+            return None
+        ctx = Context(prec=max(64, len(val.as_tuple().digits) + 16), traps=[])
+        return ctx.multiply(val, Decimal("0.9"))
+    if low.endswith("rad"):
+        val = _parse_finite_decimal(low[:-3])
+        if val is None:
+            return None
+        if val == 0:
+            return Decimal(0)
+        ctx = Context(prec=max(64, len(val.as_tuple().digits) + 16), traps=[])
+        return ctx.divide(ctx.multiply(val, Decimal(180)), _DECIMAL_PI)
+    if low.endswith("turn"):
+        val = _parse_finite_decimal(low[:-4])
+        if val is None:
+            return None
+        ctx = Context(prec=max(64, len(val.as_tuple().digits) + 16), traps=[])
+        return ctx.multiply(val, Decimal(360))
+    if low.endswith("deg"):
+        return _parse_finite_decimal(low[:-3])
+    return _parse_finite_decimal(low)
+
+
+def _normalize_style_descriptor(style_css: str) -> tuple[str, ...]:
+    cleaned = _validate_css_descriptor(style_css, "font-style").strip().lower()
+    if cleaned in ("normal", "italic", "oblique", "left", "right", "auto"):
+        return (cleaned,)
+    if cleaned.startswith("oblique") and len(cleaned) > 7 and cleaned[7].isspace():
+        tokens = _split_top_level_css_tokens(cleaned[7:])
+        parsed = [_try_parse_angle_deg(t) for t in tokens]
+        if all(v is not None for v in parsed):
+            degs = [v for v in parsed if v is not None]
+            lo_s, hi_s = _fmt_exact_decimal(min(degs)), _fmt_exact_decimal(max(degs))
+            if lo_s == "0" and hi_s == "0":
+                return ("normal",)
+            if lo_s == hi_s:
+                return ("oblique-scalar", lo_s)
+            return ("oblique-range", lo_s, hi_s)
+        canon_toks = sorted(
+            f"{_fmt_exact_decimal(v)}deg" if v is not None else t
+            for t, v in zip(tokens, parsed)
+        )
+        if len(canon_toks) == 2 and canon_toks[0] == canon_toks[1]:
+            canon_toks = [canon_toks[0]]
+        return ("oblique-expr", *canon_toks)
+    return (cleaned,)
+
+
+def _format_style_suffix_token(style_key: tuple[str, ...]) -> str:
+    kind = style_key[0]
+    if kind == "oblique-expr":
+        return _format_expr_suffix_token("oblique_expr_", style_key[1:])
+    if kind == "oblique-scalar":
+        return f"oblique_{_fmt_suffix_num(style_key[1])}deg"
+    if kind == "oblique-range":
+        return (
+            f"oblique_{_fmt_suffix_num(style_key[1])}deg_"
+            f"{_fmt_suffix_num(style_key[2])}deg"
+        )
+    return kind
 
 
 def _validate_css_descriptor(val: str, field_name: str) -> str:
@@ -313,7 +597,7 @@ def validate_and_compute_variant_suffixes(
     """
     Validate that multiple input fonts can be safely bundled into a single `@font-face`
     stylesheet without silent family mismatches or duplicate `(weight, stretch, style)` descriptors,
-    and return collision-free filename suffixes (`400`, `700`, `75-400`, `400-italic`, etc.).
+    and return collision-free filename suffixes (`400`, `700`, `w75-400`, `w75_100-400`, `400-italic`, etc.).
     """
     if len(raw_metas) <= 1:
         return [m.variant_suffix for m in raw_metas]
@@ -325,40 +609,60 @@ def validate_and_compute_variant_suffixes(
             "Slice each family separately, or pass `--family` / `family_name=...` explicitly if unifying them."
         )
 
-    seen_descriptors: set[tuple[str, str, str]] = set()
+    normalized_axes: list[
+        tuple[tuple[str, ...], tuple[str, ...], tuple[tuple[str, ...], ...]]
+    ] = []
+    seen_descriptors: set[tuple[tuple[str, ...], tuple[str, ...], tuple[str, ...]]] = (
+        set()
+    )
     for m in raw_metas:
-        for st in m.styles_css:
-            desc_key = (m.weight_css, m.stretch_css or "100%", st)
+        w_key = _normalize_weight_descriptor(m.weight_css)
+        s_key = _normalize_stretch_descriptor(m.stretch_css)
+        raw_styles = m.styles_css or (m.style_css,)
+        st_keys = tuple(
+            dict.fromkeys(_normalize_style_descriptor(st) for st in raw_styles)
+        )
+        for st_raw, st_key in zip(
+            raw_styles, (_normalize_style_descriptor(s) for s in raw_styles)
+        ):
+            desc_key = (w_key, s_key, st_key)
             if desc_key in seen_descriptors:
                 raise ValueError(
                     f"Duplicate @font-face descriptors across input fonts: "
-                    f"weight={m.weight_css!r}, stretch={m.stretch_css or 'normal'!r}, style={st!r}. "
+                    f"weight={m.weight_css!r}, stretch={m.stretch_css or 'normal'!r}, style={st_raw!r}. "
                     "Each font in a multi-file bundle must have a unique (weight, stretch, style) combination."
                 )
-            seen_descriptors.add(desc_key)
+        for st_key in st_keys:
+            seen_descriptors.add((w_key, s_key, st_key))
+        normalized_axes.append((w_key, s_key, st_keys))
 
-    has_multiple_styles = len({m.styles_css for m in raw_metas}) > 1
-    has_multiple_stretches = len({m.stretch_css for m in raw_metas}) > 1
+    has_multiple_stretches = len({s_key for _, s_key, _ in normalized_axes}) > 1
+    has_multiple_styles = (
+        len({frozenset(st_keys) for _, _, st_keys in normalized_axes}) > 1
+    )
 
     suffixes: list[str] = []
-    for m in raw_metas:
+    seen_suffixes: set[str] = set()
+    for m, (w_key, s_key, st_keys) in zip(raw_metas, normalized_axes):
         if m.variant_suffix:
             suf = m.variant_suffix
         else:
             parts: list[str] = []
             if has_multiple_stretches:
-                stretch_label = (
-                    (m.stretch_css or "100%")
-                    .replace("%", "")
-                    .replace(".", "_")
-                    .replace(" ", "-")
-                    .lower()
+                parts.append(_format_stretch_suffix_token(s_key))
+            parts.append(_format_weight_suffix_token(w_key))
+            non_normal_styles = [sk for sk in st_keys if sk != ("normal",)]
+            if has_multiple_styles and non_normal_styles:
+                parts.append(
+                    "-".join(_format_style_suffix_token(sk) for sk in non_normal_styles)
                 )
-                parts.append(f"w{stretch_label}")
-            parts.append(m.weight_css.replace(".", "_").replace(" ", "-"))
-            if has_multiple_styles and m.style_css != "normal":
-                parts.append(m.style_css.replace(".", "_").replace(" ", "-").lower())
             suf = "-".join(parts)
+        if suf in seen_suffixes:
+            raise ValueError(
+                f"Duplicate variant_suffix across input fonts: {suf!r}. "
+                "Each font in a multi-file bundle must produce a unique slice filename suffix."
+            )
+        seen_suffixes.add(suf)
         suffixes.append(suf)
     return suffixes
 
