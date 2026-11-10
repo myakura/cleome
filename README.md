@@ -103,10 +103,10 @@ if __name__ == "__main__":
         family_name="My Font JP",
     )
 
-    # 3. Format CSS unicode-range tokens: a set/frozenset/list formats discrete codepoints,
-    #    whereas a 2-element tuple (start, end) formats an inclusive interval
-    assert format_unicode_range([0x3041, 0x3043]) == "U+3041, U+3043"
-    assert format_unicode_range((0x3041, 0x3043)) == "U+3041-3043"
+    # 3. Format CSS unicode-range tokens: a set/frozenset/list coalesces contiguous runs
+    #    without bridging gaps, whereas a 2-element tuple (start, end) formats an inclusive interval
+    assert format_unicode_range([0x3041, 0x3042, 0x3044]) == "U+3041-3042, U+3044"
+    assert format_unicode_range((0x3041, 0x3044)) == "U+3041-3044"
 ```
 
 ---
@@ -116,7 +116,9 @@ if __name__ == "__main__":
 
 ```bash
 uv sync
-uv run python -m unittest discover -s tests -v -f
+uv run ruff check
+uv run ruff format --check
+uv run pytest
 ```
 
 ---
