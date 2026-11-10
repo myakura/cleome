@@ -3,7 +3,9 @@ OpenType table inspection (`name`, `fvar`, `OS/2`, `post`, `cmap`) and CSS `@fon
 descriptor extraction for Cleome.
 """
 
+import hashlib
 import re
+import unicodedata
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 
@@ -93,9 +95,27 @@ class FontMetadata:
 
 
 def slugify_family(name: str) -> str:
-    """Convert a font family name (e.g. 'GenSou Sans JP') into a URL/filename slug ('gensou-sans-jp')."""
-    s = re.sub(r"[^a-zA-Z0-9]+", "-", name.strip()).strip("-").lower()
-    return s or "font"
+    """Convert a font family name (e.g. 'GenSou Sans JP' or '源ノ角ゴシック') into a deterministic ASCII filename slug."""
+    cleaned = unicodedata.normalize("NFKC", name.strip())
+    if not cleaned:
+        return "font"
+    decomposed = "".join(
+        ch
+        for ch in unicodedata.normalize("NFKD", cleaned)
+        if not unicodedata.combining(ch)
+    )
+    ascii_slug = re.sub(r"[^a-zA-Z0-9]+", "-", decomposed).strip("-").lower()
+    has_non_ascii_alnum = any(
+        ord(ch) > 0x7F and unicodedata.category(ch)[0] in ("L", "N")
+        for ch in decomposed
+    )
+    if has_non_ascii_alnum or (
+        not ascii_slug and any(ord(ch) > 0x7F for ch in cleaned)
+    ):
+        digest8 = hashlib.sha256(cleaned.encode("utf-8")).hexdigest()[:8]
+        prefix = ascii_slug or "font"
+        return f"{prefix}-{digest8}"
+    return ascii_slug or "font"
 
 
 def _fmt_num(val: float) -> str:
@@ -132,6 +152,7 @@ def extract_font_face_descriptors(
         for name_id in (16, 1, 4):
             rec = (
                 name_table.getName(name_id, 3, 1, 0x0409)
+                or name_table.getName(name_id, 3, 10, 0x0409)
                 or name_table.getName(name_id, 1, 0, 0)
                 or name_table.getDebugName(name_id)
             )
@@ -183,6 +204,7 @@ def extract_font_face_descriptors(
         stretch_css = None
 
     # Style (ital / slnt / OS/2 / post)
+    static_oblique = "OS/2" in font and bool(font["OS/2"].fsSelection & 0x0200)
     static_italic = ("OS/2" in font and bool(font["OS/2"].fsSelection & 0x01)) or (
         "post" in font and getattr(font["post"], "italicAngle", 0.0) != 0.0
     )
@@ -208,29 +230,21 @@ def extract_font_face_descriptors(
                 slnt_oblique = f"oblique {_fmt_num(lo_deg)}deg {_fmt_num(hi_deg)}deg"
                 slnt_has_zero = lo_deg - 1e-4 <= 0.0 <= hi_deg + 1e-4
 
-        if has_ital:
-            i_min, _, i_max = axes["ital"]
-            ital_has_normal = i_min < 0.5
-            ital_has_italic = i_max >= 0.5
+        if has_ital or has_slnt:
+            ital_has_normal = (axes["ital"][0] < 0.5) if has_ital else True
+            ital_has_italic = (axes["ital"][2] >= 0.5) if has_ital else False
             styles_list: list[str] = []
-            if slnt_oblique is None:
-                if ital_has_normal:
-                    styles_list.append("normal")
-                if ital_has_italic:
-                    styles_list.append("italic")
-                if not styles_list:
-                    styles_list.append("normal")
-            else:
-                if ital_has_italic:
-                    if ital_has_normal and slnt_has_zero:
-                        styles_list.append("normal")
-                    styles_list.append("italic")
-                    styles_list.append(slnt_oblique)
-                else:
-                    styles_list.append(slnt_oblique)
+            if ital_has_normal and slnt_has_zero:
+                styles_list.append("normal")
+            if ital_has_italic:
+                styles_list.append("italic")
+            if slnt_oblique is not None:
+                styles_list.append(slnt_oblique)
+            if not styles_list:
+                styles_list.append("normal")
             styles_css = tuple(styles_list)
-        elif slnt_oblique is not None:
-            styles_css = (slnt_oblique,)
+        elif static_oblique:
+            styles_css = ("oblique",)
         elif static_italic:
             styles_css = ("italic",)
         else:

@@ -111,7 +111,7 @@ class TestSlicerAndLocales(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "max_gap must be >= 0"):
             compact_unicode_range([0x10, 0x11], [], max_gap=-1)
 
-        # 1. Family name detection
+        # 1. Family name detection (spaced, CamelCase/concatenated region markers, and CJK family names)
         self.assertEqual(detect_font_locale({ord("A")}, "Noto Sans KR"), "kr")
         self.assertEqual(detect_font_locale({ord("A")}, "IBM Plex Sans KR"), "kr")
         self.assertEqual(detect_font_locale({ord("A")}, "Nanum Gothic"), "kr")
@@ -119,6 +119,27 @@ class TestSlicerAndLocales(unittest.TestCase):
         self.assertEqual(detect_font_locale({ord("A")}, "Noto Sans TC"), "tc")
         self.assertEqual(detect_font_locale({ord("A")}, "Chiron Hei HK"), "hk")
         self.assertEqual(detect_font_locale({ord("A")}, "GenSou Sans JP"), "jp")
+        self.assertEqual(detect_font_locale({ord("A")}, "SourceHanSansSC"), "sc")
+        self.assertEqual(detect_font_locale({ord("A")}, "NotoSansCJKsc"), "sc")
+        self.assertEqual(detect_font_locale({ord("A")}, "SourceHanSansHWSC"), "sc")
+        self.assertEqual(detect_font_locale({ord("A")}, "GB2312 Kai"), "sc")
+        self.assertEqual(detect_font_locale({ord("A")}, "SourceHanSerifTC"), "tc")
+        self.assertEqual(detect_font_locale({ord("A")}, "CNS11643 Sung"), "tc")
+        self.assertEqual(detect_font_locale({ord("A")}, "TWKai"), "tc")
+        self.assertEqual(detect_font_locale({ord("A")}, "SourceHanSansHK"), "hk")
+        self.assertEqual(detect_font_locale({ord("A")}, "HongKong Hei"), "hk")
+        self.assertEqual(detect_font_locale({ord("A")}, "SourceHanSansKR"), "kr")
+        self.assertEqual(detect_font_locale({ord("A")}, "KRGothic"), "kr")
+        self.assertEqual(detect_font_locale({ord("A")}, "SourceHanSansJP"), "jp")
+        self.assertEqual(detect_font_locale({ord("A")}, "思源黑体"), "sc")
+        self.assertEqual(detect_font_locale({ord("A")}, "思源宋体"), "sc")
+        self.assertEqual(detect_font_locale({ord("A")}, "思源宋體"), "tc")
+        self.assertEqual(detect_font_locale({ord("A")}, "思源黑體 香港"), "hk")
+        self.assertEqual(detect_font_locale({ord("A")}, "본고딕"), "kr")
+        self.assertEqual(detect_font_locale({ord("A")}, "源ノ角"), "jp")
+        self.assertEqual(detect_font_locale({ord("A")}, "源ノ角ゴシック"), "jp")
+        # Plain English words containing region substrings must not false-match
+        self.assertEqual(detect_font_locale({ord("A")}, "Script Scratch Twin"), "jp")
 
         # 2. Charset-based detection (when family_name is empty or generic, including GB2312/Big5/KSX1001 Kana)
         kana_block = set(range(0x3041, 0x3094)) | set(range(0x30A1, 0x30F7))
