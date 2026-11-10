@@ -1797,6 +1797,52 @@ class TestSubsetterAndShaping(unittest.TestCase):
                         ),
                     ]
                 )
+            # Exact decimal precision (`400` vs `400.000001`) and non-finite CSS math constants (`calc(infinity)`, `calc(nan)`)
+            self.assertEqual(
+                validate_and_compute_variant_suffixes(
+                    [
+                        FontMetadata("Test", "test", False, "400", None, "normal"),
+                        FontMetadata(
+                            "Test", "test", False, "400.000001", None, "normal"
+                        ),
+                    ]
+                ),
+                ["400", "400p000001"],
+            )
+            m_nonfinite = FontMetadata(
+                "Test",
+                "test",
+                False,
+                "calc(infinity)",
+                "calc(infinity)",
+                "oblique calc(nan)",
+                variant_suffix="inf-var",
+            )
+            self.assertEqual(
+                validate_and_compute_variant_suffixes([m_nonfinite, m_700]),
+                ["inf-var", "w100-700"],
+            )
+            nonfinite_auto = validate_and_compute_variant_suffixes(
+                [
+                    FontMetadata(
+                        "Test",
+                        "test",
+                        False,
+                        "calc(infinity)",
+                        None,
+                        "normal",
+                    ),
+                    FontMetadata(
+                        "Test",
+                        "test",
+                        False,
+                        "calc(-infinity)",
+                        None,
+                        "normal",
+                    ),
+                ]
+            )
+            self.assertEqual(len(set(nonfinite_auto)), 2)
 
             # 3. Scalar overrides across 2+ fonts in slice_fonts raise a clear ValueError
             f1 = create_synthetic_ttfont([ord("A")], family_name="Multi", weight=400)
