@@ -1744,6 +1744,60 @@ class TestSubsetterAndShaping(unittest.TestCase):
                 ):
                     validate_and_compute_variant_suffixes([left_m, right_m])
 
+            # 2b. Stixis-validated CSS math expressions (`calc(...)`, `min(...)`) remain valid
+            m_calc_401 = FontMetadata(
+                "Test",
+                "test",
+                False,
+                "calc(401)",
+                None,
+                "normal",
+                variant_suffix="regular",
+            )
+            m_700 = FontMetadata("Test", "test", False, "700", None, "normal")
+            self.assertEqual(
+                validate_and_compute_variant_suffixes([m_calc_401, m_700]),
+                ["regular", "700"],
+            )
+            self.assertEqual(
+                validate_and_compute_variant_suffixes(
+                    [
+                        FontMetadata(
+                            "Test", "test", False, "calc(401)", None, "normal"
+                        ),
+                        m_700,
+                    ]
+                ),
+                ["401", "700"],
+            )
+            m_min_expr = FontMetadata(
+                "Test",
+                "test",
+                False,
+                "min(401, 500)",
+                "min(75%, 90%)",
+                "oblique min(10deg, 20deg)",
+            )
+            math_suffixes = validate_and_compute_variant_suffixes([m_min_expr, m_700])
+            self.assertEqual(len(set(math_suffixes)), 2)
+            self.assertEqual(math_suffixes[1], "w100-700")
+            with self.assertRaisesRegex(ValueError, "Duplicate @font-face descriptors"):
+                validate_and_compute_variant_suffixes(
+                    [
+                        FontMetadata(
+                            "Test",
+                            "test",
+                            False,
+                            "calc(200 + 200)",
+                            "calc(75%)",
+                            "oblique calc(0deg)",
+                        ),
+                        FontMetadata(
+                            "Test", "test", False, "400", "condensed", "normal"
+                        ),
+                    ]
+                )
+
             # 3. Scalar overrides across 2+ fonts in slice_fonts raise a clear ValueError
             f1 = create_synthetic_ttfont([ord("A")], family_name="Multi", weight=400)
             f2 = create_synthetic_ttfont([ord("A")], family_name="Multi", weight=700)

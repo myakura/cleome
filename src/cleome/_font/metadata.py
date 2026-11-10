@@ -83,41 +83,104 @@ def _fmt_suffix_num(num_str: str) -> str:
     return num_str.replace(".", "p")
 
 
-def _parse_weight_token(tok: str) -> float:
-    low = tok.lower()
+def _split_top_level_css_tokens(text: str) -> list[str]:
+    tokens: list[str] = []
+    buf: list[str] = []
+    depth = 0
+    for ch in text:
+        if ch == "(":
+            depth += 1
+            buf.append(ch)
+        elif ch == ")":
+            depth = max(0, depth - 1)
+            buf.append(ch)
+        elif ch.isspace() and depth == 0:
+            if buf:
+                tokens.append("".join(buf))
+                buf.clear()
+        else:
+            buf.append(ch)
+    if buf:
+        tokens.append("".join(buf))
+    return tokens
+
+
+def _unwrap_simple_calc(tok: str) -> str:
+    low = tok.strip().lower()
+    if low.startswith("calc(") and low.endswith(")"):
+        inner = low[5:-1].strip()
+        if (
+            inner
+            and "(" not in inner
+            and ")" not in inner
+            and "," not in inner
+            and not any(ch.isspace() for ch in inner)
+        ):
+            return inner
+    return low
+
+
+def _format_expr_suffix_token(prefix: str, expr_parts: Sequence[str]) -> str:
+    joined = " ".join(expr_parts)
+    slug_part = re.sub(r"[^a-z0-9]+", "_", joined.lower()).strip("_")
+    digest6 = hashlib.sha256(joined.encode("utf-8")).hexdigest()[:6]
+    if slug_part:
+        return f"{prefix}{slug_part}_{digest6}"
+    return f"{prefix}{digest6}"
+
+
+def _try_parse_weight_token(tok: str) -> float | None:
+    low = _unwrap_simple_calc(tok)
     if low == "normal":
         return 400.0
     if low == "bold":
         return 700.0
-    return float(low)
+    try:
+        return float(low)
+    except ValueError:
+        return None
 
 
 def _normalize_weight_descriptor(weight_css: str) -> tuple[str, ...]:
     cleaned = _validate_css_descriptor(weight_css, "font-weight").strip().lower()
     if cleaned == "auto":
         return ("auto",)
-    vals = [_parse_weight_token(t) for t in cleaned.split()]
-    lo_s, hi_s = _fmt_norm_num(min(vals)), _fmt_norm_num(max(vals))
-    if lo_s == hi_s:
-        return ("scalar", lo_s)
-    return ("range", lo_s, hi_s)
+    tokens = _split_top_level_css_tokens(cleaned)
+    parsed = [_try_parse_weight_token(t) for t in tokens]
+    if all(v is not None for v in parsed):
+        vals = [v for v in parsed if v is not None]
+        lo_s, hi_s = _fmt_norm_num(min(vals)), _fmt_norm_num(max(vals))
+        if lo_s == hi_s:
+            return ("scalar", lo_s)
+        return ("range", lo_s, hi_s)
+    canon_toks = sorted(
+        _fmt_norm_num(v) if v is not None else t for t, v in zip(tokens, parsed)
+    )
+    if len(canon_toks) == 2 and canon_toks[0] == canon_toks[1]:
+        canon_toks = [canon_toks[0]]
+    return ("expr", *canon_toks)
 
 
 def _format_weight_suffix_token(weight_key: tuple[str, ...]) -> str:
     if weight_key[0] == "auto":
         return "auto"
+    if weight_key[0] == "expr":
+        return _format_expr_suffix_token("expr_", weight_key[1:])
     if weight_key[0] == "scalar":
         return _fmt_suffix_num(weight_key[1])
     return f"{_fmt_suffix_num(weight_key[1])}_{_fmt_suffix_num(weight_key[2])}"
 
 
-def _parse_stretch_token(tok: str) -> float:
-    low = tok.lower()
+def _try_parse_stretch_token(tok: str) -> float | None:
+    low = _unwrap_simple_calc(tok)
     if low in _CSS_WIDTH_KEYWORD_PCT:
         return _CSS_WIDTH_KEYWORD_PCT[low]
-    if low.endswith("%"):
-        return float(low[:-1])
-    return float(low)
+    try:
+        if low.endswith("%"):
+            return float(low[:-1])
+        return float(low)
+    except ValueError:
+        return None
 
 
 def _normalize_stretch_descriptor(stretch_css: str | None) -> tuple[str, ...]:
@@ -126,32 +189,46 @@ def _normalize_stretch_descriptor(stretch_css: str | None) -> tuple[str, ...]:
     cleaned = _validate_css_descriptor(stretch_css, "font-stretch").strip().lower()
     if cleaned == "auto":
         return ("auto",)
-    vals = [_parse_stretch_token(t) for t in cleaned.split()]
-    lo_s, hi_s = _fmt_norm_num(min(vals)), _fmt_norm_num(max(vals))
-    if lo_s == hi_s:
-        return ("scalar", lo_s)
-    return ("range", lo_s, hi_s)
+    tokens = _split_top_level_css_tokens(cleaned)
+    parsed = [_try_parse_stretch_token(t) for t in tokens]
+    if all(v is not None for v in parsed):
+        vals = [v for v in parsed if v is not None]
+        lo_s, hi_s = _fmt_norm_num(min(vals)), _fmt_norm_num(max(vals))
+        if lo_s == hi_s:
+            return ("scalar", lo_s)
+        return ("range", lo_s, hi_s)
+    canon_toks = sorted(
+        f"{_fmt_norm_num(v)}%" if v is not None else t for t, v in zip(tokens, parsed)
+    )
+    if len(canon_toks) == 2 and canon_toks[0] == canon_toks[1]:
+        canon_toks = [canon_toks[0]]
+    return ("expr", *canon_toks)
 
 
 def _format_stretch_suffix_token(stretch_key: tuple[str, ...]) -> str:
     if stretch_key[0] == "auto":
         return "wauto"
+    if stretch_key[0] == "expr":
+        return _format_expr_suffix_token("wexpr_", stretch_key[1:])
     if stretch_key[0] == "scalar":
         return f"w{_fmt_suffix_num(stretch_key[1])}"
     return f"w{_fmt_suffix_num(stretch_key[1])}_{_fmt_suffix_num(stretch_key[2])}"
 
 
-def _parse_angle_deg(tok: str) -> float:
-    low = tok.strip().lower()
-    if low.endswith("grad"):
-        return float(low[:-4]) * 0.9
-    if low.endswith("rad"):
-        return float(low[:-3]) * (180.0 / math.pi)
-    if low.endswith("turn"):
-        return float(low[:-4]) * 360.0
-    if low.endswith("deg"):
-        return float(low[:-3])
-    return float(low)
+def _try_parse_angle_deg(tok: str) -> float | None:
+    low = _unwrap_simple_calc(tok)
+    try:
+        if low.endswith("grad"):
+            return float(low[:-4]) * 0.9
+        if low.endswith("rad"):
+            return float(low[:-3]) * (180.0 / math.pi)
+        if low.endswith("turn"):
+            return float(low[:-4]) * 360.0
+        if low.endswith("deg"):
+            return float(low[:-3])
+        return float(low)
+    except ValueError:
+        return None
 
 
 def _normalize_style_descriptor(style_css: str) -> tuple[str, ...]:
@@ -159,18 +236,30 @@ def _normalize_style_descriptor(style_css: str) -> tuple[str, ...]:
     if cleaned in ("normal", "italic", "oblique", "left", "right", "auto"):
         return (cleaned,)
     if cleaned.startswith("oblique") and len(cleaned) > 7 and cleaned[7].isspace():
-        degs = [_parse_angle_deg(t) for t in cleaned[7:].split()]
-        lo_s, hi_s = _fmt_norm_num(min(degs)), _fmt_norm_num(max(degs))
-        if lo_s == "0" and hi_s == "0":
-            return ("normal",)
-        if lo_s == hi_s:
-            return ("oblique-scalar", lo_s)
-        return ("oblique-range", lo_s, hi_s)
+        tokens = _split_top_level_css_tokens(cleaned[7:])
+        parsed = [_try_parse_angle_deg(t) for t in tokens]
+        if all(v is not None for v in parsed):
+            degs = [v for v in parsed if v is not None]
+            lo_s, hi_s = _fmt_norm_num(min(degs)), _fmt_norm_num(max(degs))
+            if lo_s == "0" and hi_s == "0":
+                return ("normal",)
+            if lo_s == hi_s:
+                return ("oblique-scalar", lo_s)
+            return ("oblique-range", lo_s, hi_s)
+        canon_toks = sorted(
+            f"{_fmt_norm_num(v)}deg" if v is not None else t
+            for t, v in zip(tokens, parsed)
+        )
+        if len(canon_toks) == 2 and canon_toks[0] == canon_toks[1]:
+            canon_toks = [canon_toks[0]]
+        return ("oblique-expr", *canon_toks)
     return (cleaned,)
 
 
 def _format_style_suffix_token(style_key: tuple[str, ...]) -> str:
     kind = style_key[0]
+    if kind == "oblique-expr":
+        return _format_expr_suffix_token("oblique_expr_", style_key[1:])
     if kind == "oblique-scalar":
         return f"oblique_{_fmt_suffix_num(style_key[1])}deg"
     if kind == "oblique-range":
