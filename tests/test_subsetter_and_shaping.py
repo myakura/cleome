@@ -1945,6 +1945,77 @@ class TestSubsetterAndShaping(unittest.TestCase):
                         [], Path(tmp) / "batch_bad", workers=bad_w_val
                     )
 
+    def test_empty_cmap_font_creates_slices_dir_and_hits_cache(self) -> None:
+        """
+        Verify an input font with an empty Unicode `cmap` (0 active slices) creates an empty
+        `slices_dir` and comment-only CSS on the first build without spawning workers, and
+        returns `cached=True` on repeat runs via `_try_load_cached_bundle`.
+        """
+        from unittest.mock import patch
+
+        empty_tt = create_synthetic_ttfont([], family_name="Empty Cmap Font")
+        empty_meta = extract_font_metadata(empty_tt)
+        self.assertEqual(empty_meta.codepoints, frozenset())
+
+        with tempfile.TemporaryDirectory() as tmp:
+            # 0 variants in _export_woff2_slices_batch still returns [] without creating slices_dir
+            zero_var_dir = Path(tmp) / "zero_variants_slices"
+            self.assertEqual(
+                _export_woff2_slices_batch([], zero_var_dir, workers=1), []
+            )
+            self.assertFalse(zero_var_dir.exists())
+
+            # 1 variant with 0 active tasks in export_woff2_slices creates empty slices_dir without workers
+            low_slices_dir = Path(tmp) / "low_empty_slices"
+            with (
+                patch(
+                    "cleome._font.subset._create_worker_context",
+                    side_effect=AssertionError("Worker context should not be created"),
+                ),
+                patch(
+                    "cleome._font.subset.ProcessPoolExecutor",
+                    side_effect=AssertionError("ProcessPoolExecutor should not start"),
+                ),
+            ):
+                built_low = export_woff2_slices(
+                    empty_tt, empty_meta, [], low_slices_dir, workers=2
+                )
+            self.assertEqual(built_low, [])
+            self.assertTrue(low_slices_dir.is_dir())
+            self.assertEqual(list(low_slices_dir.iterdir()), [])
+
+            # High-level slice_font: first run creates empty slices_dir + comment-only CSS (cached=False),
+            # second run hits _try_load_cached_bundle (cached=True) without calling export
+            out_dir = Path(tmp) / "empty_bundle"
+            with (
+                patch(
+                    "cleome._font.subset._create_worker_context",
+                    side_effect=AssertionError("Worker context should not be created"),
+                ),
+                patch(
+                    "cleome._font.subset.ProcessPoolExecutor",
+                    side_effect=AssertionError("ProcessPoolExecutor should not start"),
+                ),
+            ):
+                r1 = slice_font(empty_tt, out_dir=out_dir, workers=2)
+            self.assertFalse(r1.cached)
+            self.assertEqual(r1.built_files, [])
+            self.assertEqual(r1.slice_specs, [])
+            self.assertTrue(r1.css_path.is_file())
+            self.assertTrue(r1.slices_dir.is_dir())
+            self.assertEqual(list(r1.slices_dir.iterdir()), [])
+            self.assertNotIn("@font-face", r1.css_text)
+
+            with patch(
+                "cleome._pipeline._export_woff2_slices_batch",
+                side_effect=AssertionError("Expected cache hit on empty-cmap font"),
+            ):
+                r2 = slice_font(empty_tt, out_dir=out_dir, workers=2)
+            self.assertTrue(r2.cached)
+            self.assertEqual(r2.built_files, [])
+            self.assertEqual(r2.css_text, r1.css_text)
+            self.assertEqual(r2.slices_dir, r1.slices_dir)
+
 
 if __name__ == "__main__":
     unittest.main()
