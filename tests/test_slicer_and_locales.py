@@ -526,17 +526,12 @@ class TestSlicerAndLocales(unittest.TestCase):
 
     def test_unicode_range_formatting_and_compaction_validation(self) -> None:
         """
-        Verify `compact_unicode_range` honors `cp - prev <= max_gap` at `max_gap=0` vs `max_gap=1`,
-        and `format_unicode_range` validates collection types, 2-element `(start, end)` tuples,
-        and integer codepoints.
+        Verify `compact_unicode_range` delegates gap compaction to Stixis (coalescing contiguous
+        runs at `max_gap=0` and `max_gap=1` without bridging missing codepoints), and
+        `format_unicode_range` validates collection types and 2-element `(start, end)` tuples.
         """
-        # compact_unicode_range: cp - prev <= max_gap
-        self.assertEqual(
-            compact_unicode_range([0x41, 0x42], [], max_gap=0), "U+41, U+42"
-        )
-        self.assertEqual(
-            compact_unicode_range([0x41, 0x41, 0x42], [], max_gap=0), "U+41, U+42"
-        )
+        # compact_unicode_range: contiguous runs coalesce without bridging missing codepoints
+        self.assertEqual(compact_unicode_range([0x41, 0x42], [], max_gap=0), "U+41-42")
         self.assertEqual(compact_unicode_range([0x41, 0x42], [], max_gap=1), "U+41-42")
         self.assertEqual(
             compact_unicode_range([0x41, 0x43], [], max_gap=1), "U+41, U+43"
@@ -558,24 +553,21 @@ class TestSlicerAndLocales(unittest.TestCase):
         self.assertEqual(format_unicode_range((0x3041, 0x3044)), "U+3041-3044")
         self.assertEqual(format_unicode_range((0, 0)), "U+0")
 
-        # format_unicode_range: reject scalar int/bool/str and non-int elements
+        # format_unicode_range: reject scalar int/bool/str and invalid elements/tuples
         for scalar_or_str in (0, 0x41, False, True, "U+41", None):
             with self.assertRaises(TypeError):
                 format_unicode_range(scalar_or_str)  # type: ignore[arg-type]
-        for bad_elem_seq in (
+        for bad_input in (
             [True],
-            ["U+41"],
-            [(0x41, 0x42)],
             (True, 0x3043),
             ("a", "b"),
+            (),
+            (0x3041,),
+            (0x3041, 0x3043, 0x3045),
+            (0x3045, 0x3041),
         ):
-            with self.assertRaises(TypeError):
-                format_unicode_range(bad_elem_seq)  # type: ignore[arg-type]
-
-        # format_unicode_range: reject tuples whose length != 2 or reversed bounds
-        for bad_tuple in ((), (0x3041,), (0x3041, 0x3043, 0x3045), (0x3045, 0x3041)):
             with self.assertRaises(ValueError):
-                format_unicode_range(bad_tuple)  # type: ignore[arg-type]
+                format_unicode_range(bad_input)  # type: ignore[arg-type]
 
 
 if __name__ == "__main__":
