@@ -3,12 +3,9 @@ OpenType table inspection (`name`, `fvar`, `OS/2`, `post`, `cmap`) and CSS `@fon
 descriptor extraction for Cleome.
 """
 
-import hashlib
 import re
-import unicodedata
 from collections.abc import Sequence
 from dataclasses import dataclass, field
-from decimal import Context, Decimal, InvalidOperation
 
 from fontTools.ttLib import TTFont
 from stixis import SerializationOptions, canonicalize
@@ -32,21 +29,24 @@ OS2_WIDTH_CLASS_TO_CSS: frozendict[int, str] = frozendict(
 
 _CLEOME_CSS_OPTIONS = SerializationOptions.cleome()
 
-_DECIMAL_PI = Decimal(
-    "3.1415926535897932384626433832795028841971693993751058209749445923"
+_CSS_WEIGHT_KEYWORDS: frozendict[str, str] = frozendict(
+    {
+        "normal": "400",
+        "bold": "700",
+    }
 )
 
-_CSS_WIDTH_KEYWORD_PCT: frozendict[str, Decimal] = frozendict(
+_CSS_WIDTH_KEYWORDS: frozendict[str, str] = frozendict(
     {
-        "ultra-condensed": Decimal(50),
-        "extra-condensed": Decimal("62.5"),
-        "condensed": Decimal(75),
-        "semi-condensed": Decimal("87.5"),
-        "normal": Decimal(100),
-        "semi-expanded": Decimal("112.5"),
-        "expanded": Decimal(125),
-        "extra-expanded": Decimal(150),
-        "ultra-expanded": Decimal(200),
+        "ultra-condensed": "50%",
+        "extra-condensed": "62.5%",
+        "condensed": "75%",
+        "semi-condensed": "87.5%",
+        "normal": "100%",
+        "semi-expanded": "112.5%",
+        "expanded": "125%",
+        "extra-expanded": "150%",
+        "ultra-expanded": "200%",
     }
 )
 
@@ -74,248 +74,6 @@ def _reject_multi_font_axis_overrides(
         )
 
 
-def _parse_finite_decimal(raw: str) -> Decimal | None:
-    s = raw.strip()
-    if not s or "_" in s:
-        return None
-    try:
-        dec = Decimal(s)
-    except InvalidOperation:
-        return None
-    if not dec.is_finite():
-        return None
-    return dec
-
-
-def _fmt_exact_decimal(dec: Decimal) -> str:
-    if dec == 0:
-        return "0"
-    t = dec.as_tuple()
-    digits_str = "".join(str(d) for d in t.digits).lstrip("0")
-    if not digits_str:
-        return "0"
-    orig_len = len(digits_str)
-    digits_str = digits_str.rstrip("0")
-    exp = int(t.exponent) + (orig_len - len(digits_str))
-    sign = "-" if t.sign else ""
-    if exp >= 0 and len(digits_str) + exp <= 24:
-        return f"{sign}{digits_str}{'0' * exp}"
-    if exp < 0 and -exp < len(digits_str):
-        split_idx = len(digits_str) + exp
-        return f"{sign}{digits_str[:split_idx]}.{digits_str[split_idx:]}"
-    if exp < 0 and -exp <= 24:
-        return f"{sign}0.{'0' * (-exp - len(digits_str))}{digits_str}"
-    sci_exp = exp + len(digits_str) - 1
-    mantissa = (
-        digits_str if len(digits_str) == 1 else f"{digits_str[0]}.{digits_str[1:]}"
-    )
-    return f"{sign}{mantissa}e{sci_exp}"
-
-
-def _fmt_suffix_num(num_str: str) -> str:
-    is_neg = num_str.startswith("-")
-    body = num_str[1:] if is_neg else num_str
-    prefix = "neg" if is_neg else ""
-    token = body.replace(".", "p").replace("-", "m").replace("+", "")
-    if len(token) > 16:
-        digest6 = hashlib.sha256(num_str.encode("utf-8")).hexdigest()[:6]
-        return f"{prefix}{token[:8]}h{digest6}"
-    return f"{prefix}{token}"
-
-
-def _split_top_level_css_tokens(text: str) -> list[str]:
-    tokens: list[str] = []
-    buf: list[str] = []
-    depth = 0
-    for ch in text:
-        if ch == "(":
-            depth += 1
-            buf.append(ch)
-        elif ch == ")":
-            depth = max(0, depth - 1)
-            buf.append(ch)
-        elif ch.isspace() and depth == 0:
-            if buf:
-                tokens.append("".join(buf))
-                buf.clear()
-        else:
-            buf.append(ch)
-    if buf:
-        tokens.append("".join(buf))
-    return tokens
-
-
-def _unwrap_simple_calc(tok: str) -> str:
-    low = tok.strip().lower()
-    if low.startswith("calc(") and low.endswith(")"):
-        inner = low[5:-1].strip()
-        if (
-            inner
-            and "(" not in inner
-            and ")" not in inner
-            and "," not in inner
-            and not any(ch.isspace() for ch in inner)
-        ):
-            return inner
-    return low
-
-
-def _format_expr_suffix_token(prefix: str, expr_parts: Sequence[str]) -> str:
-    joined = " ".join(expr_parts)
-    slug_part = re.sub(r"[^a-z0-9]+", "_", joined.lower()).strip("_")[:24].rstrip("_")
-    digest6 = hashlib.sha256(joined.encode("utf-8")).hexdigest()[:6]
-    if slug_part:
-        return f"{prefix}{slug_part}_{digest6}"
-    return f"{prefix}{digest6}"
-
-
-def _try_parse_weight_token(tok: str) -> Decimal | None:
-    low = _unwrap_simple_calc(tok)
-    if low == "normal":
-        return Decimal(400)
-    if low == "bold":
-        return Decimal(700)
-    return _parse_finite_decimal(low)
-
-
-def _normalize_weight_descriptor(weight_css: str) -> tuple[str, ...]:
-    cleaned = _validate_css_descriptor(weight_css, "font-weight").strip().lower()
-    if cleaned == "auto":
-        return ("auto",)
-    tokens = _split_top_level_css_tokens(cleaned)
-    parsed = [_try_parse_weight_token(t) for t in tokens]
-    if all(v is not None for v in parsed):
-        vals = [v for v in parsed if v is not None]
-        lo_s, hi_s = _fmt_exact_decimal(min(vals)), _fmt_exact_decimal(max(vals))
-        if lo_s == hi_s:
-            return ("scalar", lo_s)
-        return ("range", lo_s, hi_s)
-    canon_toks = sorted(
-        _fmt_exact_decimal(v) if v is not None else t for t, v in zip(tokens, parsed)
-    )
-    if len(canon_toks) == 2 and canon_toks[0] == canon_toks[1]:
-        canon_toks = [canon_toks[0]]
-    return ("expr", *canon_toks)
-
-
-def _format_weight_suffix_token(weight_key: tuple[str, ...]) -> str:
-    if weight_key[0] == "auto":
-        return "auto"
-    if weight_key[0] == "expr":
-        return _format_expr_suffix_token("expr_", weight_key[1:])
-    if weight_key[0] == "scalar":
-        return _fmt_suffix_num(weight_key[1])
-    return f"{_fmt_suffix_num(weight_key[1])}_{_fmt_suffix_num(weight_key[2])}"
-
-
-def _try_parse_stretch_token(tok: str) -> Decimal | None:
-    low = _unwrap_simple_calc(tok)
-    if low in _CSS_WIDTH_KEYWORD_PCT:
-        return _CSS_WIDTH_KEYWORD_PCT[low]
-    if low.endswith("%"):
-        return _parse_finite_decimal(low[:-1])
-    return _parse_finite_decimal(low)
-
-
-def _normalize_stretch_descriptor(stretch_css: str | None) -> tuple[str, ...]:
-    if stretch_css is None:
-        return ("scalar", "100")
-    cleaned = _validate_css_descriptor(stretch_css, "font-stretch").strip().lower()
-    if cleaned == "auto":
-        return ("auto",)
-    tokens = _split_top_level_css_tokens(cleaned)
-    parsed = [_try_parse_stretch_token(t) for t in tokens]
-    if all(v is not None for v in parsed):
-        vals = [v for v in parsed if v is not None]
-        lo_s, hi_s = _fmt_exact_decimal(min(vals)), _fmt_exact_decimal(max(vals))
-        if lo_s == hi_s:
-            return ("scalar", lo_s)
-        return ("range", lo_s, hi_s)
-    canon_toks = sorted(
-        f"{_fmt_exact_decimal(v)}%" if v is not None else t
-        for t, v in zip(tokens, parsed)
-    )
-    if len(canon_toks) == 2 and canon_toks[0] == canon_toks[1]:
-        canon_toks = [canon_toks[0]]
-    return ("expr", *canon_toks)
-
-
-def _format_stretch_suffix_token(stretch_key: tuple[str, ...]) -> str:
-    if stretch_key[0] == "auto":
-        return "wauto"
-    if stretch_key[0] == "expr":
-        return _format_expr_suffix_token("wexpr_", stretch_key[1:])
-    if stretch_key[0] == "scalar":
-        return f"w{_fmt_suffix_num(stretch_key[1])}"
-    return f"w{_fmt_suffix_num(stretch_key[1])}_{_fmt_suffix_num(stretch_key[2])}"
-
-
-def _try_parse_angle_deg(tok: str) -> Decimal | None:
-    low = _unwrap_simple_calc(tok)
-    if low.endswith("grad"):
-        val = _parse_finite_decimal(low[:-4])
-        if val is None:
-            return None
-        ctx = Context(prec=max(64, len(val.as_tuple().digits) + 16), traps=[])
-        return ctx.multiply(val, Decimal("0.9"))
-    if low.endswith("rad"):
-        val = _parse_finite_decimal(low[:-3])
-        if val is None:
-            return None
-        if val == 0:
-            return Decimal(0)
-        ctx = Context(prec=max(64, len(val.as_tuple().digits) + 16), traps=[])
-        return ctx.divide(ctx.multiply(val, Decimal(180)), _DECIMAL_PI)
-    if low.endswith("turn"):
-        val = _parse_finite_decimal(low[:-4])
-        if val is None:
-            return None
-        ctx = Context(prec=max(64, len(val.as_tuple().digits) + 16), traps=[])
-        return ctx.multiply(val, Decimal(360))
-    if low.endswith("deg"):
-        return _parse_finite_decimal(low[:-3])
-    return _parse_finite_decimal(low)
-
-
-def _normalize_style_descriptor(style_css: str) -> tuple[str, ...]:
-    cleaned = _validate_css_descriptor(style_css, "font-style").strip().lower()
-    if cleaned in ("normal", "italic", "oblique", "left", "right", "auto"):
-        return (cleaned,)
-    if cleaned.startswith("oblique") and len(cleaned) > 7 and cleaned[7].isspace():
-        tokens = _split_top_level_css_tokens(cleaned[7:])
-        parsed = [_try_parse_angle_deg(t) for t in tokens]
-        if all(v is not None for v in parsed):
-            degs = [v for v in parsed if v is not None]
-            lo_s, hi_s = _fmt_exact_decimal(min(degs)), _fmt_exact_decimal(max(degs))
-            if lo_s == "0" and hi_s == "0":
-                return ("normal",)
-            if lo_s == hi_s:
-                return ("oblique-scalar", lo_s)
-            return ("oblique-range", lo_s, hi_s)
-        canon_toks = sorted(
-            f"{_fmt_exact_decimal(v)}deg" if v is not None else t
-            for t, v in zip(tokens, parsed)
-        )
-        if len(canon_toks) == 2 and canon_toks[0] == canon_toks[1]:
-            canon_toks = [canon_toks[0]]
-        return ("oblique-expr", *canon_toks)
-    return (cleaned,)
-
-
-def _format_style_suffix_token(style_key: tuple[str, ...]) -> str:
-    kind = style_key[0]
-    if kind == "oblique-expr":
-        return _format_expr_suffix_token("oblique_expr_", style_key[1:])
-    if kind == "oblique-scalar":
-        return f"oblique_{_fmt_suffix_num(style_key[1])}deg"
-    if kind == "oblique-range":
-        return (
-            f"oblique_{_fmt_suffix_num(style_key[1])}deg_"
-            f"{_fmt_suffix_num(style_key[2])}deg"
-        )
-    return kind
-
-
 def _validate_css_descriptor(val: str, field_name: str) -> str:
     cleaned = val.strip()
     if not cleaned:
@@ -329,6 +87,42 @@ def _validate_css_descriptor(val: str, field_name: str) -> str:
         )
     except ValueError as exc:
         raise ValueError(f"Invalid CSS {field_name} descriptor value: {val!r}") from exc
+
+
+def _normalize_weight_css(weight_css: str) -> str:
+    cleaned = _validate_css_descriptor(weight_css, "font-weight").strip().lower()
+    if "(" in cleaned:
+        return cleaned
+    tokens = [_CSS_WEIGHT_KEYWORDS.get(t, t) for t in cleaned.split()]
+    if len(tokens) == 2 and tokens[0] == tokens[1]:
+        return tokens[0]
+    return " ".join(tokens)
+
+
+def _normalize_stretch_css(stretch_css: str | None) -> str:
+    if stretch_css is None:
+        return "100%"
+    cleaned = _validate_css_descriptor(stretch_css, "font-stretch").strip().lower()
+    if "(" in cleaned:
+        return cleaned
+    tokens = [_CSS_WIDTH_KEYWORDS.get(t, t) for t in cleaned.split()]
+    if len(tokens) == 2 and tokens[0] == tokens[1]:
+        return tokens[0]
+    return " ".join(tokens)
+
+
+def _normalize_style_css(style_css: str) -> str:
+    cleaned = _validate_css_descriptor(style_css, "font-style").strip().lower()
+    if cleaned in ("oblique 0deg", "oblique 0deg 0deg"):
+        return "normal"
+    return cleaned
+
+
+def _slug_axis_token(text: str, *, prefix: str = "") -> str:
+    s = text.lower().replace("%", "").replace(".", "p")
+    s = re.sub(r"(^|[\s(,])-", r"\1neg", s)
+    s = re.sub(r"[^a-z0-9]+", "_", s).strip("_")
+    return f"{prefix}{s or 'custom'}"
 
 
 @dataclass(frozen=True, slots=True)
@@ -379,27 +173,9 @@ class FontMetadata:
 
 
 def slugify_family(name: str) -> str:
-    """Convert a font family name (e.g. 'GenSou Sans JP' or '源ノ角ゴシック') into a deterministic ASCII filename slug."""
-    cleaned = unicodedata.normalize("NFKC", name.strip())
-    if not cleaned:
-        return "font"
-    decomposed = "".join(
-        ch
-        for ch in unicodedata.normalize("NFKD", cleaned)
-        if not unicodedata.combining(ch)
-    )
-    ascii_slug = re.sub(r"[^a-zA-Z0-9]+", "-", decomposed).strip("-").lower()
-    has_non_ascii_alnum = any(
-        ord(ch) > 0x7F and unicodedata.category(ch)[0] in ("L", "N")
-        for ch in decomposed
-    )
-    if has_non_ascii_alnum or (
-        not ascii_slug and any(ord(ch) > 0x7F for ch in cleaned)
-    ):
-        digest8 = hashlib.sha256(cleaned.encode("utf-8")).hexdigest()[:8]
-        prefix = ascii_slug or "font"
-        return f"{prefix}-{digest8}"
-    return ascii_slug or "font"
+    """Convert a font family name (e.g. 'GenSou Sans JP') into a URL/filename slug ('gensou-sans-jp')."""
+    s = re.sub(r"[^a-zA-Z0-9]+", "-", name.strip()).strip("-").lower()
+    return s or "font"
 
 
 def _fmt_num(val: float) -> str:
@@ -609,21 +385,15 @@ def validate_and_compute_variant_suffixes(
             "Slice each family separately, or pass `--family` / `family_name=...` explicitly if unifying them."
         )
 
-    normalized_axes: list[
-        tuple[tuple[str, ...], tuple[str, ...], tuple[tuple[str, ...], ...]]
-    ] = []
-    seen_descriptors: set[tuple[tuple[str, ...], tuple[str, ...], tuple[str, ...]]] = (
-        set()
-    )
+    normalized_axes: list[tuple[str, str, tuple[str, ...]]] = []
+    seen_descriptors: set[tuple[str, str, str]] = set()
     for m in raw_metas:
-        w_key = _normalize_weight_descriptor(m.weight_css)
-        s_key = _normalize_stretch_descriptor(m.stretch_css)
+        w_key = _normalize_weight_css(m.weight_css)
+        s_key = _normalize_stretch_css(m.stretch_css)
         raw_styles = m.styles_css or (m.style_css,)
-        st_keys = tuple(
-            dict.fromkeys(_normalize_style_descriptor(st) for st in raw_styles)
-        )
+        st_keys = tuple(dict.fromkeys(_normalize_style_css(st) for st in raw_styles))
         for st_raw, st_key in zip(
-            raw_styles, (_normalize_style_descriptor(s) for s in raw_styles)
+            raw_styles, (_normalize_style_css(s) for s in raw_styles)
         ):
             desc_key = (w_key, s_key, st_key)
             if desc_key in seen_descriptors:
@@ -649,13 +419,11 @@ def validate_and_compute_variant_suffixes(
         else:
             parts: list[str] = []
             if has_multiple_stretches:
-                parts.append(_format_stretch_suffix_token(s_key))
-            parts.append(_format_weight_suffix_token(w_key))
-            non_normal_styles = [sk for sk in st_keys if sk != ("normal",)]
+                parts.append(_slug_axis_token(s_key, prefix="w"))
+            parts.append(_slug_axis_token(w_key))
+            non_normal_styles = [sk for sk in st_keys if sk != "normal"]
             if has_multiple_styles and non_normal_styles:
-                parts.append(
-                    "-".join(_format_style_suffix_token(sk) for sk in non_normal_styles)
-                )
+                parts.append("-".join(_slug_axis_token(sk) for sk in non_normal_styles))
             suf = "-".join(parts)
         if suf in seen_suffixes:
             raise ValueError(
