@@ -11,7 +11,6 @@ import copy
 import hashlib
 import io
 import os
-import re
 import secrets
 from collections.abc import Iterator
 from concurrent.futures import ProcessPoolExecutor
@@ -31,17 +30,6 @@ from cleome._output.paths import (
 )
 from cleome._plan.bundle import _filter_active_slices
 from cleome._plan.config import SliceConfig, SliceSpec
-
-_CLEOME_SLICE_STEM_SUFFIX_RE = re.compile(
-    r"-(?:latin|kana-core|hangul-core|cjk-core|symbols-ui|symbols-ext(?:-\d+)?|(?:kanji|hanzi|hangul|hanja)-(?:freq|rare)-\d+)(?:-[0-9a-f]{8})?$"
-)
-_SUFFIX_NUM_PAT = r"(?:neg)?(?:\d+(?:p\d+)?(?:em?\d+)?|[0-9pem]{8}h[0-9a-f]{6})"
-_STRETCH_SUFFIX_PAT = rf"(?:wauto|wexpr_(?:[a-z0-9_]+_)?[0-9a-f]{{6}}|w{_SUFFIX_NUM_PAT}(?:_{_SUFFIX_NUM_PAT})?)"
-_WEIGHT_SUFFIX_PAT = rf"(?:auto|expr_(?:[a-z0-9_]+_)?[0-9a-f]{{6}}|{_SUFFIX_NUM_PAT}(?:_{_SUFFIX_NUM_PAT})?)"
-_STYLE_SUFFIX_PAT = rf"(?:italic|oblique(?:_expr_(?:[a-z0-9_]+_)?[0-9a-f]{{6}}|_{_SUFFIX_NUM_PAT}deg(?:_{_SUFFIX_NUM_PAT}deg)?)?|left|right|auto)"
-_AUTO_VARIANT_SUFFIX_RE = re.compile(
-    rf"^(?:{_STRETCH_SUFFIX_PAT}-)?{_WEIGHT_SUFFIX_PAT}(?:-{_STYLE_SUFFIX_PAT})*$"
-)
 
 
 @dataclass(frozen=True, slots=True)
@@ -386,61 +374,50 @@ def _prepare_worker_source(
     return font_or_bytes, bool(config.uvs_base_repair and meta.patched_uvs_codepoints)
 
 
-def _extract_cleome_slice_prefix(stem: str) -> str | None:
-    """Strip `-<slice_id>(-<hash8>)` from a `.woff2` stem and return `<slug>(-<variant>)`, or `None`."""
-    match = _CLEOME_SLICE_STEM_SUFFIX_RE.search(stem)
-    if match is None or match.start() == 0:
-        return None
-    return stem[: match.start()]
-
-
 def _prune_superseded_hashed_slices(
     slices_dir: Path,
     built_files: list[BuiltSliceFile],
     metas: list[FontMetadata],
     *,
-    bundle_slug: str | None = None,
+    owned_filenames: set[str] | None = None,
 ) -> None:
     """
     Delete superseded `.woff2` slice files in `slices_dir` not present in `built_files`.
-    When `bundle_slug` is provided (`slice_font` / `slice_fonts`), prunes all orphaned hashed or
-    unhashed slices belonging to `bundle_slug`; otherwise prunes superseded `<stem>-<hash8>.woff2`
+    When `owned_filenames` is provided (`slice_font` / `slice_fonts` recorded bundle ownership),
+    prunes orphaned files from `owned_filenames`; otherwise prunes superseded `<stem>-<hash8>.woff2`
     files for the stems in `built_files`.
     """
     if not slices_dir.is_dir():
         return
     active_filenames = {bf.filename for bf in built_files}
-    if bundle_slug is None:
-        if not built_files:
-            return
-        meta_by_suffix = {m.variant_suffix: m for m in metas}
-        target_base_stems = {
-            Path(
-                bf.spec.filename(
-                    meta_by_suffix[bf.variant_suffix].slug,
-                    bf.variant_suffix,
-                )
-            ).stem
-            for bf in built_files
-            if bf.variant_suffix in meta_by_suffix
-        }
-        if not target_base_stems:
+    if owned_filenames is not None:
+        stale_names = owned_filenames - active_filenames
+        if not stale_names:
             return
         for existing in slices_dir.iterdir():
             if (
-                not existing.is_file()
-                or existing.suffix != ".woff2"
-                or existing.name in active_filenames
+                existing.is_file()
+                and existing.suffix == ".woff2"
+                and existing.name in stale_names
             ):
-                continue
-            split_res = _split_hashed_stem(existing.stem)
-            if split_res is not None and split_res[0] in target_base_stems:
                 existing.unlink(missing_ok=True)
         return
 
-    target_prefixes = {
-        f"{m.slug}-{m.variant_suffix}" if m.variant_suffix else m.slug for m in metas
+    if not built_files:
+        return
+    meta_by_suffix = {m.variant_suffix: m for m in metas}
+    target_base_stems = {
+        Path(
+            bf.spec.filename(
+                meta_by_suffix[bf.variant_suffix].slug,
+                bf.variant_suffix,
+            )
+        ).stem
+        for bf in built_files
+        if bf.variant_suffix in meta_by_suffix
     }
+    if not target_base_stems:
+        return
     for existing in slices_dir.iterdir():
         if (
             not existing.is_file()
@@ -448,14 +425,8 @@ def _prune_superseded_hashed_slices(
             or existing.name in active_filenames
         ):
             continue
-        prefix = _extract_cleome_slice_prefix(existing.stem)
-        if prefix is None:
-            continue
-        is_target = prefix in target_prefixes or prefix == bundle_slug
-        if not is_target and prefix.startswith(f"{bundle_slug}-"):
-            rem = prefix[len(bundle_slug) + 1 :]
-            is_target = _AUTO_VARIANT_SUFFIX_RE.match(rem) is not None
-        if is_target:
+        split_res = _split_hashed_stem(existing.stem)
+        if split_res is not None and split_res[0] in target_base_stems:
             existing.unlink(missing_ok=True)
 
 

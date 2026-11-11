@@ -29,10 +29,10 @@ from cleome._names import (
     _validate_filename_token,
 )
 from cleome._output.css import (
-    _BLOCK_GLYPHS_RE,
-    _CACHE_COMMENT_RE,
     _CACHE_FORMAT_VERSION,
     _compute_slices_output_digest,
+    _parse_cleome_css_bundle,
+    _read_cleome_css_bundle_slices,
     generate_css,
 )
 from cleome._output.paths import _resolve_and_validate_outputs
@@ -181,50 +181,23 @@ def _try_load_cached_bundle(
     except OSError, UnicodeDecodeError:
         return None
 
-    lines = css_text.splitlines()
-    if len(lines) < 2:
-        return None
-    match = _CACHE_COMMENT_RE.match(lines[1].strip())
+    parsed_css = _parse_cleome_css_bundle(css_text)
     if (
-        match is None
-        or int(match.group("version")) != _CACHE_FORMAT_VERSION
-        or match.group("key") != cache_key
+        parsed_css is None
+        or parsed_css.version != _CACHE_FORMAT_VERSION
+        or parsed_css.cache_key != cache_key
     ):
         return None
-    expected_out_digest = match.group("out")
-
-    # Extract per-block glyph counts from `/* [slice-id] ... (N glyphs, M.K KB) */` lines
-    block_glyphs: list[int] = []
-    for line in lines[2:]:
-        bm = _BLOCK_GLYPHS_RE.match(line.strip())
-        if bm is not None:
-            block_glyphs.append(int(bm.group("glyphs")))
+    expected_out_digest = parsed_css.out_digest
 
     expected_block_count = sum(
         len(m.styles_css) * len(active_plan)
         for m, active_plan in zip(metas, active_variant_plans)
     )
-    if len(block_glyphs) != expected_block_count:
+    if len(parsed_css.blocks) != expected_block_count:
         return None
 
     slices_dir_resolved = slices_dir.resolve()
-    hashed_by_stem: dict[str, str] = {}
-    if has_active_slices and config.filename_hash:
-        try:
-            for existing in slices_dir.iterdir():
-                if not existing.is_file() or existing.suffix != ".woff2":
-                    continue
-                split_res = _split_hashed_stem(existing.stem)
-                if split_res is not None:
-                    base_stem = split_res[0]
-                    if base_stem in hashed_by_stem:
-                        # Ambiguous multiple hashed files for the same stem
-                        hashed_by_stem[base_stem] = ""
-                    else:
-                        hashed_by_stem[base_stem] = existing.name
-        except OSError:
-            return None
-
     per_meta_files: list[list[BuiltSliceFile]] = []
     all_built_files: list[BuiltSliceFile] = []
     out_hasher = hashlib.sha256()
@@ -233,25 +206,32 @@ def _try_load_cached_bundle(
     for m, active_specs in zip(metas, active_variant_plans):
         num_styles = len(m.styles_css)
         n_specs = len(active_specs)
-        # First style block carries the glyph counts for this variant's active slices
-        variant_glyph_counts = block_glyphs[block_cursor : block_cursor + n_specs]
+        # First style block carries the glyph counts and filenames for this variant's active slices
+        variant_blocks = parsed_css.blocks[block_cursor : block_cursor + n_specs]
         block_cursor += num_styles * n_specs
         variant_files: list[BuiltSliceFile] = []
 
-        for spec, glyph_count in zip(active_specs, variant_glyph_counts):
-            if glyph_count <= 0:
+        for spec, (block_slice_id, glyph_count, recorded_fname) in zip(
+            active_specs, variant_blocks
+        ):
+            if block_slice_id != spec.slice_id or glyph_count <= 0:
                 return None
             base_fname = _validate_filename_token(
                 spec.filename(m.slug, m.variant_suffix), "slice filename"
             )
             if config.filename_hash:
-                expected_fname = hashed_by_stem.get(Path(base_fname).stem, "")
-                if not expected_fname:
+                try:
+                    expected_fname = _validate_filename_token(
+                        recorded_fname, "slice filename"
+                    )
+                except ValueError:
                     return None
-                expected_fname = _validate_filename_token(
-                    expected_fname, "slice filename"
-                )
+                split_res = _split_hashed_stem(Path(expected_fname).stem)
+                if split_res is None or split_res[0] != Path(base_fname).stem:
+                    return None
             else:
+                if recorded_fname != base_fname:
+                    return None
                 expected_fname = base_fname
             slice_path = slices_dir / expected_fname
             try:
@@ -311,6 +291,59 @@ def _try_load_cached_bundle(
         cached=True,
         locale=resolved_locale,
     )
+
+
+def _collect_previous_bundle_slices(
+    css_path: Path,
+    out_path: Path,
+    bundle_slug: str,
+) -> set[str]:
+    """
+    Inspect `css_path` (before overwriting it) and sibling Cleome `.css` files in `out_path` /
+    `css_path.parent` to return `.woff2` slice filenames owned by previous builds of this bundle
+    while excluding slices still referenced by another slug's stylesheet.
+    """
+    owned_candidates: set[str] = set()
+    protected_other_slugs: set[str] = set()
+    target_css_resolved = css_path.resolve()
+
+    if css_path.is_file():
+        parsed = _read_cleome_css_bundle_slices(css_path)
+        if parsed is not None:
+            owned_candidates.update(parsed[1])
+
+    scan_dirs = [out_path]
+    if css_path.parent.resolve() != out_path.resolve():
+        scan_dirs.append(css_path.parent)
+
+    seen_css: set[Path] = {target_css_resolved}
+    for d in scan_dirs:
+        if not d.is_dir():
+            continue
+        try:
+            entries = list(d.iterdir())
+        except OSError:
+            continue
+        for entry in entries:
+            if not entry.is_file() or entry.suffix != ".css":
+                continue
+            try:
+                resolved_entry = entry.resolve()
+            except OSError:
+                continue
+            if resolved_entry in seen_css:
+                continue
+            seen_css.add(resolved_entry)
+            parsed = _read_cleome_css_bundle_slices(entry)
+            if parsed is None:
+                continue
+            entry_slug, entry_files = parsed
+            if entry_slug == bundle_slug:
+                owned_candidates.update(entry_files)
+            else:
+                protected_other_slugs.update(entry_files)
+
+    return owned_candidates - protected_other_slugs
 
 
 def slice_fonts(
@@ -462,6 +495,11 @@ def slice_fonts(
             css_path=outputs.css_path,
             slices_dir=outputs.slices_dir,
         )
+        previous_owned_slices = _collect_previous_bundle_slices(
+            outputs.css_path,
+            outputs.out_path,
+            prepared.slug,
+        )
         with _atomic_output_file(outputs.css_path, mode="w", encoding="utf-8") as tf:
             tf.write(css_text)
 
@@ -469,7 +507,7 @@ def slice_fonts(
             outputs.slices_dir,
             all_built_files,
             prepared.metas,
-            bundle_slug=prepared.slug,
+            owned_filenames=previous_owned_slices,
         )
 
         return SliceBundleResult(

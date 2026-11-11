@@ -2054,6 +2054,68 @@ class TestSubsetterAndShaping(unittest.TestCase):
             self.assertTrue(all(bf.path.is_file() for bf in r_base_2.built_files))
             self.assertTrue(all(not bf.path.exists() for bf in r_base_1.built_files))
 
+            # 3g. Shared slices_dir preserves another slug whose name looks like a variant suffix
+            # (`example-400` vs single-font and multi-font `example`)
+            num_slug_dir = tmp_path / "shared_numeric_slug"
+            f_ex400 = create_synthetic_ttfont(
+                [ord("A"), ord("B")], family_name="Example 400"
+            )
+            f_ex_reg = create_synthetic_ttfont(
+                [ord("A")], family_name="Example", weight=400
+            )
+            f_ex_bold = create_synthetic_ttfont(
+                [ord("A")], family_name="Example", weight=700
+            )
+            r_ex400 = slice_font(f_ex400, num_slug_dir, workers=1)
+            self.assertEqual(r_ex400.slug, "example-400")
+            self.assertTrue(all(bf.path.is_file() for bf in r_ex400.built_files))
+
+            r_ex_single = slice_font(f_ex_reg, num_slug_dir, workers=1)
+            self.assertEqual(r_ex_single.slug, "example")
+            self.assertTrue(
+                all(bf.path.is_file() for bf in r_ex400.built_files),
+                "Building slug 'example' must not delete slices owned by slug 'example-400'",
+            )
+            self.assertTrue(all(bf.path.is_file() for bf in r_ex_single.built_files))
+
+            r_ex_multi = slice_fonts([f_ex_reg, f_ex_bold], num_slug_dir, workers=1)
+            self.assertTrue(
+                all(bf.path.is_file() for bf in r_ex400.built_files),
+                "Multi-font 'example' (400/700) must not delete slices owned by 'example-400'",
+            )
+            self.assertTrue(all(bf.path.is_file() for bf in r_ex_multi.built_files))
+
+            # Repeat builds hit cache even when 'example-400' and 'example' (variant 400) share stem 'example-400-latin'
+            self.assertTrue(slice_font(f_ex400, num_slug_dir, workers=1).cached)
+            self.assertTrue(
+                slice_fonts([f_ex_reg, f_ex_bold], num_slug_dir, workers=1).cached
+            )
+
+            # Rebuilding 'example' back to single-font prunes 'example's own 400/700 slices
+            # while still preserving 'example-400's active slices!
+            r_ex_single_again = slice_font(f_ex_reg, num_slug_dir, workers=1)
+            self.assertTrue(all(bf.path.is_file() for bf in r_ex400.built_files))
+            self.assertTrue(
+                all(bf.path.is_file() for bf in r_ex_single_again.built_files)
+            )
+            self.assertTrue(all(not bf.path.exists() for bf in r_ex_multi.built_files))
+
+            # Even when 'example-400' and 'example' (variant 400) produce byte-identical .woff2 files,
+            # rebuilding 'example' to single-font preserves the shared file referenced by example-400.css.
+            same_hash_dir = tmp_path / "shared_identical_hash_slug"
+            r_same_400 = slice_font(
+                f_ex_reg, same_hash_dir, family_name="Example 400", workers=1
+            )
+            r_same_multi = slice_fonts([f_ex_reg, f_ex_bold], same_hash_dir, workers=1)
+            self.assertEqual(
+                r_same_400.built_files[0].filename,
+                r_same_multi.built_files[0].filename,
+            )
+            r_same_single = slice_font(f_ex_reg, same_hash_dir, workers=1)
+            self.assertTrue(r_same_400.built_files[0].path.is_file())
+            self.assertTrue(r_same_single.built_files[0].path.is_file())
+            self.assertFalse(r_same_multi.built_files[1].path.exists())
+
 
 if __name__ == "__main__":
     unittest.main()
