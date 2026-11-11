@@ -1,35 +1,23 @@
-# Cleome
+# AGENTS.md
 
-Cleome (`cleome`) is a Python (`>= 3.15`) CLI tool and library that inspects Japanese, Korean, and Chinese (`jp`, `kr`, `sc`, `tc`, `hk`) variable and static fonts (`.ttf` / `.otf`) and generates 4-tier `unicode-range` `.woff2` slices and `@font-face` CSS using CSS cascade shadowing and inverted-pyramid frequency granularity.
+Cleome (`cleome`) is a Python (`>= 3.15`) CLI tool and library that inspects Japanese, Korean, and Chinese (`jp`, `kr`, `sc`, `tc`, `hk`) variable and static fonts (`.ttf` / `.otf`) and generates 4-tier `unicode-range` `.woff2` slices and `@font-face` CSS.
+
 
 ## Commands
 
-* Install dependencies (`uharfbuzz`): `uv sync`
-* Lint check: `uv run ruff check`
-* Format check: `uv run ruff format --check`
-* Run test suite (`pytest` + HarfBuzz shaping verification): `uv run pytest`
-  * Test placement: `tests/test_slicer_and_locales.py` covers `_plan` (locale, data, bundle); `tests/test_subsetter_and_shaping.py` covers `_font`, `_output`, `_pipeline`, and `_plan.config`; `tests/test_cli.py` covers `cli` and end-to-end runs. Add a new test to the file for the module it exercises; when none matches, create `tests/test_<module>.py` instead of appending to an unrelated file.
-* Preview a 4-tier slice plan without writing files (read-only): `uv run cleome plan <font.ttf> [--json]`
-* Build `.woff2` slices and `@font-face` CSS: `uv run cleome build <font.ttf> -o dist/ [--css-out <path.css>] [--no-filename-hash] [--dry-run]`
+* Install dependencies (`uharfbuzz`) with `uv sync`.
+* Check lint and formatting with `uv run ruff check` and `uv run ruff format --check`.
+* Run the test suite (`pytest` and `uharfbuzz` shaping checks) with `uv run pytest`. Place new tests in `tests/test_slicer_and_locales.py` (`_plan`), `tests/test_subsetter_and_shaping.py` (`_font`, `_output`, `_pipeline`, `_plan.config`), or `tests/test_cli.py` (`cli` and end-to-end runs), or create `tests/test_<module>.py` when none fits.
+* Preview a 4-tier slice plan without writing files (read-only) with `uv run cleome plan <font.ttf> [--json]`.
+* Build `.woff2` slices and `@font-face` CSS with `uv run cleome build <font.ttf> -o dist/ [--css-out <path.css>] [--no-filename-hash] [--dry-run]`.
 
-## Architecture and invariants
 
-* **Entrypoint guard (`spawn` / `forkserver`).** Guard runnable scripts and `README.md` or `skills/cleome/SKILL.md` Python examples with `if __name__ == "__main__":`, and pass worker configuration through process pool initializer arguments rather than module globals.
-* **Deterministic, non-destructive font handling.** Open fonts with `recalcTimestamp=False` so repeated builds produce byte-identical `.woff2` files, retain license records (`nameID` `0`, `13`, `14`) in every slice, and never mutate caller-supplied `TTFont` objects in public inspection or slicing APIs (only `patch_uvs_missing_base_cmap` mutates in place).
-* **CSS serialization via Stixis.** Delegate `@font-face` AST validation, PEP 750 `Template` (`t"..."`) escaping, and `<urange>` parsing, formatting, and compaction to `stixis` (`SerializationOptions.cleome()`) rather than formatting raw CSS strings by hand.
-* **Explicit validation.** `SliceConfig` and public helpers reject empty or out-of-range values (such as an empty `layout_features` or a negative `max_gap`) with `ValueError` instead of dropping or clamping them.
-* **Single resolution.** Resolve the bundle's slicing locale and the active slices each font uses once in `_prepare_font_bundle` and pass them down instead of recomputing them across modules.
-* **CLI contract.** `cleome plan` (`src/cleome/cli.py`) is read-only and never creates output directories or imports subsetting workers. Never mix `nargs="*"` or `"+"` optional flags with positional arguments.
-* **Public API sync.** When changing public APIs, CLI flags, or slicing behavior, update [`skills/cleome/SKILL.md`](skills/cleome/SKILL.md), `README.md`, and the relevant guide under `.agents/docs/`. Even in a `refactor`, update [`skills/cleome/SKILL.md`](skills/cleome/SKILL.md) and `README.md` whenever a public function's parameters or accepted types change.
+## Core rules
 
-## Documentation ownership
-
-* **Design background and rationale:** [`docs/architecture-and-rationale.md`](docs/architecture-and-rationale.md)
-* **Consumer deployment and usage:** [`docs/hosting-and-usage.md`](docs/hosting-and-usage.md)
-* **Public API contract:** [`skills/cleome/SKILL.md`](skills/cleome/SKILL.md)
-* **Editing rules for contributors and agents:** `.agents/docs/`
-
-## Domain guides
-
-* Read [.agents/docs/subsetting-and-shaping.md](.agents/docs/subsetting-and-shaping.md) when modifying `unicode-range` compaction (`src/cleome/_plan/urange.py`), the 4-tier slicing planner (`src/cleome/_plan/config.py`, `src/cleome/_plan/builder.py`, `src/cleome/_plan/bundle.py`), locale detection (`src/cleome/_plan/locale.py`), or `fontTools.subset` and `cmap` Format 14 UVS handling (`src/cleome/_font/subset.py`, `src/cleome/_font/uvs.py`).
-* Read [.agents/docs/css-and-metadata.md](.agents/docs/css-and-metadata.md) when modifying OpenType descriptor extraction (`src/cleome/_font/metadata.py`), filename token and content-hash stem validation (`src/cleome/_names.py`), output path and URL resolution (`src/cleome/_output/paths.py`), `@font-face` stylesheet generation (`src/cleome/_output/css.py`), or cached multi-variant bundling (`src/cleome/_pipeline.py`).
+* **Entrypoint guard (`spawn` / `forkserver`).** Guard runnable scripts and Python examples in `README.md` or `skills/cleome/SKILL.md` with `if __name__ == "__main__":`, and pass worker configuration through process pool initializer arguments rather than module globals.
+* **Deterministic, non-destructive font handling.** Open fonts with `recalcTimestamp=False` so repeated builds emit byte-identical `.woff2` files, retain license records (`nameID` `0`, `13`, `14`) in every slice, and never mutate caller-supplied `TTFont` objects in public APIs except `patch_uvs_missing_base_cmap`.
+* **Delegate CSS handling to Stixis.** Delegate `@font-face` AST validation, PEP 750 `Template` (`t"..."`) escaping, `<urange>` parsing, formatting, and compaction, and CSS descriptor canonicalization to `stixis` (`SerializationOptions.cleome()`) rather than implementing custom CSS or math parsers in `cleome`.
+* **CSS cascade shadowing and plane boundaries.** Order `@font-face` declarations from lowest priority (`Tier 4`) to highest (`Tier 1`), bridge `unicode-range` gaps in an earlier tier only across unmapped code points or code points shadowed by a higher-priority later tier, and never bridge ranges across different Unicode planes.
+* **Intra-slice OpenType shaping and `cmap` Format 14 UVS.** Keep base characters in the same slice as their combining marks or paired brackets so `fontTools.subset` retains multi-glyph `GSUB` and `GPOS` lookups (verify partitioning or subsetting changes with `uharfbuzz`), and retain default and non-default Format 14 UVS/IVS records for slice base characters without adding standalone variation selectors to Format 4 or Format 12 `cmap` (separate from `patch_uvs_missing_base_cmap`).
+* **Multi-font bundling and atomic slice pruning.** Build each bundled variant's slices from its own mapped code points, include `"normal"` in `font-style` only when the font's axis ranges cover an upright form (`ital < 0.5`, `0deg` within `slnt`), reject colliding canonicalized descriptors, colliding filename suffixes, or scalar single-font overrides across multiple fonts with `ValueError` rather than auto-numbering (`-2`, `-3`), and prune superseded content-hashed `.woff2` files only after the new CSS file has been written atomically.
+* **CLI and public contract.** Keep `cleome plan` (`src/cleome/cli.py`) read-only (no output directories or subsetting worker imports), and update [`skills/cleome/SKILL.md`](skills/cleome/SKILL.md) (plus affected sections of `README.md`, [`docs/hosting-and-usage.md`](docs/hosting-and-usage.md), or [`docs/architecture-and-rationale.md`](docs/architecture-and-rationale.md)) whenever public APIs, accepted types, or CLI flags change.
