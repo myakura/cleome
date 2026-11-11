@@ -2,8 +2,6 @@
 CSS `unicode-range` formatting, parsing, and cascade-shadowing range compaction utilities.
 """
 
-from collections.abc import Iterable
-
 from stixis import (
     SerializationOptions,
     compact_urange,
@@ -23,10 +21,6 @@ __all__ = [
 ]
 
 
-def _is_plain_int(val: object) -> bool:
-    return isinstance(val, int) and not isinstance(val, bool)
-
-
 def format_unicode_range(
     codepoints: CodepointSet | list[int] | tuple[int, int],
 ) -> str:
@@ -36,10 +30,7 @@ def format_unicode_range(
             raise ValueError(
                 f"tuple codepoints must be a 2-element (start, end) interval, got {len(codepoints)} elements"
             )
-        start, end = codepoints
-        if not (_is_plain_int(start) and _is_plain_int(end)):
-            raise TypeError("tuple codepoints bounds (start, end) must be integers")
-        return format_urange((start, end), options=_CLEOME_CSS_OPTIONS)
+        return format_urange(codepoints, options=_CLEOME_CSS_OPTIONS)
 
     if not isinstance(codepoints, (set, frozenset, list)):
         raise TypeError(
@@ -48,12 +39,6 @@ def format_unicode_range(
 
     if not codepoints:
         return ""
-
-    for cp in codepoints:
-        if not _is_plain_int(cp):
-            raise TypeError(
-                f"codepoints elements must be integers, got {type(cp).__name__}"
-            )
 
     return format_urange(codepoints, options=_CLEOME_CSS_OPTIONS)
 
@@ -71,47 +56,23 @@ def compact_unicode_range(
     max_gap: int = 0x80,
 ) -> str:
     """
-    Merge adjacent target codepoints into contiguous hex ranges `[start, end]` whenever:
-    1. The gap between consecutive target codepoints (`cp - prev`) is `<= max_gap` (`max_gap >= 0`), AND
+    Merge target codepoints into contiguous hex ranges `[start, end]` whenever:
+    1. Adjacent codepoints are contiguous (`cp - prev == 1`) or separated by `cp - prev <= max_gap` (`max_gap >= 0`), AND
     2. The open interval `(prev, cp)` contains ZERO codepoints from `forbidden_sorted`
        (verified in O(log F) via binary search).
     """
-    if not _is_plain_int(max_gap):
+    if isinstance(max_gap, bool) or not isinstance(max_gap, int):
         raise TypeError(f"max_gap must be an int, got {type(max_gap).__name__}")
     if max_gap < 0:
         raise ValueError(f"max_gap must be >= 0, got {max_gap}")
-    if isinstance(sorted_target_cps, (str, bytes)) or not isinstance(
-        sorted_target_cps, Iterable
+    if (
+        isinstance(sorted_target_cps, (list, tuple, set, frozenset))
+        and not sorted_target_cps
     ):
-        raise TypeError(
-            f"sorted_target_cps must be an iterable of ints, got {type(sorted_target_cps).__name__}"
-        )
-    if isinstance(forbidden_sorted, (str, bytes)) or not isinstance(
-        forbidden_sorted, Iterable
-    ):
-        raise TypeError(
-            f"forbidden_sorted must be an iterable of ints, got {type(forbidden_sorted).__name__}"
-        )
-    if not isinstance(sorted_target_cps, (list, tuple, set, frozenset)):
-        sorted_target_cps = list(sorted_target_cps)
-    if not sorted_target_cps:
         return ""
-    if max_gap == 0:
-        compact_urange(
-            sorted_target_cps,
-            forbidden_sorted,
-            max_gap=0,
-            options=_CLEOME_CSS_OPTIONS,
-        )
-        discrete_intervals = [(cp, cp) for cp in sorted(set(sorted_target_cps))]
-        return format_urange(
-            discrete_intervals,
-            coalesce=False,
-            options=_CLEOME_CSS_OPTIONS,
-        )
     return compact_urange(
         sorted_target_cps,
         forbidden_sorted,
-        max_gap=max_gap - 1,
+        max_gap=max(0, max_gap - 1),
         options=_CLEOME_CSS_OPTIONS,
     )
