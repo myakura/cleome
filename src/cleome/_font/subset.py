@@ -29,7 +29,7 @@ from cleome._output.paths import (
     _validate_slice_output_path,
 )
 from cleome._plan.bundle import _filter_active_slices
-from cleome._plan.config import SliceConfig, SliceSpec
+from cleome._plan.config import SliceConfig, SliceSpec, _validate_workers
 
 
 @dataclass(frozen=True, slots=True)
@@ -421,8 +421,7 @@ def _export_woff2_slices_batch(
     Generate `.woff2` slice files in `slices_dir` for one or more font variants using a single
     shared worker pool and heavy-first task scheduling.
     """
-    if workers is not None and workers <= 0:
-        raise ValueError(f"workers must be >= 1, got {workers}")
+    _validate_workers(workers)
     if is_woff_hints is not None and len(is_woff_hints) != len(variants):
         raise ValueError(
             f"is_woff_hints length ({len(is_woff_hints)}) must match variants length ({len(variants)})"
@@ -464,10 +463,9 @@ def _export_woff2_slices_batch(
             font_items.append((spec, fname, out_str))
         per_font_items.append(font_items)
 
+    slices_dir.mkdir(parents=True, exist_ok=True)
     if not sortable_tasks:
         return [[] for _ in variants]
-
-    slices_dir.mkdir(parents=True, exist_ok=True)
 
     # Schedule largest slices first with deterministic (font_idx, spec_idx) tie-breaking
     sortable_tasks.sort(key=lambda item: (item[0], item[1], item[2]))
@@ -559,8 +557,13 @@ def export_woff2_slices(
     """
     Generate `.woff2` slice files in `slices_dir` for all `slice_specs` using parallel workers.
 
+    When `slice_specs` yields zero active slices for `meta`, `slices_dir` is created empty and
+    `[]` is returned without spawning workers. `workers` must be `None` or an `int >= 1` (`bool`
+    and non-`int` values raise `TypeError`; `< 1` raises `ValueError`).
+
     When `config.filename_hash` is `True` (default), superseded `<stem>-<hash8>.woff2` files
-    for the same variant in `slices_dir` are pruned immediately after the new slices are written.
+    matching stems built in the current run in `slices_dir` are pruned immediately after the new
+    slices are written.
     Callers that also maintain an on-disk `@font-face` stylesheet in the same directory must
     regenerate and write that CSS (via `generate_css`) immediately afterwards, or use
     `slice_font` / `slice_fonts` which write the new CSS atomically before pruning superseded slices.

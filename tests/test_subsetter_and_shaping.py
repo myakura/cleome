@@ -1782,6 +1782,240 @@ class TestSubsetterAndShaping(unittest.TestCase):
                     slice_fonts([f1, f2], out_dir=err_dir, workers=1, **kw)
                 self.assertFalse(err_dir.exists())
 
+    def test_slice_config_slices_subdir_normalization_and_cache_sharing(self) -> None:
+        """
+        Verify `SliceConfig.slices_subdir` normalizes relative paths lexically after rejecting
+        prohibited inputs, emits clean URL prefixes, and shares bundle cache keys across
+        equivalent relative directory spellings.
+        """
+        from unittest.mock import patch
+
+        from cleome._output.paths import _resolve_url_prefix
+
+        norm_cases = (
+            ("  slices/ ", "slices", "./slices/"),
+            ("./slices", "slices", "./slices/"),
+            ("./", ".", "./"),
+            (".", ".", "./"),
+            ("a//b/", "a/b", "./a/b/"),
+            ("a/./b/", "a/b", "./a/b/"),
+        )
+        for raw_subdir, expected_subdir, expected_url in norm_cases:
+            cfg = SliceConfig(slices_subdir=raw_subdir)
+            self.assertEqual(cfg.slices_subdir, expected_subdir)
+            self.assertEqual(_resolve_url_prefix(cfg), expected_url)
+
+        for bad_subdir in (
+            "",
+            "   ",
+            "/",
+            "/abs/slices",
+            "../escape",
+            "./../escape",
+            "a/b/..",
+            "a\\b",
+            "slices\x00",
+        ):
+            with self.assertRaises(ValueError):
+                SliceConfig(slices_subdir=bad_subdir)
+
+        tt = create_synthetic_ttfont([ord("A"), ord("あ")], family_name="Subdir Cache")
+        with tempfile.TemporaryDirectory() as tmp:
+            out_dir = Path(tmp) / "out"
+            r1 = slice_font(
+                tt,
+                out_dir=out_dir,
+                config=SliceConfig(slices_subdir="slices"),
+                workers=1,
+            )
+            self.assertFalse(r1.cached)
+            with patch(
+                "cleome._pipeline._export_woff2_slices_batch",
+                side_effect=AssertionError("Expected cache hit"),
+            ):
+                r2 = slice_font(
+                    tt,
+                    out_dir=out_dir,
+                    config=SliceConfig(slices_subdir="./slices"),
+                    workers=1,
+                )
+                r3 = slice_font(
+                    tt,
+                    out_dir=out_dir,
+                    config=SliceConfig(slices_subdir="  slices/ "),
+                    workers=1,
+                )
+            self.assertTrue(r2.cached)
+            self.assertTrue(r3.cached)
+            self.assertEqual(r2.css_text, r1.css_text)
+            self.assertEqual(r3.css_text, r1.css_text)
+
+    def test_slice_config_and_workers_strict_integer_validation(self) -> None:
+        """
+        Verify `SliceConfig` chunk-size fields and `workers` reject `bool` and non-`int`
+        values with `TypeError` and out-of-range integers with `ValueError`, including on
+        warm cache hits and zero-task invocations.
+        """
+        # Scalar positive-int fields on SliceConfig
+        for field_name in (
+            "freq_tail_chunk_size",
+            "rare_chunk_size",
+            "symbols_ext_chunk_size",
+        ):
+            for bad_type in (True, False, 1.5, "250", None):
+                with self.assertRaises(TypeError):
+                    SliceConfig(**{field_name: bad_type})  # type: ignore[arg-type]
+            for bad_val in (0, -1, -100):
+                with self.assertRaises(ValueError):
+                    SliceConfig(**{field_name: bad_val})
+            cfg_ok = SliceConfig(**{field_name: 1})
+            self.assertEqual(getattr(cfg_ok, field_name), 1)
+
+        # freq_chunks (chunk_size, num_chunks) tuples
+        for bad_chunks_type in (
+            ((True, 2),),
+            ((200, False),),
+            ((1.5, 2),),
+            ((200, 1.5),),
+            (("200", 2),),
+            ((200, None),),
+        ):
+            with self.assertRaises(TypeError):
+                SliceConfig(freq_chunks=bad_chunks_type)  # type: ignore[arg-type]
+        for bad_chunks_val in (
+            ((0, 2),),
+            ((200, 0),),
+            ((-5, 2),),
+            ((200, -1),),
+        ):
+            with self.assertRaises(ValueError):
+                SliceConfig(freq_chunks=bad_chunks_val)
+        self.assertEqual(SliceConfig(freq_chunks=()).freq_chunks, ())
+        self.assertEqual(SliceConfig(freq_chunks=((120, 3),)).freq_chunks, ((120, 3),))
+
+        # workers validation across slice_font, slice_fonts, export_woff2_slices, and batch helper
+        tt = create_synthetic_ttfont([ord("A")], family_name="Workers Check")
+        empty_tt = create_synthetic_ttfont([], family_name="Workers Empty")
+        meta = extract_font_metadata(tt)
+        plan = build_slice_plan(meta.codepoints)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            warm_dir = Path(tmp) / "warm"
+            r_warm = slice_font(tt, out_dir=warm_dir, workers=1)
+            self.assertFalse(r_warm.cached)
+            self.assertTrue(slice_font(tt, out_dir=warm_dir, workers=None).cached)
+
+            for bad_w_type in (True, False, 1.5, "2"):
+                # Warm cache hit path must NOT bypass workers validation
+                with self.assertRaises(TypeError):
+                    slice_font(tt, out_dir=warm_dir, workers=bad_w_type)  # type: ignore[arg-type]
+                with self.assertRaises(TypeError):
+                    slice_fonts([tt], out_dir=warm_dir, workers=bad_w_type)  # type: ignore[arg-type]
+                # Zero-task / empty-cmap / empty-variants paths must NOT bypass workers validation
+                with self.assertRaises(TypeError):
+                    slice_font(
+                        empty_tt,
+                        out_dir=Path(tmp) / "empty_w",
+                        workers=bad_w_type,  # type: ignore[arg-type]
+                    )
+                with self.assertRaises(TypeError):
+                    export_woff2_slices(
+                        tt,
+                        meta,
+                        [],
+                        Path(tmp) / "exp_empty",
+                        workers=bad_w_type,  # type: ignore[arg-type]
+                    )
+                with self.assertRaises(TypeError):
+                    _export_woff2_slices_batch(
+                        [],
+                        Path(tmp) / "batch_empty",
+                        workers=bad_w_type,  # type: ignore[arg-type]
+                    )
+
+            for bad_w_val in (0, -2):
+                with self.assertRaises(ValueError):
+                    slice_font(tt, out_dir=warm_dir, workers=bad_w_val)
+                with self.assertRaises(ValueError):
+                    export_woff2_slices(
+                        tt, meta, plan, Path(tmp) / "exp_bad", workers=bad_w_val
+                    )
+                with self.assertRaises(ValueError):
+                    _export_woff2_slices_batch(
+                        [], Path(tmp) / "batch_bad", workers=bad_w_val
+                    )
+
+    def test_empty_cmap_font_creates_slices_dir_and_hits_cache(self) -> None:
+        """
+        Verify an input font with an empty Unicode `cmap` (0 active slices) creates an empty
+        `slices_dir` and comment-only CSS on the first build without spawning workers, and
+        returns `cached=True` on repeat runs via `_try_load_cached_bundle`.
+        """
+        from unittest.mock import patch
+
+        empty_tt = create_synthetic_ttfont([], family_name="Empty Cmap Font")
+        empty_meta = extract_font_metadata(empty_tt)
+        self.assertEqual(empty_meta.codepoints, frozenset())
+
+        with tempfile.TemporaryDirectory() as tmp:
+            # 0 variants in _export_woff2_slices_batch still returns [] without creating slices_dir
+            zero_var_dir = Path(tmp) / "zero_variants_slices"
+            self.assertEqual(
+                _export_woff2_slices_batch([], zero_var_dir, workers=1), []
+            )
+            self.assertFalse(zero_var_dir.exists())
+
+            # 1 variant with 0 active tasks in export_woff2_slices creates empty slices_dir without workers
+            low_slices_dir = Path(tmp) / "low_empty_slices"
+            with (
+                patch(
+                    "cleome._font.subset._create_worker_context",
+                    side_effect=AssertionError("Worker context should not be created"),
+                ),
+                patch(
+                    "cleome._font.subset.ProcessPoolExecutor",
+                    side_effect=AssertionError("ProcessPoolExecutor should not start"),
+                ),
+            ):
+                built_low = export_woff2_slices(
+                    empty_tt, empty_meta, [], low_slices_dir, workers=2
+                )
+            self.assertEqual(built_low, [])
+            self.assertTrue(low_slices_dir.is_dir())
+            self.assertEqual(list(low_slices_dir.iterdir()), [])
+
+            # High-level slice_font: first run creates empty slices_dir + comment-only CSS (cached=False),
+            # second run hits _try_load_cached_bundle (cached=True) without calling export
+            out_dir = Path(tmp) / "empty_bundle"
+            with (
+                patch(
+                    "cleome._font.subset._create_worker_context",
+                    side_effect=AssertionError("Worker context should not be created"),
+                ),
+                patch(
+                    "cleome._font.subset.ProcessPoolExecutor",
+                    side_effect=AssertionError("ProcessPoolExecutor should not start"),
+                ),
+            ):
+                r1 = slice_font(empty_tt, out_dir=out_dir, workers=2)
+            self.assertFalse(r1.cached)
+            self.assertEqual(r1.built_files, [])
+            self.assertEqual(r1.slice_specs, [])
+            self.assertTrue(r1.css_path.is_file())
+            self.assertTrue(r1.slices_dir.is_dir())
+            self.assertEqual(list(r1.slices_dir.iterdir()), [])
+            self.assertNotIn("@font-face", r1.css_text)
+
+            with patch(
+                "cleome._pipeline._export_woff2_slices_batch",
+                side_effect=AssertionError("Expected cache hit on empty-cmap font"),
+            ):
+                r2 = slice_font(empty_tt, out_dir=out_dir, workers=2)
+            self.assertTrue(r2.cached)
+            self.assertEqual(r2.built_files, [])
+            self.assertEqual(r2.css_text, r1.css_text)
+            self.assertEqual(r2.slices_dir, r1.slices_dir)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -66,7 +66,7 @@ cleome build MyFont-VF.otf -o dist/web \
 
 ## Python API usage
 
-Only the top-level `cleome` package (`cleome.__all__`) is public. See [`skills/cleome/SKILL.md`](https://github.com/myakura/cleome/blob/main/skills/cleome/SKILL.md) for all exported functions, dataclasses, non-mutation guarantees, and `ProcessPoolExecutor` entrypoint rules.
+Only the top-level `cleome` package (`cleome.__all__`) is public. `SliceConfig` normalizes relative `slices_subdir` paths and requires positive `int` chunk sizes (`bool` and non-`int` values raise `TypeError`; `<= 0` raises `ValueError`), and `slice_font`, `slice_fonts`, and `export_woff2_slices` enforce the same `int` check on `workers` (`None` or `int >= 1`). See [`skills/cleome/SKILL.md`](https://github.com/myakura/cleome/blob/main/skills/cleome/SKILL.md) for all exported functions, dataclasses, non-mutation guarantees, and `ProcessPoolExecutor` entrypoint rules.
 
 ```python
 from pathlib import Path

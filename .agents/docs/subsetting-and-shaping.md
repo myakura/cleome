@@ -7,6 +7,7 @@ Editing rules for [`cleome/_plan/urange.py`](../../src/cleome/_plan/urange.py), 
 * Order `@font-face` declarations from lowest priority (`Tier 4` rare ideographs and syllables) to highest priority (`Tier 1` core phonetic blocks and Latin).
 * Delegate `<urange>` formatting, parsing, and gap compaction to `stixis` through `cleome/_plan/urange.py`, and bridge gaps in an earlier tier only across unmapped codepoints or codepoints shadowed by a higher-priority tier declared later.
 * Never bridge `unicode-range` tokens across different Unicode planes (such as Plane 2 SIP and Plane 3 TIP).
+* In `SliceConfig.__post_init__` (`cleome/_plan/config.py`), store the lexically normalized relative `slices_subdir` (`Path(subdir_norm).as_posix()`) only after rejecting prohibited path forms, and reject `bool` or non-`int` chunk sizes (`freq_chunks`, `freq_tail_chunk_size`, `rare_chunk_size`, `symbols_ext_chunk_size`) and `workers` (`_validate_workers`) with `TypeError` and out-of-range integers with `ValueError`.
 
 ## Intra-slice OpenType shaping
 

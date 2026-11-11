@@ -37,7 +37,7 @@ from cleome._output.css import (
 )
 from cleome._output.paths import _resolve_and_validate_outputs
 from cleome._plan.bundle import _prepare_font_bundle
-from cleome._plan.config import SliceConfig, SliceSpec
+from cleome._plan.config import SliceConfig, SliceSpec, _validate_workers
 
 __all__ = [
     "SliceBundleResult",
@@ -341,8 +341,7 @@ def slice_fonts(
     """
     if isinstance(fonts, (str, bytes, Path, TTFont)) or not fonts:
         raise ValueError("At least one input font must be provided in a sequence.")
-    if workers is not None and workers <= 0:
-        raise ValueError(f"workers must be >= 1, got {workers}")
+    _validate_workers(workers)
     if config is None:
         config = SliceConfig()
     _reject_multi_font_axis_overrides(

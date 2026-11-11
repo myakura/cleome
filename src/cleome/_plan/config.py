@@ -10,6 +10,23 @@ from stixis import canonicalize
 from cleome._plan.locale import SUPPORTED_LOCALES
 
 
+def _require_positive_int(val: object, name: str) -> int:
+    if isinstance(val, bool) or not isinstance(val, int):
+        raise TypeError(f"{name} must be an int, got {type(val).__name__}")
+    if val <= 0:
+        raise ValueError(f"{name} must be > 0, got {val}")
+    return val
+
+
+def _validate_workers(workers: int | None) -> None:
+    if workers is None:
+        return
+    if isinstance(workers, bool) or not isinstance(workers, int):
+        raise TypeError(f"workers must be an int or None, got {type(workers).__name__}")
+    if workers < 1:
+        raise ValueError(f"workers must be >= 1, got {workers}")
+
+
 @dataclass(frozen=True, slots=True)
 class SliceConfig:
     """Configuration parameters for dynamic unicode-range slicing."""
@@ -51,20 +68,11 @@ class SliceConfig:
             )
         object.__setattr__(self, "locale", norm_locale)
         for chunk_size, num_chunks in self.freq_chunks:
-            if chunk_size <= 0 or num_chunks <= 0:
-                raise ValueError(
-                    f"freq_chunks entries must have positive (chunk_size, num_chunks), got {(chunk_size, num_chunks)}"
-                )
-        if self.freq_tail_chunk_size <= 0:
-            raise ValueError(
-                f"freq_tail_chunk_size must be > 0, got {self.freq_tail_chunk_size}"
-            )
-        if self.rare_chunk_size <= 0:
-            raise ValueError(f"rare_chunk_size must be > 0, got {self.rare_chunk_size}")
-        if self.symbols_ext_chunk_size <= 0:
-            raise ValueError(
-                f"symbols_ext_chunk_size must be > 0, got {self.symbols_ext_chunk_size}"
-            )
+            _require_positive_int(chunk_size, "freq_chunks chunk_size")
+            _require_positive_int(num_chunks, "freq_chunks num_chunks")
+        _require_positive_int(self.freq_tail_chunk_size, "freq_tail_chunk_size")
+        _require_positive_int(self.rare_chunk_size, "rare_chunk_size")
+        _require_positive_int(self.symbols_ext_chunk_size, "symbols_ext_chunk_size")
         cleaned_features = tuple(
             t.strip() for t in self.layout_features if isinstance(t, str) and t.strip()
         )
@@ -81,11 +89,13 @@ class SliceConfig:
             or "\x00" in subdir_str
             or subdir_str.startswith("/")
             or subdir_path.is_absolute()
+            or bool(subdir_path.drive)
             or ".." in subdir_path.parts
         ):
             raise ValueError(
                 f"slices_subdir must be a relative path inside out_dir without '..', got {self.slices_subdir!r}"
             )
+        object.__setattr__(self, "slices_subdir", subdir_path.as_posix())
         display_str = self.font_display.strip()
         if not display_str:
             raise ValueError("font_display cannot be empty")
