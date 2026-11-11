@@ -113,7 +113,11 @@ def _normalize_stretch_css(stretch_css: str | None) -> str:
 
 def _normalize_style_css(style_css: str) -> str:
     cleaned = _validate_css_descriptor(style_css, "font-style").strip().lower()
-    if cleaned in ("oblique 0deg", "oblique 0deg 0deg"):
+    if "(" not in cleaned and cleaned.startswith("oblique "):
+        angles = cleaned[8:].split()
+        if len(angles) == 2 and angles[0] == angles[1]:
+            cleaned = f"oblique {angles[0]}"
+    if cleaned == "oblique 0deg":
         return "normal"
     return cleaned
 

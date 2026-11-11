@@ -1722,6 +1722,12 @@ class TestSubsetterAndShaping(unittest.TestCase):
                         "Test", "test", True, "400 700", "100% 100%", "normal"
                     ),
                 ),
+                (
+                    FontMetadata("Test", "test", False, "400", None, "oblique 10deg"),
+                    FontMetadata(
+                        "Test", "test", True, "400", None, "oblique 10deg 10deg"
+                    ),
+                ),
             )
             for left_m, right_m in equiv_pairs:
                 with self.assertRaisesRegex(
