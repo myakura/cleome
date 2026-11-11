@@ -8,6 +8,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
+from urllib.parse import unquote
 
 from stixis import (
     CommentNode,
@@ -44,7 +45,7 @@ class _ParsedCssBundle:
     cache_key: str
     out_digest: str
     detected_slug: str | None
-    blocks: list[tuple[str, int, str]]
+    blocks: list[tuple[str, int, str, str]]
 
 
 def _unescape_css_string(escaped: str) -> str:
@@ -85,7 +86,7 @@ def _parse_cleome_css_bundle(css_text: str) -> _ParsedCssBundle | None:
     detected_slug: str | None = None
     current_variant_suffix = ""
     pending_block: tuple[str, int] | None = None
-    blocks: list[tuple[str, int, str]] = []
+    blocks: list[tuple[str, int, str, str]] = []
 
     for raw_line in lines[2:]:
         stripped = raw_line.strip()
@@ -122,7 +123,7 @@ def _parse_cleome_css_bundle(css_text: str) -> _ParsedCssBundle | None:
         fname = unescaped_url.rsplit("/", 1)[-1]
         if not fname.endswith(".woff2"):
             return None
-        blocks.append((slice_id, glyphs, fname))
+        blocks.append((slice_id, glyphs, unescaped_url, fname))
 
         if detected_slug is None:
             prefix = _extract_slug_prefix_for_slice(Path(fname).stem, slice_id)
@@ -147,13 +148,30 @@ def _parse_cleome_css_bundle(css_text: str) -> _ParsedCssBundle | None:
     )
 
 
+def _url_matches_slices_dir(
+    css_file: Path,
+    unescaped_url: str,
+    slices_dir_resolved: Path,
+) -> bool:
+    if unescaped_url.startswith(("./", "../")):
+        url_dir = unquote(unescaped_url.rsplit("/", 1)[0])
+        try:
+            target_dir = (css_file.parent / url_dir).resolve()
+        except OSError:
+            return True
+        return target_dir == slices_dir_resolved
+    return True
+
+
 def _read_cleome_css_bundle_slices(
     css_file: Path,
+    *,
+    slices_dir_resolved: Path | None = None,
 ) -> tuple[str | None, set[str]] | None:
     """
     Read a Cleome-generated `@font-face` stylesheet from `css_file` and return
-    `(bundle_slug, slice_filenames)`, or `None` if `css_file` is unreadable or does not carry
-    a valid `cleome-cache` header on line 2.
+    `(bundle_slug, slice_filenames)`, or `None` if `css_file` is unreadable, does not carry
+    a valid `cleome-cache` header on line 2, or points exclusively to another slices directory.
     """
     try:
         with css_file.open("r", encoding="utf-8") as fh:
@@ -170,7 +188,16 @@ def _read_cleome_css_bundle_slices(
     parsed = _parse_cleome_css_bundle(f"{first_line}{second_line}{rest}")
     if parsed is None:
         return None
-    return parsed.detected_slug, {fname for _, _, fname in parsed.blocks}
+    if slices_dir_resolved is None:
+        return parsed.detected_slug, {fname for _, _, _, fname in parsed.blocks}
+    matched_files = {
+        fname
+        for _, _, url, fname in parsed.blocks
+        if _url_matches_slices_dir(css_file, url, slices_dir_resolved)
+    }
+    if parsed.blocks and not matched_files:
+        return None
+    return parsed.detected_slug, matched_files
 
 
 class _SliceFileLike(Protocol):

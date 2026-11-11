@@ -2116,6 +2116,54 @@ class TestSubsetterAndShaping(unittest.TestCase):
             self.assertTrue(r_same_single.built_files[0].path.is_file())
             self.assertFalse(r_same_multi.built_files[1].path.exists())
 
+            # 3h. External css_path outside out_dir still protects shared slices across slugs
+            # (both forward and reverse build orders, and releases protection once unlinked)
+            ext_out = tmp_path / "ext_shared_out"
+            ext_styles = tmp_path / "ext_styles_dir"
+            r_ext_400 = slice_font(
+                f_ex_reg,
+                ext_out,
+                family_name="Example 400",
+                css_path=ext_styles / "example-400.css",
+                workers=1,
+            )
+            r_ext_multi = slice_fonts([f_ex_reg, f_ex_bold], ext_out, workers=1)
+            self.assertEqual(
+                r_ext_400.built_files[0].filename,
+                r_ext_multi.built_files[0].filename,
+            )
+            r_ext_single = slice_font(f_ex_reg, ext_out, workers=1)
+            self.assertTrue(
+                r_ext_400.built_files[0].path.is_file(),
+                "External css_path slice owned by 'example-400' must not be deleted",
+            )
+            self.assertTrue(r_ext_single.built_files[0].path.is_file())
+            self.assertFalse(r_ext_multi.built_files[1].path.exists())
+
+            # Once the external stylesheet is removed, rebuilding 'example' releases the unreferenced slice
+            r_ext_multi_2 = slice_fonts([f_ex_reg, f_ex_bold], ext_out, workers=1)
+            r_ext_400.css_path.unlink()
+            r_ext_single_2 = slice_font(f_ex_reg, ext_out, workers=1)
+            self.assertFalse(r_ext_multi_2.built_files[0].path.exists())
+            self.assertFalse(r_ext_multi_2.built_files[1].path.exists())
+            self.assertTrue(r_ext_single_2.built_files[0].path.is_file())
+
+            # Reverse order: multi-font 'example' first, external 'example-400' second, single-font 'example' third
+            ext_rev_out = tmp_path / "ext_rev_out"
+            ext_rev_styles = tmp_path / "ext_rev_styles_dir"
+            r_rev_multi = slice_fonts([f_ex_reg, f_ex_bold], ext_rev_out, workers=1)
+            r_rev_400 = slice_font(
+                f_ex_reg,
+                ext_rev_out,
+                family_name="Example 400",
+                css_path=ext_rev_styles / "example-400.css",
+                workers=1,
+            )
+            r_rev_single = slice_font(f_ex_reg, ext_rev_out, workers=1)
+            self.assertTrue(r_rev_400.built_files[0].path.is_file())
+            self.assertTrue(r_rev_single.built_files[0].path.is_file())
+            self.assertFalse(r_rev_multi.built_files[1].path.exists())
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -5,6 +5,9 @@ High-level font slicing pipeline (`slice_font` / `slice_fonts`) and bundle cache
 import hashlib
 import io
 import json
+import os
+import stat
+import tempfile
 from collections.abc import Sequence
 from contextlib import ExitStack
 from dataclasses import asdict, dataclass, field
@@ -211,7 +214,7 @@ def _try_load_cached_bundle(
         block_cursor += num_styles * n_specs
         variant_files: list[BuiltSliceFile] = []
 
-        for spec, (block_slice_id, glyph_count, recorded_fname) in zip(
+        for spec, (block_slice_id, glyph_count, _url, recorded_fname) in zip(
             active_specs, variant_blocks
         ):
             if block_slice_id != spec.slice_id or glyph_count <= 0:
@@ -293,30 +296,191 @@ def _try_load_cached_bundle(
     )
 
 
-def _collect_previous_bundle_slices(
+def _ensure_safe_registry_root(parent: Path, dir_name: str) -> Path | None:
+    reg_root = parent / dir_name
+    try:
+        if not reg_root.exists():
+            if not os.access(parent, os.W_OK):
+                return None
+            reg_root.mkdir(mode=0o700, exist_ok=True)
+        st = os.lstat(reg_root)
+        if not stat.S_ISDIR(st.st_mode):
+            return None
+        if hasattr(os, "getuid") and st.st_uid != os.getuid():
+            return None
+        if os.name == "posix" and (st.st_mode & 0o077) != 0:
+            os.chmod(reg_root, 0o700)
+            st = os.lstat(reg_root)
+            if not stat.S_ISDIR(st.st_mode) or (st.st_mode & 0o077) != 0:
+                return None
+    except OSError:
+        return None
+    return reg_root
+
+
+def _ownership_registry_roots() -> list[Path]:
+    uid = os.getuid() if hasattr(os, "getuid") else 0
+    dir_name = f"cleome-slice-owners-v1-{uid}"
+    candidates = (
+        ["/tmp", tempfile.gettempdir()]
+        if os.name == "posix"
+        else [tempfile.gettempdir()]
+    )
+    roots: list[Path] = []
+    seen: set[Path] = set()
+    for raw_root in candidates:
+        if not raw_root:
+            continue
+        root = Path(raw_root)
+        try:
+            if not root.is_dir():
+                continue
+            resolved_root = root.resolve()
+        except OSError:
+            continue
+        if resolved_root in seen:
+            continue
+        seen.add(resolved_root)
+        safe_dir = _ensure_safe_registry_root(root, dir_name)
+        if safe_dir is not None:
+            roots.append(safe_dir)
+    return roots
+
+
+def _record_bundle_css_owner(
+    slices_dir: Path,
+    css_path: Path,
+    *,
+    untracked_preexisting: set[str] | None = None,
+) -> None:
+    """Record that `css_path` currently owns slices inside `slices_dir` without writing into `out_dir`."""
+    try:
+        slices_str = str(slices_dir.resolve())
+        css_str = str(css_path.resolve())
+    except OSError:
+        return
+    slices_key = hashlib.sha256(os.fsencode(slices_str)).hexdigest()[:32]
+    css_key = hashlib.sha256(os.fsencode(css_str)).hexdigest()[:32]
+    for reg_root in _ownership_registry_roots():
+        try:
+            by_slices_dir = reg_root / "by-slices" / slices_key
+            by_css_dir = reg_root / "by-css"
+            by_slices_dir.mkdir(parents=True, exist_ok=True)
+            by_css_dir.mkdir(parents=True, exist_ok=True)
+            with _atomic_output_file(
+                by_slices_dir / f"{css_key}.path", mode="w", encoding="utf-8"
+            ) as tf:
+                tf.write(css_str)
+            with _atomic_output_file(
+                by_css_dir / f"{css_key}.target", mode="w", encoding="utf-8"
+            ) as tf:
+                tf.write(slices_str)
+            if untracked_preexisting:
+                pre_file = by_slices_dir / "preexisting.json"
+                existing_pre: set[str] = set()
+                if pre_file.is_file():
+                    try:
+                        loaded = json.loads(pre_file.read_text(encoding="utf-8"))
+                        if isinstance(loaded, list):
+                            existing_pre.update(x for x in loaded if isinstance(x, str))
+                    except OSError, UnicodeDecodeError, json.JSONDecodeError:
+                        pass
+                merged_pre = sorted(existing_pre | untracked_preexisting)
+                with _atomic_output_file(pre_file, mode="w", encoding="utf-8") as tf:
+                    tf.write(json.dumps(merged_pre, separators=(",", ":")))
+        except OSError:
+            continue
+
+
+def _iter_registered_css_paths(
+    slices_dir_resolved: Path,
+) -> tuple[list[Path], set[str]]:
+    """Return `(live_css_paths, untracked_preexisting_filenames)` registered for `slices_dir_resolved`."""
+    slices_str = str(slices_dir_resolved)
+    slices_key = hashlib.sha256(os.fsencode(slices_str)).hexdigest()[:32]
+    found: list[Path] = []
+    preexisting: set[str] = set()
+    seen: set[str] = set()
+    for reg_root in _ownership_registry_roots():
+        by_slices_dir = reg_root / "by-slices" / slices_key
+        by_css_dir = reg_root / "by-css"
+        if not by_slices_dir.is_dir():
+            continue
+        pre_file = by_slices_dir / "preexisting.json"
+        if pre_file.is_file():
+            try:
+                loaded = json.loads(pre_file.read_text(encoding="utf-8"))
+                if isinstance(loaded, list):
+                    preexisting.update(x for x in loaded if isinstance(x, str))
+            except OSError, UnicodeDecodeError, json.JSONDecodeError:
+                pass
+        try:
+            entries = list(by_slices_dir.iterdir())
+        except OSError:
+            continue
+        for entry in entries:
+            if not entry.is_file() or entry.suffix != ".path":
+                continue
+            try:
+                css_str = entry.read_text(encoding="utf-8")
+            except OSError, UnicodeDecodeError:
+                continue
+            if not css_str:
+                entry.unlink(missing_ok=True)
+                continue
+            css_file = Path(css_str)
+            if not css_file.is_file():
+                entry.unlink(missing_ok=True)
+                continue
+            css_key = hashlib.sha256(os.fsencode(css_str)).hexdigest()[:32]
+            target_file = by_css_dir / f"{css_key}.target"
+            try:
+                if (
+                    target_file.is_file()
+                    and target_file.read_text(encoding="utf-8") != slices_str
+                ):
+                    entry.unlink(missing_ok=True)
+                    continue
+            except OSError, UnicodeDecodeError:
+                pass
+            if css_str not in seen:
+                seen.add(css_str)
+                found.append(css_file)
+    return found, preexisting
+
+
+def _collect_bundle_slice_ownership(
     css_path: Path,
     out_path: Path,
+    slices_dir: Path,
     bundle_slug: str,
-) -> set[str]:
+) -> tuple[set[str], set[str]]:
     """
-    Inspect `css_path` (before overwriting it) and sibling Cleome `.css` files in `out_path` /
-    `css_path.parent` to return `.woff2` slice filenames owned by previous builds of this bundle
-    while excluding slices still referenced by another slug's stylesheet.
+    Inspect `css_path` (before overwriting it), sibling Cleome `.css` files in `out_path` /
+    `css_path.parent`, and registered external `css_path` owners of `slices_dir` to return
+    `(prunable_owned_slices, all_known_tracked_slices)`.
     """
     owned_candidates: set[str] = set()
     protected_other_slugs: set[str] = set()
     target_css_resolved = css_path.resolve()
+    slices_dir_resolved = slices_dir.resolve()
 
     if css_path.is_file():
-        parsed = _read_cleome_css_bundle_slices(css_path)
+        parsed = _read_cleome_css_bundle_slices(
+            css_path, slices_dir_resolved=slices_dir_resolved
+        )
         if parsed is not None:
             owned_candidates.update(parsed[1])
 
+    registered_css, preexisting_protected = _iter_registered_css_paths(
+        slices_dir_resolved
+    )
+    protected_other_slugs.update(preexisting_protected)
+    candidate_css_files: list[Path] = list(registered_css)
     scan_dirs = [out_path]
     if css_path.parent.resolve() != out_path.resolve():
         scan_dirs.append(css_path.parent)
 
-    seen_css: set[Path] = {target_css_resolved}
     for d in scan_dirs:
         if not d.is_dir():
             continue
@@ -325,25 +489,32 @@ def _collect_previous_bundle_slices(
         except OSError:
             continue
         for entry in entries:
-            if not entry.is_file() or entry.suffix != ".css":
-                continue
-            try:
-                resolved_entry = entry.resolve()
-            except OSError:
-                continue
-            if resolved_entry in seen_css:
-                continue
-            seen_css.add(resolved_entry)
-            parsed = _read_cleome_css_bundle_slices(entry)
-            if parsed is None:
-                continue
-            entry_slug, entry_files = parsed
-            if entry_slug == bundle_slug:
-                owned_candidates.update(entry_files)
-            else:
-                protected_other_slugs.update(entry_files)
+            if entry.is_file() and entry.suffix == ".css":
+                candidate_css_files.append(entry)
 
-    return owned_candidates - protected_other_slugs
+    seen_css: set[Path] = {target_css_resolved}
+    for entry in candidate_css_files:
+        try:
+            resolved_entry = entry.resolve()
+        except OSError:
+            continue
+        if resolved_entry in seen_css:
+            continue
+        seen_css.add(resolved_entry)
+        parsed = _read_cleome_css_bundle_slices(
+            entry, slices_dir_resolved=slices_dir_resolved
+        )
+        if parsed is None:
+            continue
+        entry_slug, entry_files = parsed
+        if entry_slug == bundle_slug:
+            owned_candidates.update(entry_files)
+        else:
+            protected_other_slugs.update(entry_files)
+
+    return owned_candidates - protected_other_slugs, (
+        owned_candidates | protected_other_slugs
+    )
 
 
 def slice_fonts(
@@ -459,11 +630,23 @@ def slice_fonts(
                 resolved_locale=prepared.resolved_locale,
             )
             if cached_res is not None:
+                _record_bundle_css_owner(outputs.slices_dir, outputs.css_path)
                 return cached_res
 
         outputs.out_path.mkdir(parents=True, exist_ok=True)
         if outputs.explicit_css:
             outputs.css_path.parent.mkdir(parents=True, exist_ok=True)
+
+        preexisting_woff2: set[str] = set()
+        if outputs.slices_dir.is_dir():
+            try:
+                preexisting_woff2 = {
+                    p.name
+                    for p in outputs.slices_dir.iterdir()
+                    if p.is_file() and p.suffix == ".woff2"
+                }
+            except OSError:
+                preexisting_woff2 = set()
 
         batch_variants: list[
             tuple[TTFont | bytes | Path | str, FontMetadata, list[SliceSpec]]
@@ -495,13 +678,24 @@ def slice_fonts(
             css_path=outputs.css_path,
             slices_dir=outputs.slices_dir,
         )
-        previous_owned_slices = _collect_previous_bundle_slices(
+        previous_owned_slices, all_known_slices = _collect_bundle_slice_ownership(
             outputs.css_path,
             outputs.out_path,
+            outputs.slices_dir,
             prepared.slug,
         )
+        untracked_adopted = {
+            bf.filename
+            for bf in all_built_files
+            if bf.filename in preexisting_woff2 and bf.filename not in all_known_slices
+        }
         with _atomic_output_file(outputs.css_path, mode="w", encoding="utf-8") as tf:
             tf.write(css_text)
+        _record_bundle_css_owner(
+            outputs.slices_dir,
+            outputs.css_path,
+            untracked_preexisting=untracked_adopted,
+        )
 
         _prune_superseded_hashed_slices(
             outputs.slices_dir,
