@@ -67,7 +67,6 @@ include = [
     "README.md",
     "LICENSE",
     "AGENTS.md",
-    ".agents",
     "pyproject.toml",
 ]
 
