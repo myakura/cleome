@@ -491,7 +491,7 @@ def _run_build_dry_run(args: argparse.Namespace, config: SliceConfig) -> int:
             args.out_dir,
             config,
             prepared.metas,
-            prepared.active_variant_slices,
+            prepared.active_variant_plans,
             css_filename=args.css_name,
             css_path=args.css_out,
         )

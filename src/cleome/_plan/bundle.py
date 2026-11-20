@@ -20,7 +20,7 @@ class _PreparedBundle:
     resolved_locale: str
     metas: list[FontMetadata]
     variant_plans: list[list[SliceSpec]]
-    active_variant_slices: list[list[tuple[SliceSpec, list[int], str]]]
+    active_variant_plans: list[list[SliceSpec]]
     union_plan: list[SliceSpec]
 
 
@@ -75,11 +75,13 @@ def _prepare_font_bundle(
             )
 
     variant_plans = [plan_cache[m.codepoints] for m in metas]
-    active_variant_slices: list[list[tuple[SliceSpec, list[int], str]]] = []
+    active_variant_plans = [
+        [spec for spec, _ in _filter_active_slices(m, plan)]
+        for m, plan in zip(metas, variant_plans)
+    ]
     seen_slice_paths: set[str] = set()
-    for m, plan in zip(metas, variant_plans):
-        variant_active: list[tuple[SliceSpec, list[int], str]] = []
-        for spec, cps in _filter_active_slices(m, plan):
+    for m, active_plan in zip(metas, active_variant_plans):
+        for spec in active_plan:
             fname = _validate_filename_token(
                 spec.filename(m.slug, m.variant_suffix), "slice filename"
             )
@@ -88,8 +90,6 @@ def _prepare_font_bundle(
                     f"Duplicate slice output path across variants: {fname}"
                 )
             seen_slice_paths.add(fname)
-            variant_active.append((spec, cps, fname))
-        active_variant_slices.append(variant_active)
     union_plan = plan_cache.get(union_codepoints) or build_slice_plan(
         union_codepoints, config=resolved_config, family_name=unified_family
     )
@@ -99,6 +99,6 @@ def _prepare_font_bundle(
         resolved_locale=resolved_locale,
         metas=metas,
         variant_plans=variant_plans,
-        active_variant_slices=active_variant_slices,
+        active_variant_plans=active_variant_plans,
         union_plan=union_plan,
     )
