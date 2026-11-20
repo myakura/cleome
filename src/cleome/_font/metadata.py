@@ -176,7 +176,7 @@ class FontMetadata:
             )
 
 
-def slugify_family(name: str) -> str:
+def _slugify_family(name: str) -> str:
     """Convert a font family name (e.g. 'GenSou Sans JP') into a URL/filename slug ('gensou-sans-jp')."""
     s = re.sub(r"[^a-zA-Z0-9]+", "-", name.strip()).strip("-").lower()
     return s or "font"
@@ -188,27 +188,24 @@ def _fmt_num(val: float) -> str:
     return f"{val:.2f}".rstrip("0").rstrip(".")
 
 
-@dataclass(frozen=True, slots=True)
-class FontFaceDescriptors:
-    """Pure OpenType-to-CSS `@font-face` descriptors extracted from `name`, `fvar`, `OS/2`, and `post`."""
-
-    family_name: str
-    is_variable: bool
-    weight_css: str
-    stretch_css: str | None
-    style_css: str
-    styles_css: tuple[str, ...]
-
-
-def extract_font_face_descriptors(
+def extract_font_metadata(
     font: TTFont,
     *,
     family_override: str | None = None,
+    slug_override: str | None = None,
     weight_override: str | None = None,
     stretch_override: str | None = None,
     style_override: str | None = None,
-) -> FontFaceDescriptors:
-    """Inspect TTFont tables (`name`, `fvar`, `OS/2`, `post`) to extract CSS `@font-face` descriptors."""
+    variant_suffix: str = "",
+    uvs_base_repair: bool = True,
+) -> FontMetadata:
+    """Inspect TTFont tables (`name`, `fvar`, `OS/2`, `post`, `cmap`) to build FontMetadata without mutating `font`."""
+    patched_uvs = (
+        tuple(sorted(_collect_uvs_missing_base_additions(font)))
+        if uvs_base_repair
+        else ()
+    )
+
     # 1. Detect family name (prefer Typographic Family Name ID 16, then Family Name ID 1)
     detected_family = "Custom Font"
     if "name" in font:
@@ -315,57 +312,22 @@ def extract_font_face_descriptors(
             styles_css = ("normal",)
 
     style_css = styles_css[0]
-    return FontFaceDescriptors(
-        family_name=family_name,
-        is_variable=is_variable,
-        weight_css=weight_css,
-        stretch_css=stretch_css,
-        style_css=style_css,
-        styles_css=styles_css,
-    )
-
-
-def extract_font_metadata(
-    font: TTFont,
-    *,
-    family_override: str | None = None,
-    slug_override: str | None = None,
-    weight_override: str | None = None,
-    stretch_override: str | None = None,
-    style_override: str | None = None,
-    variant_suffix: str = "",
-    uvs_base_repair: bool = True,
-) -> FontMetadata:
-    """Inspect TTFont tables (`name`, `fvar`, `OS/2`, `post`, `cmap`) to build FontMetadata without mutating `font`."""
-    patched_uvs = (
-        tuple(sorted(_collect_uvs_missing_base_additions(font)))
-        if uvs_base_repair
-        else ()
-    )
-
-    desc = extract_font_face_descriptors(
-        font,
-        family_override=family_override,
-        weight_override=weight_override,
-        stretch_override=stretch_override,
-        style_override=style_override,
-    )
-    slug = slug_override or slugify_family(desc.family_name)
+    slug = slug_override or _slugify_family(family_name)
 
     cmap = font.getBestCmap() or {}
     codepoints = frozenset(cmap.keys()) | frozenset(patched_uvs)
 
     return FontMetadata(
-        family_name=desc.family_name,
+        family_name=family_name,
         slug=slug,
-        is_variable=desc.is_variable,
-        weight_css=desc.weight_css,
-        stretch_css=desc.stretch_css,
-        style_css=desc.style_css,
+        is_variable=is_variable,
+        weight_css=weight_css,
+        stretch_css=stretch_css,
+        style_css=style_css,
         variant_suffix=variant_suffix,
         codepoints=codepoints,
         patched_uvs_codepoints=patched_uvs,
-        styles_css=desc.styles_css,
+        styles_css=styles_css,
     )
 
 

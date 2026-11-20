@@ -90,7 +90,7 @@ A variable font shares one set of 124 `.woff2` URLs across `font-weight: 400` an
 
 ## How Cleome slices a font
 
-Cleome replaces static templates with a 4-tier slicing planner ([`cleome/_plan/builder.py`](../src/cleome/_plan/builder.py)) and `stixis` `unicode-range` formatting and compaction (`stixis.format_urange` and `stixis.compact_urange`, wrapped by [`cleome/_plan/urange.py`](../src/cleome/_plan/urange.py)) that read each input font's `cmap`. It orders `@font-face` rules from lowest priority (Tier 4, at the top of the stylesheet) to highest priority (Tier 1, at the bottom of the stylesheet):
+Cleome replaces static templates with a 4-tier slicing planner ([`cleome/_plan/builder.py`](../src/cleome/_plan/builder.py)) using `stixis.format_urange` and `stixis.compact_urange` that read each input font's `cmap`. It orders `@font-face` rules from lowest priority (Tier 4, at the top of the stylesheet) to highest priority (Tier 1, at the bottom of the stylesheet):
 
 | Tier (CSS order) | Slice ID pattern | Target characters | `unicode-range` strategy |
 | :--- | :--- | :--- | :--- |
@@ -123,7 +123,7 @@ Cleome separates non-Kanji characters from Kanji slices and groups them into fou
 * Tier 2 `symbols-ui` holds common UI and article symbols (~16 KB VF, ~7-9 KB Static), including `℃` (`U+2103`), Roman numerals (`U+2160-216B`: `Ⅰ-Ⅻ`), arrows (`U+2190-21FF`: `←↑→↓↔⇒`), CJK math and comparison symbols (`∞`, `≒`, `≠`, `≦`, `≧`), circled numbers (`①-⑳`, `⓪`, `❶-❿`), geometric shapes (`■□▲△▶▷▼▽◀◁◆◇◈○◎●`), and stars, notes, and marks (`★☆♪♫♡♥⚠✓✔✕✖`).
 * Tier 2 `symbols-ext` (`symbols-ext-01..NN`) holds the remaining non-Kanji characters in the font's `cmap` (Greek, Cyrillic, box drawing, math symbols, enclosed CJK letters and ideographs, halfwidth katakana), split into chunks of ~350 characters.
 
-Because Cleome builds every slice from the input font's `cmap`, smaller-charset fonts (~7,000- to 9,300-character JIS Level 1+2 static fonts) scale down from 91 slices to 55-65 slices and never emit ghost `unicode-range` declarations for characters outside their repertoire. In Tier 3, Cleome formats only the codepoints present in the font via `stixis.format_urange` (wrapped by `format_unicode_range` in [`cleome/_plan/urange.py`](../src/cleome/_plan/urange.py)), coalescing contiguous runs without bridging gaps. In Tiers 1 and 2, Cleome compacts mapped codepoints via `stixis.compact_urange` (`compact_unicode_range`), bridging small unmapped gaps (`<= 0x80`) only when the gap contains zero codepoints from any lower-priority slice.
+Because Cleome builds every slice from the input font's `cmap`, smaller-charset fonts (~7,000- to 9,300-character JIS Level 1+2 static fonts) scale down from 91 slices to 55-65 slices and never emit ghost `unicode-range` declarations for characters outside their repertoire. In Tier 3, Cleome formats only the codepoints present in the font via `stixis.format_urange`, coalescing contiguous runs without bridging gaps. In Tiers 1 and 2, Cleome compacts mapped codepoints via `stixis.compact_urange` (`max_gap=0x7F`, i.e., `cp - prev <= 0x80`), bridging small unmapped gaps only when the gap contains zero codepoints from any lower-priority slice.
 
 
 ### 3. Inverted-pyramid Kanji granularity (Tier 3)
@@ -180,7 +180,7 @@ When `fontTools.subset` runs, `_prepare_uvs_for_slice` filters `table.uvsDict` t
 
 While checking character coverage against upstream Adobe `SourceHanSansJP-VF.otf` (v2.005), we found that the Joyo and JIS Level 1 Kanji `唾` (`U+553E`, JIS row 34 cell 35) was missing from the Format 4 and Format 12 `cmap` subtables, even though its glyph (`glyph03714`) was present in the binary and mapped in `cmap` Format 14 (`U+553E + U+E0100 -> glyph03714`).
 
-Before planning or subsetting, `patch_uvs_missing_base_cmap` checks `cmap` Format 14 for any base codepoint that maps to a concrete glyph (`gname is not None`) but is absent from `getBestCmap()`, and restores it into the Format 4 and Format 12 subtables in memory. When multiple variation selectors exist for the same omitted base character, Cleome sorts Ideographic Variation Selectors (`U+E0100..U+E01EF`) in ascending order ahead of `VS1..VS16` so it selects the standard base form (`U+E0100`) deterministically.
+Before planning or subsetting, `_patch_uvs_missing_base_cmap` checks `cmap` Format 14 for any base codepoint that maps to a concrete glyph (`gname is not None`) but is absent from `getBestCmap()`, and restores it into the Format 4 and Format 12 subtables in memory. When multiple variation selectors exist for the same omitted base character, Cleome sorts Ideographic Variation Selectors (`U+E0100..U+E01EF`) in ascending order ahead of `VS1..VS16` so it selects the standard base form (`U+E0100`) deterministically.
 
 
 ### 4. Variable font axes (`wght`, `wdth`, `ital`, `slnt`) and multi-font static bundling

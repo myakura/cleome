@@ -9,8 +9,9 @@ from fontTools.pens.ttGlyphPen import TTGlyphPen
 from fontTools.ttLib import TTFont
 from fontTools.ttLib.tables._c_m_a_p import CmapSubtable
 from fontTools.ttLib.tables.TupleVariation import TupleVariation
+from stixis import parse_urange_codepoints
 
-from cleome import SliceSpec, parse_unicode_range
+from cleome import SliceSpec
 from cleome._plan.data.kanji_freq import KANJI_FREQ_CODEPOINTS
 
 
@@ -176,7 +177,7 @@ def assert_generic_cascade_invariants(
 
     resolved: dict[int, SliceSpec] = {}
     for spec in plan:
-        ur_set = parse_unicode_range(spec.css_unicode_range)
+        ur_set = parse_urange_codepoints(spec.css_unicode_range)
         for cp in ur_set & codepoints:
             resolved[cp] = spec
 

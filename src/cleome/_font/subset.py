@@ -22,7 +22,7 @@ from fontTools.subset import Options, Subsetter
 from fontTools.ttLib import TTFont
 
 from cleome._font.metadata import FontMetadata
-from cleome._font.uvs import patch_uvs_missing_base_cmap
+from cleome._font.uvs import _patch_uvs_missing_base_cmap
 from cleome._names import _split_hashed_stem
 from cleome._output.paths import (
     _ensure_directory_creatable,
@@ -147,7 +147,7 @@ def _load_cached_font_state(
         glyph_order = list(tpl.getGlyphOrder())
         rev_glyph_order = dict(tpl.getReverseGlyphMap(rebuild=True))
         if patch_uvs:
-            patch_uvs_missing_base_cmap(tpl)
+            _patch_uvs_missing_base_cmap(tpl)
         cmap_table = _clone_cmap(tpl["cmap"]) if "cmap" in tpl else None
         hmtx_table = _clone_metrics(tpl["hmtx"]) if "hmtx" in tpl else None
         vmtx_table = _clone_metrics(tpl["vmtx"]) if "vmtx" in tpl else None
@@ -358,7 +358,7 @@ def _prepare_worker_source(
 
         with TTFont(p, recalcTimestamp=False) as tmp_font:
             if config.uvs_base_repair:
-                patch_uvs_missing_base_cmap(tmp_font)
+                _patch_uvs_missing_base_cmap(tmp_font)
             buf = io.BytesIO()
             tmp_font.flavor = None
             tmp_font.save(buf)

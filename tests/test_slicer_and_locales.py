@@ -18,15 +18,13 @@ from helpers import (
     build_synthetic_charset,
     create_synthetic_ttfont,
 )
+from stixis import parse_urange_codepoints
 
 from cleome import (
     FontMetadata,
     SliceConfig,
     build_slice_plan,
-    compact_unicode_range,
     detect_font_locale,
-    format_unicode_range,
-    parse_unicode_range,
     slice_font,
 )
 from cleome._plan.bundle import _prepare_font_bundle
@@ -74,7 +72,7 @@ class TestSlicerAndLocales(unittest.TestCase):
         rare_slices = [s for s in plan if s.tier == 4]
         self.assertEqual(len(rare_slices), 2)
         for s in rare_slices:
-            ur_cps = parse_unicode_range(s.css_unicode_range)
+            ur_cps = parse_urange_codepoints(s.css_unicode_range)
             has_sip = any(0x20000 <= c <= 0x2FA1F for c in ur_cps)
             has_tip = any(0x30000 <= c <= 0x3347F for c in ur_cps)
             self.assertFalse(
@@ -102,11 +100,11 @@ class TestSlicerAndLocales(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "layout_features cannot be empty"):
             SliceConfig(layout_features=("", "   "))
 
-        # compact_unicode_range max_gap boundary (cp - prev <= max_gap) and negative rejection
-        self.assertEqual(compact_unicode_range([0x10, 0x90], []), "U+10-90")
-        self.assertEqual(compact_unicode_range([0x10, 0x91], []), "U+10, U+91")
-        with self.assertRaisesRegex(ValueError, "max_gap must be >= 0"):
-            compact_unicode_range([0x10, 0x11], [], max_gap=-1)
+        # Tier 1/2 gap compaction bridges cp - prev <= 0x80 (max_gap=0x7F missing codepoints)
+        plan_bridge = build_slice_plan({0x0041, 0x00C1})
+        self.assertEqual(plan_bridge[0].css_unicode_range, "U+41-C1")
+        plan_split = build_slice_plan({0x0041, 0x00C2})
+        self.assertEqual(plan_split[0].css_unicode_range, "U+41, U+C2")
 
         # 1. Family name token detection
         self.assertEqual(detect_font_locale({ord("A")}, "Noto Sans KR"), "kr")
@@ -413,7 +411,7 @@ class TestSlicerAndLocales(unittest.TestCase):
                 self.assertNotIn(ord(ch), latin_slice.binary_codepoints)
                 self.assertNotIn(
                     ord(ch),
-                    parse_unicode_range(latin_slice.css_unicode_range),
+                    parse_urange_codepoints(latin_slice.css_unicode_range),
                     f"latin css_unicode_range must not shadow {ch!r} in cjk-core ({loc})",
                 )
 
@@ -501,51 +499,6 @@ class TestSlicerAndLocales(unittest.TestCase):
                     for info, pos in zip(hb_buf.glyph_infos, hb_buf.glyph_positions)
                 ]
                 self.assertEqual(shaped, [(lig_cc.LigGlyph, 875)])
-
-    def test_unicode_range_formatting_and_compaction_validation(self) -> None:
-        """
-        Verify `compact_unicode_range` delegates gap compaction to Stixis (coalescing contiguous
-        runs at `max_gap=0` and `max_gap=1` without bridging missing codepoints), and
-        `format_unicode_range` validates collection types and 2-element `(start, end)` tuples.
-        """
-        # compact_unicode_range: contiguous runs coalesce without bridging missing codepoints
-        self.assertEqual(compact_unicode_range([0x41, 0x42], [], max_gap=0), "U+41-42")
-        self.assertEqual(compact_unicode_range([0x41, 0x42], [], max_gap=1), "U+41-42")
-        self.assertEqual(
-            compact_unicode_range([0x41, 0x43], [], max_gap=1), "U+41, U+43"
-        )
-        self.assertEqual(compact_unicode_range([0x41, 0x43], [], max_gap=2), "U+41-43")
-        self.assertEqual(compact_unicode_range([], [], max_gap=0), "")
-        for bad_gap in (False, True, "1"):
-            with self.assertRaises(TypeError):
-                compact_unicode_range([0x41, 0x42], [], max_gap=bad_gap)  # type: ignore[arg-type]
-
-        # format_unicode_range: valid sets, lists, and 2-tuples
-        self.assertEqual(format_unicode_range(set()), "")
-        self.assertEqual(format_unicode_range(frozenset()), "")
-        self.assertEqual(format_unicode_range([]), "")
-        self.assertEqual(
-            format_unicode_range([0x3041, 0x3042, 0x3044]), "U+3041-3042, U+3044"
-        )
-        self.assertEqual(format_unicode_range([0x3041, 0x3043]), "U+3041, U+3043")
-        self.assertEqual(format_unicode_range((0x3041, 0x3044)), "U+3041-3044")
-        self.assertEqual(format_unicode_range((0, 0)), "U+0")
-
-        # format_unicode_range: reject scalar int/bool/str and invalid elements/tuples
-        for scalar_or_str in (0, 0x41, False, True, "U+41", None):
-            with self.assertRaises(TypeError):
-                format_unicode_range(scalar_or_str)  # type: ignore[arg-type]
-        for bad_input in (
-            [True],
-            (True, 0x3043),
-            ("a", "b"),
-            (),
-            (0x3041,),
-            (0x3041, 0x3043, 0x3045),
-            (0x3045, 0x3041),
-        ):
-            with self.assertRaises(ValueError):
-                format_unicode_range(bad_input)  # type: ignore[arg-type]
 
 
 if __name__ == "__main__":

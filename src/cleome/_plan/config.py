@@ -122,7 +122,6 @@ class SliceSpec:
     description: str
     binary_codepoints: frozenset[int]
     css_unicode_range: str
-    uses_cascade_shadowing: bool = False
 
     def filename(
         self, slug: str, variant_suffix: str = "", content_hash: str = ""
