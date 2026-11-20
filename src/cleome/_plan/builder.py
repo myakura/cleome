@@ -50,7 +50,7 @@ def _chunk_sorted_codepoints(
     n = len(sorted_cps)
     if n == 0:
         return []
-    if target_chunk_size <= 0 or n <= target_chunk_size:
+    if n <= target_chunk_size:
         return [sorted_cps]
     num_chunks = max(1, round(n / target_chunk_size))
     chunks: list[list[int]] = []

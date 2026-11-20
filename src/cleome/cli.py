@@ -20,7 +20,7 @@ from cleome._font.metadata import (
     _reject_multi_font_axis_overrides,
     extract_font_metadata,
 )
-from cleome._plan.bundle import _prepare_font_bundle
+from cleome._plan.bundle import _prepare_font_bundle, _PreparedBundle
 from cleome._plan.config import SliceConfig, SliceSpec
 from cleome._plan.locale import SUPPORTED_LOCALES
 
@@ -69,10 +69,8 @@ def _handle_cli_exception(
     return EXIT_RUNTIME_ERROR
 
 
-def _load_cli_input_metas(
-    args: argparse.Namespace, config: SliceConfig
-) -> list[FontMetadata]:
-    """Open input font files and extract `FontMetadata` with CLI overrides applied."""
+def _load_cli_bundle(args: argparse.Namespace, config: SliceConfig) -> _PreparedBundle:
+    """Open input font files, extract `FontMetadata`, and prepare the unified slice bundle."""
     _reject_multi_font_axis_overrides(
         len(args.inputs),
         weight=args.weight,
@@ -93,7 +91,12 @@ def _load_cli_input_metas(
                     uvs_base_repair=config.uvs_base_repair,
                 )
             )
-    return metas
+    return _prepare_font_bundle(
+        metas,
+        config,
+        family_override=args.family,
+        slug_override=args.slug,
+    )
 
 
 def _positive_int(val_str: str) -> int:
@@ -390,13 +393,7 @@ def _summarize_plan_tiers(plan: list[SliceSpec]) -> dict[int, tuple[int, int, in
 
 def _run_plan(args: argparse.Namespace, config: SliceConfig) -> int:
     try:
-        raw_metas = _load_cli_input_metas(args, config)
-        prepared = _prepare_font_bundle(
-            raw_metas,
-            config,
-            family_override=args.family,
-            slug_override=args.slug,
-        )
+        prepared = _load_cli_bundle(args, config)
     except (ValueError, TTLibError, EOFError, struct.error, OSError) as exc:
         return _handle_cli_exception(exc, input_paths=args.inputs)
 
@@ -469,17 +466,27 @@ def _run_plan(args: argparse.Namespace, config: SliceConfig) -> int:
     return EXIT_OK
 
 
+def _print_build_summary_details(
+    css_path: Path,
+    slices_dir: Path,
+    preload_slices: Sequence[dict[str, str]],
+) -> None:
+    print(f"         CSS   : {css_path}")
+    print(f"         Slices: {slices_dir}/")
+    if preload_slices:
+        print("         Preload (Tier 1):")
+        for item in preload_slices:
+            print(
+                f'           <link rel="preload" href="{item["url"]}" '
+                f'as="font" type="font/woff2" crossorigin>'
+            )
+
+
 def _run_build_dry_run(args: argparse.Namespace, config: SliceConfig) -> int:
     from cleome._output.paths import _resolve_and_validate_outputs
 
     try:
-        raw_metas = _load_cli_input_metas(args, config)
-        prepared = _prepare_font_bundle(
-            raw_metas,
-            config,
-            family_override=args.family,
-            slug_override=args.slug,
-        )
+        prepared = _load_cli_bundle(args, config)
         outputs = _resolve_and_validate_outputs(
             args.out_dir,
             config,
@@ -516,15 +523,7 @@ def _run_build_dry_run(args: argparse.Namespace, config: SliceConfig) -> int:
         f"[cleome] Dry run: would build {total_slices} WOFF2 slices + "
         f"{outputs.css_path.name} (no files written)"
     )
-    print(f"         CSS   : {outputs.css_path}")
-    print(f"         Slices: {outputs.slices_dir}/")
-    if preload_slices:
-        print("         Preload (Tier 1):")
-        for item in preload_slices:
-            print(
-                f'           <link rel="preload" href="{item["url"]}" '
-                f'as="font" type="font/woff2" crossorigin>'
-            )
+    _print_build_summary_details(outputs.css_path, outputs.slices_dir, preload_slices)
     return EXIT_OK
 
 
@@ -597,31 +596,12 @@ def _run_build(args: argparse.Namespace, config: SliceConfig) -> int:
         f"({result.total_woff2_bytes / (1024 * 1024):.2f} MB total) + "
         f"{result.css_path.name} ({result.css_bytes / 1024:.1f} KB) in {elapsed:.2f}s{cache_suffix}"
     )
-    print(f"         CSS   : {result.css_path}")
-    print(f"         Slices: {result.slices_dir}/")
-    if preload_slices:
-        print("         Preload (Tier 1):")
-        for item in preload_slices:
-            print(
-                f'           <link rel="preload" href="{item["url"]}" '
-                f'as="font" type="font/woff2" crossorigin>'
-            )
+    _print_build_summary_details(result.css_path, result.slices_dir, preload_slices)
     return EXIT_OK
 
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-
-    for p in args.inputs:
-        if not p.exists():
-            print(f"Error: Input font not found: {p}", file=sys.stderr)
-            return EXIT_INPUT_ERROR
-        if p.is_dir():
-            print(
-                f"Error: Input path is a directory, expected a font file: {p}",
-                file=sys.stderr,
-            )
-            return EXIT_INPUT_ERROR
 
     try:
         config = SliceConfig(

@@ -13,13 +13,6 @@ type CodepointSet = set[int] | frozenset[int]
 
 _CLEOME_CSS_OPTIONS = SerializationOptions.cleome()
 
-__all__ = [
-    "CodepointSet",
-    "compact_unicode_range",
-    "format_unicode_range",
-    "parse_unicode_range",
-]
-
 
 def format_unicode_range(
     codepoints: CodepointSet | list[int] | tuple[int, int],

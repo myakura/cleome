@@ -436,14 +436,3 @@ def validate_and_compute_variant_suffixes(
         seen_suffixes.add(suf)
         suffixes.append(suf)
     return suffixes
-
-
-__all__ = [
-    "OS2_WIDTH_CLASS_TO_CSS",
-    "FontFaceDescriptors",
-    "FontMetadata",
-    "extract_font_face_descriptors",
-    "extract_font_metadata",
-    "slugify_family",
-    "validate_and_compute_variant_suffixes",
-]

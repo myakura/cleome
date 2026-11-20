@@ -18,7 +18,6 @@ from cleome._font.metadata import (
     extract_font_metadata,
 )
 from cleome._font.subset import (
-    BuiltSliceFile,
     _atomic_output_file,
     _export_woff2_slices_batch,
     _prune_superseded_hashed_slices,
@@ -34,13 +33,12 @@ from cleome._output.css import (
 )
 from cleome._output.paths import _resolve_and_validate_outputs
 from cleome._plan.bundle import _prepare_font_bundle
-from cleome._plan.config import SliceConfig, SliceSpec, _validate_workers
-
-__all__ = [
-    "SliceBundleResult",
-    "slice_font",
-    "slice_fonts",
-]
+from cleome._plan.config import (
+    BuiltSliceFile,
+    SliceConfig,
+    SliceSpec,
+    _validate_workers,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -456,7 +454,7 @@ def slice_fonts(
             _prune_superseded_hashed_slices(
                 outputs.slices_dir,
                 all_built_files,
-                prepared.metas,
+                prepared.slug,
             )
 
         return SliceBundleResult(

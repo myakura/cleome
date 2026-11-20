@@ -135,3 +135,15 @@ class SliceSpec:
         if content_hash:
             return f"{stem}-{content_hash}.woff2"
         return f"{stem}.woff2"
+
+
+@dataclass(frozen=True, slots=True)
+class BuiltSliceFile:
+    """Result metadata for a single generated `.woff2` slice file."""
+
+    spec: SliceSpec
+    filename: str
+    path: Path
+    size_bytes: int
+    glyph_count: int
+    variant_suffix: str = ""
