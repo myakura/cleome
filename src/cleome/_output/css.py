@@ -2,8 +2,6 @@
 CSS `@font-face` stylesheet generator for Cleome.
 """
 
-import hashlib
-import re
 from collections.abc import Sequence
 from pathlib import Path
 
@@ -23,37 +21,12 @@ from cleome._output.paths import _resolve_url_prefix
 from cleome._plan.config import BuiltSliceFile, SliceConfig
 
 _CLEOME_CSS_OPTIONS = SerializationOptions.cleome()
-_CACHE_FORMAT_VERSION = 1
-_CACHE_COMMENT_RE = re.compile(
-    r"^/\* cleome-cache: v(?P<version>\d+) key=(?P<key>[0-9a-f]{32}) out=(?P<out>[0-9a-f]{32}) \*/$"
-)
-_BLOCK_GLYPHS_RE = re.compile(
-    r"^/\* \[[^\]]+\] .* \((?P<glyphs>\d+) glyphs, [0-9.]+ KB\) \*/$"
-)
-
-
-def _compute_slices_output_digest(built_files: Sequence[BuiltSliceFile]) -> str:
-    """Compute a single 32-hex-char SHA-256 digest over all built `.woff2` slice files in order."""
-    hasher = hashlib.sha256()
-    for bf in built_files:
-        raw = bf.path.read_bytes()
-        hasher.update(f"{bf.filename}:{len(raw)}:{bf.glyph_count}\n".encode())
-        hasher.update(raw)
-    return hasher.hexdigest()[:32]
-
-
-def _format_cache_comment(cache_key: str, out_digest: str) -> str:
-    return (
-        f"/* cleome-cache: v{_CACHE_FORMAT_VERSION} key={cache_key} out={out_digest} */"
-    )
 
 
 def generate_css(
     fonts_and_files: Sequence[tuple[FontMetadata, Sequence[BuiltSliceFile]]],
     config: SliceConfig | None = None,
     *,
-    cache_key: str | None = None,
-    out_digest: str | None = None,
     css_path: Path | None = None,
     slices_dir: Path | None = None,
 ) -> str:
@@ -74,13 +47,6 @@ def generate_css(
 
     with using_options(_CLEOME_CSS_OPTIONS):
         rules: list[Rule] = []
-        if cache_key is not None:
-            resolved_out = (
-                out_digest
-                if out_digest is not None
-                else _compute_slices_output_digest(all_files)
-            )
-            rules.append(CommentNode(_format_cache_comment(cache_key, resolved_out)))
 
         for meta, built_files in fonts_and_files:
             styles = meta.styles_css

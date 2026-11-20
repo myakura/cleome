@@ -40,7 +40,6 @@ cleome plan SourceHanSansJP-VF.otf --json
 # Slice a Variable Font (outputs <out-dir>/<slug>.css and <out-dir>/slices/<slug>-*-<hash8>.woff2)
 cleome build SourceHanSansJP-VF.otf -o dist/web
 cleome build SourceHanSansJP-VF.otf -o dist/web --dry-run
-cleome build SourceHanSansJP-VF.otf -o dist/web --force
 cleome build SourceHanSansJP-VF.otf -o public/fonts --url-prefix "/fonts/slices" --css-out src/styles/fonts.css
 cleome build SourceHanSansJP-VF.otf -o src/assets/fonts --no-filename-hash
 

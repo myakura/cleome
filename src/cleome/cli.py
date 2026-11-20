@@ -236,11 +236,6 @@ def _add_shared_arguments(parser: argparse.ArgumentParser, *, is_build: bool) ->
             help="Number of parallel worker processes for WOFF2 compression (default: CPU count)",
         )
         exec_group.add_argument(
-            "--force",
-            action="store_true",
-            help="Rebuild all WOFF2 slices and CSS even if cached outputs are up to date",
-        )
-        exec_group.add_argument(
             "--dry-run",
             action="store_true",
             help="Validate inputs, output paths, and planned slices without creating directories or writing files",
@@ -410,7 +405,6 @@ def _run_build_dry_run(args: argparse.Namespace, config: SliceConfig) -> int:
             "ok": True,
             "command": "build",
             "dry_run": True,
-            "cached": False,
             "family_name": prepared.family_name,
             "slug": prepared.slug,
             "locale": resolved_loc,
@@ -451,7 +445,6 @@ def _run_build(args: argparse.Namespace, config: SliceConfig) -> int:
             style=args.style,
             config=config,
             workers=args.workers,
-            force=args.force,
         )
     except (
         ValueError,
@@ -476,7 +469,6 @@ def _run_build(args: argparse.Namespace, config: SliceConfig) -> int:
             "ok": True,
             "command": "build",
             "dry_run": False,
-            "cached": result.cached,
             "family_name": result.family_name,
             "slug": result.slug,
             "locale": result.locale,
@@ -492,12 +484,10 @@ def _run_build(args: argparse.Namespace, config: SliceConfig) -> int:
         print(json.dumps(payload, ensure_ascii=False))
         return EXIT_OK
 
-    action_label = "Cached" if result.cached else "Built"
-    cache_suffix = " (up to date)" if result.cached else ""
     print(
-        f"[cleome] {action_label} {len(result.built_files)} WOFF2 slices "
+        f"[cleome] Built {len(result.built_files)} WOFF2 slices "
         f"({result.total_woff2_bytes / (1024 * 1024):.2f} MB total) + "
-        f"{result.css_path.name} ({result.css_bytes / 1024:.1f} KB) in {elapsed:.2f}s{cache_suffix}"
+        f"{result.css_path.name} ({result.css_bytes / 1024:.1f} KB) in {elapsed:.2f}s"
     )
     _print_build_summary_details(result.css_path, result.slices_dir, preload_slices)
     return EXIT_OK
