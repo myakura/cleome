@@ -48,7 +48,7 @@ def _is_input_path_error(exc: OSError, input_paths: Sequence[Path]) -> bool:
 def _handle_cli_exception(
     exc: BaseException, *, input_paths: Sequence[Path] = ()
 ) -> int:
-    """Format a concise stderr diagnostic and return the Gate 3 exit code (`1`, `2`, `3`, or `4`)."""
+    """Format a concise stderr diagnostic and return the CLI exit code (`1`, `2`, `3`, or `4`)."""
     if isinstance(exc, PermissionError):
         target = f": {exc.filename}" if getattr(exc, "filename", None) else f": {exc}"
         print(f"Error: Permission denied{target}", file=sys.stderr)

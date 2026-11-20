@@ -1,5 +1,5 @@
 """
-Unicodevariation sequence (`cmap` Format 14) base `cmap` repair helpers for Cleome.
+Unicode Variation Sequence (`cmap` Format 14) base `cmap` repair helpers for Cleome.
 """
 
 from fontTools.ttLib import TTFont

@@ -323,7 +323,7 @@ def slice_fonts(
     into optimized `unicode-range` `.woff2` slices and generate a unified `@font-face` CSS file.
 
     When `force=False` (default), if the output CSS and all planned `.woff2` slice files already
-    exist on disk with matching SHA-256 input digests, configuration, and byte sizes,
+    exist on disk with matching SHA-256 input digests, configuration, and SHA-256 output digests,
     `fontTools.subset` + WOFF2 compression is skipped and `result.cached` is `True`.
 
     Important: When `workers` > 1 (or `None` on multi-core machines), `ProcessPoolExecutor` is used.
