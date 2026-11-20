@@ -6,7 +6,6 @@ Variable Font (`ital`/`slnt`/`wght`/`wdth`) CSS generation, TTFont immutability,
 import copy
 import io
 import os
-import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -16,8 +15,6 @@ from fontTools.feaLib.builder import addOpenTypeFeaturesFromString
 from fontTools.ttLib import TTFont
 from fontTools.ttLib.tables._c_m_a_p import CmapSubtable
 from fontTools.ttLib.tables._f_v_a_r import Axis
-
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 from helpers import create_synthetic_ttfont
 
 from cleome import (

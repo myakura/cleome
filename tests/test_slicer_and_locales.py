@@ -5,7 +5,6 @@ SIP/TIP plane separation, and CJK locale (`jp`, `kr`, `sc`, `tc`, `hk`) profiles
 
 import copy
 import io
-import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -13,8 +12,6 @@ from pathlib import Path
 import uharfbuzz as hb
 from fontTools.feaLib.builder import addOpenTypeFeaturesFromString
 from fontTools.ttLib import TTFont
-
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 from helpers import (
     assert_generic_cascade_invariants,
     assert_jp_plan_invariants,
