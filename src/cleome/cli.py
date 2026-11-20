@@ -111,46 +111,8 @@ def _positive_int(val_str: str) -> int:
     return val
 
 
-def _parse_freq_chunks(spec_str: str) -> tuple[tuple[int, int], ...]:
-    """Parse a progressive Tier 3 chunk spec like `"200x2,80x10"` or `"none"` into a tuple of `(size, count)` pairs."""
-    cleaned = spec_str.strip()
-    if cleaned.lower() == "none":
-        return ()
-    chunks: list[tuple[int, int]] = []
-    for item in cleaned.split(","):
-        item = item.strip()
-        if not item:
-            continue
-        if "x" not in item.lower():
-            raise argparse.ArgumentTypeError(
-                f"Invalid --freq-chunks item '{item}'. Expected format 'SIZE'x'COUNT' (e.g. '200x2,80x10') or 'none'."
-            )
-        sz_s, cnt_s = item.lower().split("x", 1)
-        try:
-            sz, cnt = int(sz_s), int(cnt_s)
-        except ValueError as exc:
-            raise argparse.ArgumentTypeError(
-                f"Invalid --freq-chunks item '{item}'. Both SIZE and COUNT must be integers."
-            ) from exc
-        if sz <= 0 or cnt <= 0:
-            raise argparse.ArgumentTypeError(
-                f"Invalid --freq-chunks item '{item}'. Both SIZE and COUNT must be > 0."
-            )
-        chunks.append((sz, cnt))
-    if not chunks:
-        raise argparse.ArgumentTypeError(
-            "--freq-chunks cannot be empty (use 'none' for flat Tier 3 slicing)."
-        )
-    return tuple(chunks)
-
-
-def _format_freq_chunks(chunks: Sequence[tuple[int, int]]) -> str:
-    """Format a tuple of `(size, count)` pairs into a CLI spec string like `'200x2,80x10'` or `'none'`."""
-    return ",".join(f"{sz}x{cnt}" for sz, cnt in chunks) if chunks else "none"
-
-
 def _parse_tag_list(spec_str: str) -> tuple[str, ...]:
-    """Parse a comma- or whitespace-separated list of OpenType table or feature tags."""
+    """Parse a comma- or whitespace-separated list of OpenType feature tags."""
     return tuple(t.strip() for t in re.split(r"[,\s]+", spec_str.strip()) if t.strip())
 
 
@@ -174,48 +136,12 @@ def _add_shared_arguments(parser: argparse.ArgumentParser, *, is_build: bool) ->
         ),
     )
     slicing_group.add_argument(
-        "--freq-chunks",
-        type=_parse_freq_chunks,
-        default=_DEFAULT_CONFIG.freq_chunks,
-        help=(
-            "Progressive Tier 3 chunk schedule from highest frequency downward, or 'none' "
-            f"(default: {_format_freq_chunks(_DEFAULT_CONFIG.freq_chunks)!r})"
-        ),
-    )
-    slicing_group.add_argument(
-        "--freq-tail-chunk-size",
-        type=_positive_int,
-        default=_DEFAULT_CONFIG.freq_tail_chunk_size,
-        help=(
-            "Target characters per slice for remaining Tier 3 characters "
-            f"(default: {_DEFAULT_CONFIG.freq_tail_chunk_size})"
-        ),
-    )
-    slicing_group.add_argument(
         "--rare-chunk-size",
         type=_positive_int,
         default=_DEFAULT_CONFIG.rare_chunk_size,
         help=(
             "Target characters per slice for Tier 4 rare/extended characters "
             f"(default: {_DEFAULT_CONFIG.rare_chunk_size})"
-        ),
-    )
-    slicing_group.add_argument(
-        "--symbols-chunk-size",
-        type=_positive_int,
-        default=_DEFAULT_CONFIG.symbols_ext_chunk_size,
-        help=(
-            "Target characters per slice for Tier 2 extended symbols "
-            f"(default: {_DEFAULT_CONFIG.symbols_ext_chunk_size})"
-        ),
-    )
-    slicing_group.add_argument(
-        "--uvs-base-repair",
-        action=argparse.BooleanOptionalAction,
-        default=_DEFAULT_CONFIG.uvs_base_repair,
-        help=(
-            "Repair characters mapped in cmap Format 14 (UVS/IVS) but omitted from Format 4/12 "
-            f"(default: {'enabled' if _DEFAULT_CONFIG.uvs_base_repair else 'disabled'})"
         ),
     )
 
@@ -273,17 +199,11 @@ def _add_shared_arguments(parser: argparse.ArgumentParser, *, is_build: bool) ->
             default=_DEFAULT_CONFIG.url_prefix,
             help="Custom URL prefix in CSS `src: url('<prefix>/<file>.woff2')` (default: relative path from CSS to <slices-dir>)",
         )
-        css_dest_group = output_group.add_mutually_exclusive_group()
-        css_dest_group.add_argument(
-            "--css-name",
-            default=None,
-            help="Custom filename for the output CSS file inside --out-dir (default: '<slug>.css')",
-        )
-        css_dest_group.add_argument(
+        output_group.add_argument(
             "--css-out",
             type=Path,
             default=None,
-            help="Write the output CSS file to an explicit path (e.g. 'src/styles/fonts.css' while -o is 'public/fonts')",
+            help="Write the output CSS file to an explicit path (default: '<out-dir>/<slug>.css')",
         )
         output_group.add_argument(
             "--filename-hash",
@@ -304,21 +224,6 @@ def _add_shared_arguments(parser: argparse.ArgumentParser, *, is_build: bool) ->
                 "Comma-separated OpenType layout feature tags to retain "
                 f"(default: {','.join(_DEFAULT_CONFIG.layout_features)!r} keeps all features)"
             ),
-        )
-        subset_group.add_argument(
-            "--layout-closure",
-            action=argparse.BooleanOptionalAction,
-            default=_DEFAULT_CONFIG.layout_closure,
-            help=(
-                "Expand glyph closure over GSUB substitution tables "
-                f"(default: {'enabled' if _DEFAULT_CONFIG.layout_closure else 'disabled'})"
-            ),
-        )
-        subset_group.add_argument(
-            "--drop-tables",
-            type=_parse_tag_list,
-            default=_DEFAULT_CONFIG.drop_tables,
-            help="Comma-separated OpenType table tags to drop during subsetting (e.g. 'GPOS,GSUB,vhea,vmtx')",
         )
 
     exec_group = parser.add_argument_group("Execution & output format")
@@ -492,7 +397,6 @@ def _run_build_dry_run(args: argparse.Namespace, config: SliceConfig) -> int:
             config,
             prepared.metas,
             prepared.active_variant_plans,
-            css_filename=args.css_name,
             css_path=args.css_out,
         )
     except (ValueError, TTLibError, EOFError, struct.error, OSError) as exc:
@@ -541,7 +445,6 @@ def _run_build(args: argparse.Namespace, config: SliceConfig) -> int:
             out_dir=args.out_dir,
             family_name=args.family,
             slug=args.slug,
-            css_filename=args.css_name,
             css_path=args.css_out,
             weight=args.weight,
             stretch=args.stretch,
@@ -606,20 +509,10 @@ def main(argv: list[str] | None = None) -> int:
     try:
         config = SliceConfig(
             locale=args.locale,
-            freq_chunks=args.freq_chunks,
-            freq_tail_chunk_size=args.freq_tail_chunk_size,
             rare_chunk_size=args.rare_chunk_size,
-            symbols_ext_chunk_size=args.symbols_chunk_size,
-            layout_closure=getattr(
-                args, "layout_closure", _DEFAULT_CONFIG.layout_closure
-            ),
             layout_features=tuple(
                 getattr(args, "layout_features", _DEFAULT_CONFIG.layout_features)
             ),
-            drop_tables=tuple(
-                getattr(args, "drop_tables", _DEFAULT_CONFIG.drop_tables)
-            ),
-            uvs_base_repair=args.uvs_base_repair,
             slices_subdir=getattr(args, "slices_dir", _DEFAULT_CONFIG.slices_subdir),
             url_prefix=getattr(args, "url_prefix", _DEFAULT_CONFIG.url_prefix),
             font_display=getattr(args, "display", _DEFAULT_CONFIG.font_display),

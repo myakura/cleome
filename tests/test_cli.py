@@ -21,8 +21,8 @@ from cleome.cli import main as cli_main
 class TestCleomeCLI(unittest.TestCase):
     def test_cli_validation_and_plan(self) -> None:
         """
-        Verify CLI argument parsing for `cleome plan` and `cleome build`, `--freq-chunks none`,
-        `allow_abbrev=False`, mutually exclusive `--css-name`/`--css-out`, and validation errors.
+        Verify CLI argument parsing for `cleome plan` and `cleome build`,
+        `allow_abbrev=False`, build-only flag rejection on `plan`, and validation errors.
         """
         sample_cps = [ord("A"), ord("あ"), ord("日")]
         with tempfile.TemporaryDirectory() as tmp:
@@ -31,24 +31,23 @@ class TestCleomeCLI(unittest.TestCase):
                 font_path, reorderTables=False
             )
 
-            # 1. --freq-chunks none and --no-uvs-base-repair on `plan`
+            # 1. `plan` with `--rare-chunk-size`
             buf = StringIO()
             with redirect_stdout(buf):
                 rc = cli_main(
                     [
                         "plan",
-                        "--freq-chunks",
-                        "none",
-                        "--no-uvs-base-repair",
+                        "--rare-chunk-size",
+                        "100",
                         str(font_path),
                     ]
                 )
             self.assertEqual(rc, 0)
             self.assertIn("3 chars -> 3 slices", buf.getvalue())
 
-            # 1b. Build-only flags (--drop-tables, --display, --slices-dir) are rejected on `plan` with SystemExit(2)
+            # 1b. Build-only flags (--layout-features, --display, --slices-dir) are rejected on `plan` with SystemExit(2)
             for build_only_flag in (
-                ["--drop-tables", "DSIG"],
+                ["--layout-features", "kern"],
                 ["--display", "optional"],
                 ["--slices-dir", "sub"],
             ):
@@ -59,16 +58,12 @@ class TestCleomeCLI(unittest.TestCase):
                     cli_main(["plan", *build_only_flag, str(font_path)])
                 self.assertEqual(cm_bo.exception.code, 2)
 
-            # 1c. Abbreviated flags (--freq-chunk) are rejected when allow_abbrev=False
+            # 1c. Abbreviated flags (--rare-chunk) are rejected when allow_abbrev=False
             with redirect_stderr(StringIO()), self.assertRaises(SystemExit) as cm_abbr:
-                cli_main(["plan", "--freq-chunk", "200x2", str(font_path)])
+                cli_main(["plan", "--rare-chunk", "100", str(font_path)])
             self.assertEqual(cm_abbr.exception.code, 2)
 
-            # 2. Invalid --freq-chunks (0 or negative) must fail with SystemExit(2)
-            with redirect_stderr(StringIO()), self.assertRaises(SystemExit) as cm:
-                cli_main(["plan", "--freq-chunks", "200x0", str(font_path)])
-            self.assertEqual(cm.exception.code, 2)
-
+            # 2. Invalid --rare-chunk-size (0 or negative) must fail with SystemExit(2)
             with redirect_stderr(StringIO()), self.assertRaises(SystemExit) as cm2:
                 cli_main(["plan", "--rare-chunk-size", "0", str(font_path)])
             self.assertEqual(cm2.exception.code, 2)
@@ -769,25 +764,7 @@ class TestCleomeCLI(unittest.TestCase):
             build_out.mkdir(parents=True, exist_ok=True)
             dry_out = tmp_path / "never_created_dir"
 
-            # Exit code 2: mutually exclusive flags and invalid CSS/path tokens
-            with (
-                redirect_stderr(StringIO()),
-                self.assertRaises(SystemExit) as cm_mutex,
-            ):
-                cli_main(
-                    [
-                        "build",
-                        str(font_path),
-                        "-o",
-                        str(build_out),
-                        "--css-name",
-                        "a.css",
-                        "--css-out",
-                        str(tmp_path / "b.css"),
-                    ]
-                )
-            self.assertEqual(cm_mutex.exception.code, 2)
-
+            # Exit code 2: invalid CSS/path tokens and directory/slice collisions
             blocker_file = tmp_path / "blocker_file"
             blocker_file.write_text("file", encoding="utf-8")
             slices_conflict_dir = tmp_path / "slices_conflict_out"
@@ -822,17 +799,6 @@ class TestCleomeCLI(unittest.TestCase):
                 (
                     ["plan", str(font_path), "--weight", "400; } @import url(x)"],
                     "font-weight",
-                ),
-                (
-                    [
-                        "build",
-                        str(font_path),
-                        "-o",
-                        str(build_out),
-                        "--css-name",
-                        "../outside.css",
-                    ],
-                    "css_filename",
                 ),
                 (
                     [
@@ -883,8 +849,8 @@ class TestCleomeCLI(unittest.TestCase):
                         str(font_path),
                         "-o",
                         str(build_out),
-                        "--css-name",
-                        "existing_dir.css",
+                        "--css-out",
+                        str(build_out / "existing_dir.css"),
                         "--dry-run",
                     ],
                     "css_path must be a file path, not an existing directory",
@@ -898,8 +864,8 @@ class TestCleomeCLI(unittest.TestCase):
                         "--slices-dir",
                         ".",
                         "--no-filename-hash",
-                        "--css-name",
-                        "subcmd-test-latin.woff2",
+                        "--css-out",
+                        str(dry_out / "subcmd-test-latin.woff2"),
                         "--dry-run",
                     ],
                     "collides with planned slice output",

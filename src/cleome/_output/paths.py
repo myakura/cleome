@@ -77,8 +77,6 @@ class _ResolvedOutputs:
     out_path: Path
     slices_dir: Path
     css_path: Path
-    css_filename: str
-    explicit_css: bool
     url_prefix: str
     total_active_slices: int
     preload_slices: list[dict[str, str]]
@@ -144,29 +142,9 @@ def _resolve_and_validate_outputs(
     metas: Sequence[FontMetadata],
     active_variant_plans: Sequence[Sequence[SliceSpec]],
     *,
-    css_filename: str | None = None,
     css_path: Path | str | None = None,
 ) -> _ResolvedOutputs:
     """Validate all output directories, CSS path, URL prefix, and slice filenames without mutating disk."""
-    if css_filename is not None and css_path is not None:
-        raise ValueError("Cannot specify both css_filename and css_path.")
-    if css_filename is not None:
-        css_filename = _validate_filename_token(css_filename, "css_filename")
-
-    if css_path is not None:
-        css_path_str = str(css_path).strip()
-        if not css_path_str or "\x00" in css_path_str:
-            raise ValueError(f"Invalid css_path: {css_path!r}")
-        explicit_css_path = Path(css_path_str)
-        if not explicit_css_path.name or explicit_css_path.name in (".", ".."):
-            raise ValueError(f"css_path must point to a file path, got {css_path!r}")
-        if explicit_css_path.exists() and explicit_css_path.is_dir():
-            raise ValueError(
-                f"css_path must be a file path, not an existing directory: {css_path!r}"
-            )
-    else:
-        explicit_css_path = None
-
     out_path = Path(out_dir)
     _ensure_directory_creatable(out_path, "out_dir")
     out_resolved = out_path.resolve()
@@ -181,15 +159,15 @@ def _resolve_and_validate_outputs(
         )
     _ensure_directory_creatable(slices_dir, "slices_dir")
 
-    unified_slug = metas[0].slug
-    if explicit_css_path is not None:
-        resolved_css_path = explicit_css_path
-        resolved_css_name = resolved_css_path.name
+    if css_path is not None:
+        css_path_str = str(css_path).strip()
+        if not css_path_str or "\x00" in css_path_str:
+            raise ValueError(f"Invalid css_path: {css_path!r}")
+        resolved_css_path = Path(css_path_str)
+        if not resolved_css_path.name or resolved_css_path.name in (".", ".."):
+            raise ValueError(f"css_path must point to a file path, got {css_path!r}")
     else:
-        resolved_css_name = _validate_filename_token(
-            css_filename or f"{unified_slug}.css", "css_filename"
-        )
-        resolved_css_path = out_path / resolved_css_name
+        resolved_css_path = out_path / f"{metas[0].slug}.css"
         if not resolved_css_path.resolve().is_relative_to(out_resolved):
             raise ValueError(
                 f"css_path {resolved_css_path!r} resolves outside out_dir {out_path!r}"
@@ -242,8 +220,6 @@ def _resolve_and_validate_outputs(
         out_path=out_path,
         slices_dir=slices_dir,
         css_path=resolved_css_path,
-        css_filename=resolved_css_name,
-        explicit_css=explicit_css_path is not None,
         url_prefix=url_prefix,
         total_active_slices=total_active_slices,
         preload_slices=preload_slices,

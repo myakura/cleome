@@ -316,7 +316,6 @@ def slice_fonts(
     *,
     family_name: str | None = None,
     slug: str | None = None,
-    css_filename: str | None = None,
     css_path: Path | str | None = None,
     weight: str | None = None,
     stretch: str | None = None,
@@ -390,7 +389,6 @@ def slice_fonts(
             config,
             prepared.metas,
             prepared.active_variant_plans,
-            css_filename=css_filename,
             css_path=css_path,
         )
 
@@ -402,7 +400,7 @@ def slice_fonts(
             config,
             family_name=family_name,
             slug=slug,
-            css_filename=outputs.css_filename,
+            css_filename=outputs.css_path.name,
             effective_url_prefix=outputs.url_prefix,
             weight=weight,
             stretch=stretch,
@@ -425,8 +423,7 @@ def slice_fonts(
                 return cached_res
 
         outputs.out_path.mkdir(parents=True, exist_ok=True)
-        if outputs.explicit_css:
-            outputs.css_path.parent.mkdir(parents=True, exist_ok=True)
+        outputs.css_path.parent.mkdir(parents=True, exist_ok=True)
 
         batch_variants: list[
             tuple[TTFont | bytes | Path | str, FontMetadata, list[SliceSpec]]
@@ -489,7 +486,6 @@ def slice_font(
     *,
     family_name: str | None = None,
     slug: str | None = None,
-    css_filename: str | None = None,
     css_path: Path | str | None = None,
     weight: str | None = None,
     stretch: str | None = None,
@@ -511,7 +507,6 @@ def slice_font(
         out_dir=out_dir,
         family_name=family_name,
         slug=slug,
-        css_filename=css_filename,
         css_path=css_path,
         weight=weight,
         stretch=stretch,

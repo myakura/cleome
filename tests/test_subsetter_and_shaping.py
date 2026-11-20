@@ -946,7 +946,7 @@ class TestSubsetterAndShaping(unittest.TestCase):
         1. Font `name` table strings containing `*/` comment closers, single quotes, backslashes,
            or raw newlines (`\\n`, `\\r`, `\\f`) cannot break out of CSS comments or `font-family`
            string tokens in single- or multi-variant `@font-face` output.
-        2. Path traversal attempts in `slug`, `css_filename`, or `slices_subdir` raise `ValueError`.
+        2. Path traversal attempts in `slug` or `slices_subdir` raise `ValueError`.
         3. Temporary files created via `NamedTemporaryFile` leave no `.tmp` files behind.
         """
         malicious_family = "Evil */ @import url('https://evil.example/a.css'); /* Font'\n  src: url('x');\r\f\\End"
@@ -1007,10 +1007,6 @@ class TestSubsetterAndShaping(unittest.TestCase):
                 SliceConfig(slices_subdir="/etc/escape")
             with self.assertRaisesRegex(ValueError, "slug"):
                 slice_font(f400, out_dir=out_dir, slug="../escape", workers=1)
-            with self.assertRaisesRegex(ValueError, "css_filename"):
-                slice_font(
-                    f400, out_dir=out_dir, css_filename="../escape.css", workers=1
-                )
 
     def test_resolve_url_prefix_variants(self) -> None:
         """
@@ -1271,7 +1267,7 @@ class TestSubsetterAndShaping(unittest.TestCase):
                     f"Existing slice referenced by CSS was deleted before new CSS was written: {p.name}",
                 )
 
-            # 11. Two builds into the same slices_dir with the same slug, different css_filename,
+            # 11. Two builds into the same slices_dir with the same slug, different css_path,
             # and different subsetting options prune the earlier build's hashed slices.
             shared_out = tmp_path / "shared_slices_out"
             vf_shared = tmp_path / "Shared-VF.ttf"
@@ -1281,7 +1277,7 @@ class TestSubsetterAndShaping(unittest.TestCase):
             res_a = slice_font(
                 vf_shared,
                 out_dir=shared_out,
-                css_filename="a.css",
+                css_path=shared_out / "a.css",
                 config=SliceConfig(drop_tables=()),
                 workers=1,
             )
@@ -1291,7 +1287,7 @@ class TestSubsetterAndShaping(unittest.TestCase):
             res_b = slice_font(
                 vf_shared,
                 out_dir=shared_out,
-                css_filename="b.css",
+                css_path=shared_out / "b.css",
                 config=SliceConfig(drop_tables=("gvar",)),
                 workers=1,
             )
