@@ -432,7 +432,7 @@ def _run_plan(args: argparse.Namespace, config: SliceConfig) -> int:
                     "is_variable": meta.is_variable,
                     "weight": meta.weight_css,
                     "stretch": meta.stretch_css or "normal",
-                    "styles": list(meta.styles_css or (meta.style_css,)),
+                    "styles": list(meta.styles_css),
                     "variant_suffix": meta.variant_suffix,
                     "codepoints": len(meta.codepoints),
                     "total_slices": len(plan),
@@ -455,7 +455,7 @@ def _run_plan(args: argparse.Namespace, config: SliceConfig) -> int:
     print(f"Locale      : {resolved_loc} (config: {config.locale})")
     print(f"Type        : {type_label} ({len(prepared.metas)} file(s))")
     for m, plan in zip(prepared.metas, prepared.variant_plans):
-        style_label = " + ".join(m.styles_css or (m.style_css,))
+        style_label = " + ".join(m.styles_css)
         var_label = "variable" if m.is_variable else "static"
         print(
             f"Variant     : type={var_label}, weight={m.weight_css}, stretch={m.stretch_css or 'normal'}, "

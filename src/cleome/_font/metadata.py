@@ -90,7 +90,7 @@ def _validate_css_descriptor(val: str, field_name: str) -> str:
 
 
 def _normalize_weight_css(weight_css: str) -> str:
-    cleaned = _validate_css_descriptor(weight_css, "font-weight").strip().lower()
+    cleaned = weight_css.lower()
     if "(" in cleaned:
         return cleaned
     tokens = [_CSS_WEIGHT_KEYWORDS.get(t, t) for t in cleaned.split()]
@@ -102,7 +102,7 @@ def _normalize_weight_css(weight_css: str) -> str:
 def _normalize_stretch_css(stretch_css: str | None) -> str:
     if stretch_css is None:
         return "100%"
-    cleaned = _validate_css_descriptor(stretch_css, "font-stretch").strip().lower()
+    cleaned = stretch_css.lower()
     if "(" in cleaned:
         return cleaned
     tokens = [_CSS_WIDTH_KEYWORDS.get(t, t) for t in cleaned.split()]
@@ -112,7 +112,7 @@ def _normalize_stretch_css(stretch_css: str | None) -> str:
 
 
 def _normalize_style_css(style_css: str) -> str:
-    cleaned = _validate_css_descriptor(style_css, "font-style").strip().lower()
+    cleaned = style_css.lower()
     if "(" not in cleaned and cleaned.startswith("oblique "):
         angles = cleaned[8:].split()
         if len(angles) == 2 and angles[0] == angles[1]:
@@ -394,18 +394,17 @@ def validate_and_compute_variant_suffixes(
     for m in raw_metas:
         w_key = _normalize_weight_css(m.weight_css)
         s_key = _normalize_stretch_css(m.stretch_css)
-        raw_styles = m.styles_css or (m.style_css,)
-        st_keys = tuple(dict.fromkeys(_normalize_style_css(st) for st in raw_styles))
-        for st_raw, st_key in zip(
-            raw_styles, (_normalize_style_css(s) for s in raw_styles)
-        ):
-            desc_key = (w_key, s_key, st_key)
-            if desc_key in seen_descriptors:
+        st_keys_dict: dict[str, None] = {}
+        for st_raw in m.styles_css:
+            st_key = _normalize_style_css(st_raw)
+            if (w_key, s_key, st_key) in seen_descriptors:
                 raise ValueError(
                     f"Duplicate @font-face descriptors across input fonts: "
                     f"weight={m.weight_css!r}, stretch={m.stretch_css or 'normal'!r}, style={st_raw!r}. "
                     "Each font in a multi-file bundle must have a unique (weight, stretch, style) combination."
                 )
+            st_keys_dict[st_key] = None
+        st_keys = tuple(st_keys_dict)
         for st_key in st_keys:
             seen_descriptors.add((w_key, s_key, st_key))
         normalized_axes.append((w_key, s_key, st_keys))
