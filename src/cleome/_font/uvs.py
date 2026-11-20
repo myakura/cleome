@@ -59,7 +59,7 @@ def _collect_uvs_missing_base_additions(font: TTFont) -> dict[int, str]:
     return uvs_additions
 
 
-def patch_uvs_missing_base_cmap(font: TTFont) -> list[int]:
+def _patch_uvs_missing_base_cmap(font: TTFont) -> list[int]:
     """
     Detect characters that exist in cmap Format 14 (UVS) with a concrete variant glyph
     but were accidentally omitted from Format 4/12 (such as U+553E '唾' in Adobe SourceHanSansJP-VF.otf v2.005)

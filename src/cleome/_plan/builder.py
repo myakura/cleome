@@ -14,6 +14,8 @@ Implements the 4-tier architecture:
 
 from bisect import bisect_left, bisect_right
 
+from stixis import SerializationOptions, compact_urange, format_urange
+
 from cleome._plan.config import SliceConfig, SliceSpec
 from cleome._plan.data.kanji_freq import KANJI_FREQ_RANK
 from cleome._plan.data.kr_freq import KR_HANGUL_FREQ_RANK
@@ -24,6 +26,7 @@ from cleome._plan.data.tc_freq import (
 )
 from cleome._plan.locale import (
     CJK_IDEOGRAPH_REGIONS,
+    CodepointSet,
     detect_font_locale,
     is_cjk_ideograph,
     is_hangul_syllable,
@@ -33,11 +36,10 @@ from cleome._plan.locale import (
     is_tier1_latin,
     is_tier2_symbols_ui,
 )
-from cleome._plan.urange import (
-    CodepointSet,
-    compact_unicode_range,
-    format_unicode_range,
-)
+
+_CLEOME_CSS_OPTIONS = SerializationOptions.cleome()
+# Maximum missing codepoints bridged in Tiers 1-2 (`cp - prev_end - 1 <= 0x7F`, i.e. `cp - prev_end <= 0x80`).
+_MAX_COMPACT_GAP = 0x7F
 
 
 def _chunk_sorted_codepoints(
@@ -109,7 +111,7 @@ def _build_rare_ideograph_slices(
     slices: list[SliceSpec] = []
     total_rare = len(rare_chunk_tuples)
     for i, (reg_name, ch_cps, s_hex, e_hex) in enumerate(rare_chunk_tuples, start=1):
-        ur_token = format_unicode_range((s_hex, e_hex))
+        ur_token = format_urange((s_hex, e_hex), options=_CLEOME_CSS_OPTIONS)
         slices.append(
             SliceSpec(
                 slice_id=f"{category}-{i:02d}",
@@ -149,7 +151,7 @@ def _build_freq_slices(
                     f"(Rank {rank_start}..{rank_end}, {len(chunk_cps)} chars)"
                 ),
                 binary_codepoints=chunk_cps,
-                css_unicode_range=format_unicode_range(chunk_cps),
+                css_unicode_range=format_urange(chunk_cps, options=_CLEOME_CSS_OPTIONS),
                 uses_cascade_shadowing=False,
             )
         )
@@ -340,7 +342,7 @@ def _build_kr_slice_plan(all_cps: set[int], config: SliceConfig) -> list[SliceSp
     total_rare_hangul = len(rare_hangul_chunks)
     for i, ch_cps in enumerate(rare_hangul_chunks, start=1):
         s_hex, e_hex = ch_cps[0], ch_cps[-1]
-        ur_token = format_unicode_range((s_hex, e_hex))
+        ur_token = format_urange((s_hex, e_hex), options=_CLEOME_CSS_OPTIONS)
         slices.append(
             SliceSpec(
                 slice_id=f"hangul-rare-{i:02d}",
@@ -405,7 +407,12 @@ def _append_tier2_and_tier1_slices(
             slice_id = (
                 "symbols-ext" if len(sym_ext_chunks) == 1 else f"symbols-ext-{idx:02d}"
             )
-            ur_str = compact_unicode_range(ch_cps, earlier_sorted)
+            ur_str = compact_urange(
+                ch_cps,
+                earlier_sorted,
+                max_gap=_MAX_COMPACT_GAP,
+                options=_CLEOME_CSS_OPTIONS,
+            )
             slices.append(
                 SliceSpec(
                     slice_id=slice_id,
@@ -423,7 +430,12 @@ def _append_tier2_and_tier1_slices(
 
     if sym_ui_cps:
         forbidden_ui_sorted = sorted(earlier_cps | sym_ext_cps)
-        ur_ui = compact_unicode_range(sorted(sym_ui_cps), forbidden_ui_sorted)
+        ur_ui = compact_urange(
+            sorted(sym_ui_cps),
+            forbidden_ui_sorted,
+            max_gap=_MAX_COMPACT_GAP,
+            options=_CLEOME_CSS_OPTIONS,
+        )
         slices.append(
             SliceSpec(
                 slice_id="symbols-ui",
@@ -438,7 +450,12 @@ def _append_tier2_and_tier1_slices(
 
     if core_cps:
         forbidden_core_sorted = sorted(earlier_cps | sym_ext_cps | sym_ui_cps)
-        ur_core = compact_unicode_range(sorted(core_cps), forbidden_core_sorted)
+        ur_core = compact_urange(
+            sorted(core_cps),
+            forbidden_core_sorted,
+            max_gap=_MAX_COMPACT_GAP,
+            options=_CLEOME_CSS_OPTIONS,
+        )
         slices.append(
             SliceSpec(
                 slice_id=core_id,
@@ -455,7 +472,12 @@ def _append_tier2_and_tier1_slices(
         forbidden_latin_sorted = sorted(
             earlier_cps | sym_ext_cps | sym_ui_cps | core_cps
         )
-        ur_latin = compact_unicode_range(sorted(latin_cps), forbidden_latin_sorted)
+        ur_latin = compact_urange(
+            sorted(latin_cps),
+            forbidden_latin_sorted,
+            max_gap=_MAX_COMPACT_GAP,
+            options=_CLEOME_CSS_OPTIONS,
+        )
         slices.append(
             SliceSpec(
                 slice_id="latin",

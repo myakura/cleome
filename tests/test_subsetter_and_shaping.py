@@ -21,7 +21,6 @@ from cleome import (
     SliceConfig,
     build_slice_plan,
     export_woff2_slices,
-    extract_font_face_descriptors,
     extract_font_metadata,
     slice_font,
     slice_fonts,
@@ -109,9 +108,9 @@ class TestSubsetterAndShaping(unittest.TestCase):
         meta = extract_font_metadata(tt, uvs_base_repair=True)
         self.assertIn(0x553E, meta.codepoints)
         self.assertEqual(meta.patched_uvs_codepoints, (0x553E,))
-        from cleome import patch_uvs_missing_base_cmap
+        from cleome._font.uvs import _patch_uvs_missing_base_cmap
 
-        self.assertEqual(patch_uvs_missing_base_cmap(tt), [0x553E])
+        self.assertEqual(_patch_uvs_missing_base_cmap(tt), [0x553E])
         self.assertEqual(tt.getBestCmap()[0x553E], "glyph_iv0")
 
     def test_issue11_extract_font_metadata_does_not_mutate_caller_cmap(self) -> None:
@@ -148,9 +147,9 @@ class TestSubsetterAndShaping(unittest.TestCase):
 
     def test_public_ttfont_functions_preserve_serialized_bytes(self) -> None:
         """
-        Verify that all public functions accepting a `TTFont` (`extract_font_face_descriptors`,
-        `extract_font_metadata`, `export_woff2_slices`, `slice_font`, `slice_fonts`) preserve
-        the exact serialized byte stream of the caller's `font` before and after invocation.
+        Verify that all public functions accepting a `TTFont` (`extract_font_metadata`,
+        `export_woff2_slices`, `slice_font`, `slice_fonts`) preserve the exact serialized
+        byte stream of the caller's `font` before and after invocation.
         """
         font = create_synthetic_ttfont(
             [ord("A"), ord("あ"), ord("日")],
@@ -158,9 +157,6 @@ class TestSubsetterAndShaping(unittest.TestCase):
             uvs_only_cp=(0x8FBB, 0xE0100),
         )
         baseline_bytes = serialize_font_to_bytes(font)
-
-        extract_font_face_descriptors(font)
-        self.assertEqual(serialize_font_to_bytes(font), baseline_bytes)
 
         meta = extract_font_metadata(font)
         self.assertEqual(meta.patched_uvs_codepoints, (0x8FBB,))
@@ -374,7 +370,7 @@ class TestSubsetterAndShaping(unittest.TestCase):
         a variant glyph and default UVS with glyphName=None) for base characters present in
         base cmap are preserved in the corresponding slice WOFF2 files across Path/TTFont
         inputs and single/multi-worker runs, without polluting base cmap, and keeping
-        `patch_uvs_missing_base_cmap` distinct from Format 14 sequence retention.
+        `_patch_uvs_missing_base_cmap` distinct from Format 14 sequence retention.
         """
         sample_cps = [ord("A"), ord("あ"), ord("日"), 0x4E02, 0xFE00]
 
@@ -1518,15 +1514,16 @@ class TestSubsetterAndShaping(unittest.TestCase):
         1. Static fonts with `OS/2.fsSelection` bit 9 (`0x0200`, `OBLIQUE`) emit `("oblique",)`
            regardless of `post.italicAngle` or co-set `ITALIC` bit 0 (`0x0201`).
         2. Windows UCS-4 `(3, 10, 0x0409)` `name` records are checked before legacy Mac `(1, 0, 0)`.
-        3. `slugify_family` converts ASCII alphanumeric spans to kebab-case and falls back to `"font"`.
-        4. `patch_uvs_missing_base_cmap` and `_collect_uvs_missing_base_additions` only inspect/mutate
+        3. `_slugify_family` converts ASCII alphanumeric spans to kebab-case and falls back to `"font"`.
+        4. `_patch_uvs_missing_base_cmap` and `_collect_uvs_missing_base_additions` only inspect/mutate
            Unicode `cmap` subtables (`table.isUnicode()`), leaving Macintosh Roman `(1, 0)` untouched.
         """
         from fontTools.fontBuilder import FontBuilder
         from fontTools.ttLib.tables._g_l_y_f import Glyph
         from fontTools.ttLib.tables._n_a_m_e import table__n_a_m_e
 
-        from cleome import patch_uvs_missing_base_cmap, slugify_family
+        from cleome._font.metadata import _slugify_family
+        from cleome._font.uvs import _patch_uvs_missing_base_cmap
 
         # 1. Static OS/2.fsSelection bit 9 (OBLIQUE)
         for fs_sel, angle in ((0x0200, 0.0), (0x0200, -12.0), (0x0201, -12.0)):
@@ -1539,9 +1536,9 @@ class TestSubsetterAndShaping(unittest.TestCase):
             fb_obl.setupNameTable({"familyName": "TestOblique", "styleName": "Oblique"})
             fb_obl.setupOS2(fsSelection=fs_sel)
             fb_obl.setupPost(italicAngle=angle)
-            desc = extract_font_face_descriptors(fb_obl.font)
-            self.assertEqual(desc.styles_css, ("oblique",))
-            self.assertEqual(desc.style_css, "oblique")
+            meta_obl = extract_font_metadata(fb_obl.font)
+            self.assertEqual(meta_obl.styles_css, ("oblique",))
+            self.assertEqual(meta_obl.style_css, "oblique")
 
         # 2. Windows UCS-4 (3, 10, 0x0409) preferred over Mac Roman (1, 0, 0)
         tt_ucs4 = create_synthetic_ttfont([ord("A")], family_name="Fallback")
@@ -1550,18 +1547,16 @@ class TestSubsetterAndShaping(unittest.TestCase):
         nt.setName("Legacy Mac Name", 1, 1, 0, 0)
         nt.setName("Win UCS4 Sans", 1, 3, 10, 0x0409)
         tt_ucs4["name"] = nt
-        self.assertEqual(
-            extract_font_face_descriptors(tt_ucs4).family_name, "Win UCS4 Sans"
-        )
+        self.assertEqual(extract_font_metadata(tt_ucs4).family_name, "Win UCS4 Sans")
 
-        # 3. slugify_family: kebab-case ASCII with "font" fallback
-        self.assertEqual(slugify_family("GenSou Sans JP"), "gensou-sans-jp")
-        self.assertEqual(slugify_family("My Font®"), "my-font")
-        self.assertEqual(slugify_family("   "), "font")
-        self.assertEqual(slugify_family("---"), "font")
-        self.assertEqual(slugify_family("源ノ角ゴシック"), "font")
+        # 3. _slugify_family: kebab-case ASCII with "font" fallback
+        self.assertEqual(_slugify_family("GenSou Sans JP"), "gensou-sans-jp")
+        self.assertEqual(_slugify_family("My Font®"), "my-font")
+        self.assertEqual(_slugify_family("   "), "font")
+        self.assertEqual(_slugify_family("---"), "font")
+        self.assertEqual(_slugify_family("源ノ角ゴシック"), "font")
 
-        # 4. patch_uvs_missing_base_cmap: preserve non-Unicode Mac Roman (1, 0) subtable
+        # 4. _patch_uvs_missing_base_cmap: preserve non-Unicode Mac Roman (1, 0) subtable
         fb_mac = FontBuilder(1000, isTTF=True)
         fb_mac.setupGlyphOrder([".notdef", "A", "uni553E"])
         fb_mac.setupCharacterMap({0x41: "A"})
@@ -1582,7 +1577,7 @@ class TestSubsetterAndShaping(unittest.TestCase):
         uvs_sub.uvsDict = {0xE0100: [(0x553E, "uni553E")]}
         fb_mac.font["cmap"].tables.extend([mac_sub, uvs_sub])
 
-        patched = patch_uvs_missing_base_cmap(fb_mac.font)
+        patched = _patch_uvs_missing_base_cmap(fb_mac.font)
         self.assertEqual(patched, [0x553E])
         self.assertIn(0x553E, fb_mac.font.getBestCmap())
         self.assertNotIn(0x553E, mac_sub.cmap)
@@ -1599,7 +1594,7 @@ class TestSubsetterAndShaping(unittest.TestCase):
         self.assertEqual(
             extract_font_metadata(fb_mac_only.font).patched_uvs_codepoints, ()
         )
-        self.assertEqual(patch_uvs_missing_base_cmap(fb_mac_only.font), [])
+        self.assertEqual(_patch_uvs_missing_base_cmap(fb_mac_only.font), [])
         self.assertNotIn(0x553E, mac_only_sub.cmap)
 
     def test_variant_suffixes_delimiter_collision_css_equivalence_and_scalar_overrides(

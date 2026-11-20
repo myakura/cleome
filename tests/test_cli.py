@@ -144,7 +144,6 @@ class TestCleomeCLI(unittest.TestCase):
                         (
                             f"import sys; sys.path.insert(0, {str(src_dir)!r}); "
                             f"import cleome; "
-                            f"_ = cleome.patch_uvs_missing_base_cmap; "
                             f"from cleome.cli import main; "
                             f"rc = main(['plan', {str(uvs_font_path)!r}]); "
                             f"assert rc == 0; "
@@ -152,9 +151,8 @@ class TestCleomeCLI(unittest.TestCase):
                             f"assert 'cleome._output.paths' not in sys.modules; "
                             f"assert 'cleome._font.subset' not in sys.modules; "
                             f"assert 'cleome._pipeline' not in sys.modules; "
-                            f"from cleome._plan.urange import compact_unicode_range, format_unicode_range, parse_unicode_range; "
-                            f"from cleome._font.metadata import extract_font_face_descriptors, validate_and_compute_variant_suffixes; "
-                            f"from cleome._font.uvs import patch_uvs_missing_base_cmap"
+                            f"from cleome._font.metadata import validate_and_compute_variant_suffixes; "
+                            f"from cleome._font.uvs import _patch_uvs_missing_base_cmap"
                         ),
                     ],
                     capture_output=True,

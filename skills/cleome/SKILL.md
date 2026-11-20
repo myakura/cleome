@@ -5,7 +5,7 @@ description: Slice Japanese, Korean, and Chinese (JP / KR / SC / TC / HK) variab
 
 # Cleome (`cleome`) consumer guide
 
-Cleome (`cleome`) is a Python 3.15+ CLI tool and library that inspects a font's `cmap` and OpenType tables (`name`, `fvar`, `OS/2`, `post`, `GSUB`, `GPOS`) and generates 4-tier `unicode-range` `.woff2` slices and `@font-face` CSS. It preserves OpenType layout features, `cmap` Format 14 UVS/IVS variation sequences, license records (`nameID` `0`, `13`, `14`), and variable font axes without mutating caller-supplied `TTFont` instances in public inspection or slicing APIs (only `patch_uvs_missing_base_cmap` mutates in place).
+Cleome (`cleome`) is a Python 3.15+ CLI tool and library that inspects a font's `cmap` and OpenType tables (`name`, `fvar`, `OS/2`, `post`, `GSUB`, `GPOS`) and generates 4-tier `unicode-range` `.woff2` slices and `@font-face` CSS. It preserves OpenType layout features, `cmap` Format 14 UVS/IVS variation sequences, license records (`nameID` `0`, `13`, `14`), and variable font axes without mutating caller-supplied `TTFont` instances in public inspection or slicing APIs.
 
 ## Core API signatures
 
@@ -14,25 +14,18 @@ Only the top-level `cleome` package (`cleome.__all__`) is public.
 ```python
 from cleome import (
     BuiltSliceFile,
-    FontFaceDescriptors,
     FontMetadata,
     SUPPORTED_LOCALES,
     SliceBundleResult,
     SliceConfig,
     SliceSpec,
     build_slice_plan,
-    compact_unicode_range,
     detect_font_locale,
     export_woff2_slices,
-    extract_font_face_descriptors,
     extract_font_metadata,
-    format_unicode_range,
     generate_css,
-    parse_unicode_range,
-    patch_uvs_missing_base_cmap,
     slice_font,
     slice_fonts,
-    slugify_family,
 )
 
 if __name__ == "__main__":
@@ -41,12 +34,7 @@ if __name__ == "__main__":
         {0x0041, 0x3042, 0x65E5, 0x4E02}, config=cfg, family_name="Demo JP"
     )
     assert [s.tier for s in plan] == [4, 3, 1, 1]
-    ur_text = compact_unicode_range(
-        [0x3041, 0x3043], forbidden_sorted=[0x3042], max_gap=0x80
-    )
-    assert parse_unicode_range(ur_text) == {0x3041, 0x3043}
-    assert format_unicode_range([0x3041, 0x3042, 0x3044]) == "U+3041-3042, U+3044"
-    assert format_unicode_range((0x3041, 0x3044)) == "U+3041-3044"
+    assert detect_font_locale({0x0041, 0x3042}, family_name="Demo JP") == "jp"
 ```
 
 * `SliceConfig(locale="auto", freq_chunks=((200, 2), (80, 10)), freq_tail_chunk_size=70, rare_chunk_size=250, symbols_ext_chunk_size=350, layout_closure=True, layout_features=("*",), drop_tables=(), uvs_base_repair=True, slices_subdir="slices", url_prefix=None, font_display="swap", filename_hash=True)`. Frozen configuration dataclass validated in `__post_init__`. `locale` accepts any value in `SUPPORTED_LOCALES` (`"auto"`, `"jp"`, `"kr"`, `"sc"`, `"tc"`, `"hk"`). `freq_chunks` (`(chunk_size, num_chunks)`), `freq_tail_chunk_size`, `rare_chunk_size`, and `symbols_ext_chunk_size` require positive `int` values (`bool` and non-`int` values raise `TypeError`; `<= 0` raises `ValueError`). `slices_subdir` rejects empty, leading-`/`, absolute or drive-prefixed, `..`, `\`, or NUL paths with `ValueError` and stores the normalized relative POSIX path (`"slices"`, `"."`, `"a/b"`). When `filename_hash=True` (default), each built `.woff2` filename includes an 8-character SHA-256 content digest (`<slug>(-<variant>)-<slice_id>-<hash8>.woff2`).
@@ -55,13 +43,9 @@ if __name__ == "__main__":
 * `slice_fonts(fonts, out_dir, *, family_name=None, slug=None, css_filename=None, css_path=None, weight=None, stretch=None, style=None, config=None, workers=None, force=False) -> SliceBundleResult`. Bundle multiple static or variable weights, widths, or styles into one `@font-face` stylesheet and `slices/` directory. Validates that all variants share a common family name (unless `family_name` is passed) and distinct Stixis-canonicalized `(font-weight, font-stretch, font-style)` descriptors (resolving CSS keyword aliases and identical 2-value bounds), assigns collision-free variant filename suffixes from normalized `(stretch, weight, styles)` tokens (such as `400`, `w75-400`, `400-italic`), rejects scalar single-font `weight` / `stretch` / `style` overrides when `len(fonts) > 1` with `ValueError`, and resolves `locale` once across the union of all input codepoints (`result.locale`).
 * `build_slice_plan(codepoints, config=None, *, family_name="") -> list[SliceSpec]`. Build the ordered 4-tier slice plan from lowest CSS priority (`tier=4`, declared first) to highest CSS priority (`tier=1`, declared last).
 * `detect_font_locale(codepoints, family_name="") -> str`. Auto-detect `"jp"`, `"kr"`, `"sc"`, `"tc"`, or `"hk"` from `family_name` tokens and `cmap` coverage ratios.
-* `extract_font_face_descriptors(font, *, family_override=None, weight_override=None, stretch_override=None, style_override=None) -> FontFaceDescriptors`. Extract CSS `@font-face` descriptors from `name` (preferring Windows `(3, 1, 0x0409)` and `(3, 10, 0x0409)` before legacy `(1, 0, 0)`), `fvar` (`wght`, `wdth`, `ital`, `slnt` - emitting `"normal"` alongside `"italic"` / `"oblique <min>deg <max>deg"` whenever the axes cover an upright `ital < 0.5` and `0deg` form), `OS/2` (including `fsSelection` bit 9 `OBLIQUE` and bit 0 `ITALIC`), and `post`.
-* `extract_font_metadata(font, *, family_override=None, slug_override=None, weight_override=None, stretch_override=None, style_override=None, variant_suffix="", uvs_base_repair=True) -> FontMetadata`. Extract descriptors, `codepoints`, and `patched_uvs_codepoints` from a `TTFont` without mutating `font`.
+* `extract_font_metadata(font, *, family_override=None, slug_override=None, weight_override=None, stretch_override=None, style_override=None, variant_suffix="", uvs_base_repair=True) -> FontMetadata`. Extract CSS `@font-face` descriptors from `name` (preferring Windows `(3, 1, 0x0409)` and `(3, 10, 0x0409)` before legacy `(1, 0, 0)`), `fvar` (`wght`, `wdth`, `ital`, `slnt` - emitting `"normal"` alongside `"italic"` / `"oblique <min>deg <max>deg"` whenever the axes cover an upright `ital < 0.5` and `0deg` form), `OS/2` (including `fsSelection` bit 9 `OBLIQUE` and bit 0 `ITALIC`), and `post`, together with `slug`, `codepoints`, and `patched_uvs_codepoints`, without mutating `font`.
 * `export_woff2_slices(font_or_bytes, meta, slice_specs, slices_dir, config=None, workers=None) -> list[BuiltSliceFile]`. Export `.woff2` slices in parallel without mutating `font_or_bytes`. When `slice_specs` yields zero active slices for `meta`, `slices_dir` is created empty and `[]` is returned without spawning workers. When `config.filename_hash=True` (default), superseded `<stem>-<hash8>.woff2` files matching stems built in the current run in `slices_dir` are pruned immediately, so callers maintaining an on-disk stylesheet must regenerate and write their CSS via `generate_css` right afterwards (or use `slice_font` / `slice_fonts`, which write CSS atomically before pruning).
 * `generate_css(fonts_and_files, config=None, *, cache_key=None, out_digest=None, css_path=None, slices_dir=None) -> str`. Render the `@font-face` stylesheet using Stixis (`SerializationOptions.cleome()`).
-* `patch_uvs_missing_base_cmap(font) -> list[int]`. In-place helper that restores characters mapped in `cmap` Format 14 (UVS/IVS) that upstream fonts omitted from Unicode Format 4 or Format 12 subtables (`table.isUnicode()`, keeping BMP-only codepoints `<= 0xFFFF` in Format 4 and leaving non-Unicode subtables untouched), prioritizing IVS (`U+E0100..U+E01EF`) over `VS1..VS16`.
-* `slugify_family(name) -> str`. Convert a font family name into a kebab-case filename slug (falling back to `"font"` when no ASCII alphanumeric characters remain).
-* `format_unicode_range(codepoints: set[int] | frozenset[int] | list[int] | tuple[int, int]) -> str`, `parse_unicode_range(ur_str: str) -> set[int]`, and `compact_unicode_range(sorted_target_cps: list[int], forbidden_sorted: list[int], max_gap: int = 0x80) -> str`. Format, parse, and compact CSS `unicode-range` strings without shadowing lower-priority slices. In `format_unicode_range`, a `set`, `frozenset`, or `list` of integer codepoints sorts, deduplicates, and coalesces contiguous runs without bridging gaps (`[0x3041, 0x3042, 0x3044]` -> `"U+3041-3042, U+3044"`), whereas a 2-element `tuple[int, int]` like `(0x3041, 0x3044)` formats an inclusive `(start, end)` interval (`"U+3041-3044"`); non-collections raise `TypeError`, and invalid elements or tuples raise `ValueError`. In `compact_unicode_range`, `max_gap` (`>= 0`) is the maximum codepoint difference `cp - prev` (`<= max_gap`) bridged across unmapped gaps when `(prev, cp)` contains no codepoints from `forbidden_sorted` (contiguous runs always coalesce via Stixis); a non-integer or `bool` `max_gap` raises `TypeError` and a negative `max_gap` raises `ValueError`.
 
 ## Slicing tiers and runtime rules
 

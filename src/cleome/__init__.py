@@ -10,23 +10,14 @@ from importlib.metadata import version as _metadata_version
 from typing import TYPE_CHECKING, Any
 
 from cleome._font.metadata import (
-    FontFaceDescriptors,
     FontMetadata,
-    extract_font_face_descriptors,
     extract_font_metadata,
-    slugify_family,
 )
-from cleome._font.uvs import patch_uvs_missing_base_cmap
 from cleome._plan.builder import build_slice_plan
 from cleome._plan.config import BuiltSliceFile, SliceConfig, SliceSpec
 from cleome._plan.locale import (
     SUPPORTED_LOCALES,
     detect_font_locale,
-)
-from cleome._plan.urange import (
-    compact_unicode_range,
-    format_unicode_range,
-    parse_unicode_range,
 )
 
 if TYPE_CHECKING:
@@ -39,24 +30,17 @@ __version__ = _metadata_version("cleome")
 __all__ = [
     "SUPPORTED_LOCALES",
     "BuiltSliceFile",
-    "FontFaceDescriptors",
     "FontMetadata",
     "SliceBundleResult",
     "SliceConfig",
     "SliceSpec",
     "build_slice_plan",
-    "compact_unicode_range",
     "detect_font_locale",
     "export_woff2_slices",
-    "extract_font_face_descriptors",
     "extract_font_metadata",
-    "format_unicode_range",
     "generate_css",
-    "parse_unicode_range",
-    "patch_uvs_missing_base_cmap",
     "slice_font",
     "slice_fonts",
-    "slugify_family",
 ]
 
 
