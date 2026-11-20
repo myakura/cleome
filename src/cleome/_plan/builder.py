@@ -123,7 +123,6 @@ def _build_rare_ideograph_slices(
                 ),
                 binary_codepoints=frozenset(ch_cps),
                 css_unicode_range=ur_token,
-                uses_cascade_shadowing=True,
             )
         )
     return slices
@@ -152,7 +151,6 @@ def _build_freq_slices(
                 ),
                 binary_codepoints=chunk_cps,
                 css_unicode_range=format_urange(chunk_cps, options=_CLEOME_CSS_OPTIONS),
-                uses_cascade_shadowing=False,
             )
         )
     return slices
@@ -354,7 +352,6 @@ def _build_kr_slice_plan(all_cps: set[int], config: SliceConfig) -> list[SliceSp
                 ),
                 binary_codepoints=frozenset(ch_cps),
                 css_unicode_range=ur_token,
-                uses_cascade_shadowing=True,
             )
         )
 
@@ -424,7 +421,6 @@ def _append_tier2_and_tier1_slices(
                     ),
                     binary_codepoints=frozenset(ch_cps),
                     css_unicode_range=ur_str,
-                    uses_cascade_shadowing=True,
                 )
             )
 
@@ -444,7 +440,6 @@ def _append_tier2_and_tier1_slices(
                 description=f"Tier 2: High-Frequency UI & Article Symbols ({len(sym_ui_cps)} chars)",
                 binary_codepoints=frozenset(sym_ui_cps),
                 css_unicode_range=ur_ui,
-                uses_cascade_shadowing=True,
             )
         )
 
@@ -464,7 +459,6 @@ def _append_tier2_and_tier1_slices(
                 description=core_desc,
                 binary_codepoints=frozenset(core_cps),
                 css_unicode_range=ur_core,
-                uses_cascade_shadowing=True,
             )
         )
 
@@ -486,6 +480,5 @@ def _append_tier2_and_tier1_slices(
                 description=f"Tier 1: Basic Latin, Western Punctuation & Currency ({len(latin_cps)} chars)",
                 binary_codepoints=frozenset(latin_cps),
                 css_unicode_range=ur_latin,
-                uses_cascade_shadowing=True,
             )
         )

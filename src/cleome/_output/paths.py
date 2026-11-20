@@ -62,11 +62,10 @@ def _resolve_url_prefix(
         if not encoded_rel.startswith("."):
             return f"./{encoded_rel}/"
         return f"{encoded_rel}/"
-    subdir = config.slices_subdir.strip().strip("/")
-    if not subdir or subdir == ".":
+    if config.slices_subdir == ".":
         return "./"
     encoded_subdir = "/".join(
-        quote(part, safe="-._~:@!$&()*+,;=") for part in subdir.split("/") if part
+        quote(part, safe="-._~:@!$&()*+,;=") for part in config.slices_subdir.split("/")
     )
     return f"./{encoded_subdir}/"
 
@@ -172,8 +171,9 @@ def _resolve_and_validate_outputs(
     _ensure_directory_creatable(out_path, "out_dir")
     out_resolved = out_path.resolve()
 
-    subdir = config.slices_subdir.strip().rstrip("/")
-    slices_dir = out_path if (not subdir or subdir == ".") else (out_path / subdir)
+    slices_dir = (
+        out_path if config.slices_subdir == "." else (out_path / config.slices_subdir)
+    )
     slices_resolved = slices_dir.resolve()
     if not slices_resolved.is_relative_to(out_resolved):
         raise ValueError(
