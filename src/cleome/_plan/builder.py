@@ -2,7 +2,7 @@
 Core dynamic unicode-range slicing planner for Cleome.
 
 Implements the 4-tier architecture:
-- Tier 4 (kanji-rare-XX): Rare/Extended Kanji (JIS Level 2-4, Ext A-I, Compat) declared FIRST
+- Tier 4 (kanji-rare-XX): Rare/Extended Kanji (JIS Level 2-4, Ext A-J, Compat) declared FIRST
   in CSS with 1-token contiguous hex `unicode-range` (CSS Cascade Shadowing).
 - Tier 3 (kanji-freq-XX): High/Mid-frequency Kanji declared from lower-frequency to highest-frequency
   using Progressive (Inverted-Pyramid) Granularity.
@@ -50,7 +50,7 @@ def _chunk_sorted_codepoints(
     n = len(sorted_cps)
     if n == 0:
         return []
-    if target_chunk_size <= 0 or n <= target_chunk_size:
+    if n <= target_chunk_size:
         return [sorted_cps]
     num_chunks = max(1, round(n / target_chunk_size))
     chunks: list[list[int]] = []

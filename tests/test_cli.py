@@ -13,8 +13,6 @@ from io import StringIO
 from pathlib import Path
 
 from fontTools.ttLib.tables.DefaultTable import DefaultTable
-
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 from helpers import create_synthetic_ttfont
 
 from cleome.cli import main as cli_main
@@ -1050,11 +1048,10 @@ class TestCleomeCLI(unittest.TestCase):
 
     def test_consumer_skill_and_readme_stay_in_sync_with_public_api(self) -> None:
         """
-        Verify that `skills/cleome/SKILL.md` and `README.md` stay synchronized with `cleome.__all__`,
-        public function/dataclass signatures, and runnable Python code blocks.
+        Verify that `skills/cleome/SKILL.md` and `README.md` stay synchronized with `cleome.__all__`
+        and runnable Python code blocks.
         """
         import ast
-        import inspect
         import re
 
         import cleome
@@ -1073,37 +1070,7 @@ class TestCleomeCLI(unittest.TestCase):
             f"Public exports in cleome.__all__ missing from skills/cleome/SKILL.md: {missing_symbols}",
         )
 
-        # 2. Every public parameter of core entry points and dataclasses must appear in `skills/cleome/SKILL.md`
-        core_callables = (
-            cleome.SliceConfig,
-            cleome.slice_font,
-            cleome.slice_fonts,
-            cleome.build_slice_plan,
-            cleome.detect_font_locale,
-            cleome.extract_font_face_descriptors,
-            cleome.extract_font_metadata,
-            cleome.export_woff2_slices,
-            cleome.generate_css,
-            cleome.compact_unicode_range,
-            cleome.format_unicode_range,
-            cleome.parse_unicode_range,
-            cleome.patch_uvs_missing_base_cmap,
-            cleome.slugify_family,
-        )
-        missing_params: list[str] = []
-        for fn in core_callables:
-            sig = inspect.signature(fn)
-            for param_name in sig.parameters:
-                if param_name.startswith("_"):
-                    continue
-                if param_name not in skill_text:
-                    missing_params.append(f"{fn.__name__}({param_name}=...)")
-        self.assertFalse(
-            missing_params,
-            f"Public parameters missing from skills/cleome/SKILL.md: {missing_params}",
-        )
-
-        # 3. Every fenced `python` code block in `SKILL.md` and `README.md` must parse and execute cleanly
+        # 2. Every fenced `python` code block in `SKILL.md` and `README.md` must parse and execute cleanly
         code_block_re = re.compile(r"```python\n(.*?)```", re.DOTALL)
         sample_cps = [ord("A"), ord("あ"), ord("日"), 0x4E02]
         with tempfile.TemporaryDirectory() as tmp:

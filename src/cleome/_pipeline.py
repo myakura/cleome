@@ -18,7 +18,6 @@ from cleome._font.metadata import (
     extract_font_metadata,
 )
 from cleome._font.subset import (
-    BuiltSliceFile,
     _atomic_output_file,
     _export_woff2_slices_batch,
     _prune_superseded_hashed_slices,
@@ -37,13 +36,12 @@ from cleome._output.css import (
 )
 from cleome._output.paths import _resolve_and_validate_outputs
 from cleome._plan.bundle import _prepare_font_bundle
-from cleome._plan.config import SliceConfig, SliceSpec, _validate_workers
-
-__all__ = [
-    "SliceBundleResult",
-    "slice_font",
-    "slice_fonts",
-]
+from cleome._plan.config import (
+    BuiltSliceFile,
+    SliceConfig,
+    SliceSpec,
+    _validate_workers,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -332,7 +330,7 @@ def slice_fonts(
     into optimized `unicode-range` `.woff2` slices and generate a unified `@font-face` CSS file.
 
     When `force=False` (default), if the output CSS and all planned `.woff2` slice files already
-    exist on disk with matching SHA-256 input digests, configuration, and byte sizes,
+    exist on disk with matching SHA-256 input digests, configuration, and SHA-256 output digests,
     `fontTools.subset` + WOFF2 compression is skipped and `result.cached` is `True`.
 
     Important: When `workers` > 1 (or `None` on multi-core machines), `ProcessPoolExecutor` is used.
@@ -467,7 +465,7 @@ def slice_fonts(
             _prune_superseded_hashed_slices(
                 outputs.slices_dir,
                 all_built_files,
-                prepared.metas,
+                prepared.slug,
             )
 
         return SliceBundleResult(

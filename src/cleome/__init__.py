@@ -18,7 +18,7 @@ from cleome._font.metadata import (
 )
 from cleome._font.uvs import patch_uvs_missing_base_cmap
 from cleome._plan.builder import build_slice_plan
-from cleome._plan.config import SliceConfig, SliceSpec
+from cleome._plan.config import BuiltSliceFile, SliceConfig, SliceSpec
 from cleome._plan.locale import (
     SUPPORTED_LOCALES,
     detect_font_locale,
@@ -30,10 +30,7 @@ from cleome._plan.urange import (
 )
 
 if TYPE_CHECKING:
-    from cleome._font.subset import (
-        BuiltSliceFile,
-        export_woff2_slices,
-    )
+    from cleome._font.subset import export_woff2_slices
     from cleome._output.css import generate_css
     from cleome._pipeline import SliceBundleResult, slice_font, slice_fonts
 
@@ -64,7 +61,7 @@ __all__ = [
 
 
 def __getattr__(name: str) -> Any:
-    if name in ("BuiltSliceFile", "export_woff2_slices"):
+    if name == "export_woff2_slices":
         from cleome._font import subset as _subset
 
         return getattr(_subset, name)

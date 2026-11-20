@@ -2,9 +2,7 @@
 Shared synthetic font builders and CSS Cascade Shadowing invariant assertions for the Cleome test suite.
 """
 
-import sys
 import unittest
-from pathlib import Path
 
 from fontTools.fontBuilder import FontBuilder
 from fontTools.pens.ttGlyphPen import TTGlyphPen
@@ -12,7 +10,6 @@ from fontTools.ttLib import TTFont
 from fontTools.ttLib.tables._c_m_a_p import CmapSubtable
 from fontTools.ttLib.tables.TupleVariation import TupleVariation
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 from cleome import SliceSpec, parse_unicode_range
 from cleome._plan.data.kanji_freq import KANJI_FREQ_CODEPOINTS
 

@@ -29,19 +29,12 @@ from cleome._output.paths import (
     _validate_slice_output_path,
 )
 from cleome._plan.bundle import _filter_active_slices
-from cleome._plan.config import SliceConfig, SliceSpec, _validate_workers
-
-
-@dataclass(frozen=True, slots=True)
-class BuiltSliceFile:
-    """Result metadata for a single generated `.woff2` slice file."""
-
-    spec: SliceSpec
-    filename: str
-    path: Path
-    size_bytes: int
-    glyph_count: int
-    variant_suffix: str = ""
+from cleome._plan.config import (
+    BuiltSliceFile,
+    SliceConfig,
+    SliceSpec,
+    _validate_workers,
+)
 
 
 def _create_subset_options(
@@ -366,7 +359,10 @@ def _prepare_worker_source(
         with TTFont(p, recalcTimestamp=False) as tmp_font:
             if config.uvs_base_repair:
                 patch_uvs_missing_base_cmap(tmp_font)
-            return serialize_font_to_bytes(tmp_font), False
+            buf = io.BytesIO()
+            tmp_font.flavor = None
+            tmp_font.save(buf)
+            return buf.getvalue(), False
 
     if isinstance(font_or_bytes, TTFont):
         return serialize_font_to_bytes(font_or_bytes), bool(config.uvs_base_repair)
@@ -377,25 +373,15 @@ def _prepare_worker_source(
 def _prune_superseded_hashed_slices(
     slices_dir: Path,
     built_files: list[BuiltSliceFile],
-    metas: list[FontMetadata],
+    slug: str,
 ) -> None:
     """Delete superseded `<stem>-<hash8>.woff2` files in `slices_dir` for the stems in `built_files`."""
     if not built_files:
         return
     active_filenames = {bf.filename for bf in built_files}
-    meta_by_suffix = {m.variant_suffix: m for m in metas}
     target_base_stems = {
-        Path(
-            bf.spec.filename(
-                meta_by_suffix[bf.variant_suffix].slug,
-                bf.variant_suffix,
-            )
-        ).stem
-        for bf in built_files
-        if bf.variant_suffix in meta_by_suffix
+        Path(bf.spec.filename(slug, bf.variant_suffix)).stem for bf in built_files
     }
-    if not target_base_stems:
-        return
     for existing in slices_dir.iterdir():
         if (
             not existing.is_file()
@@ -540,7 +526,7 @@ def _export_woff2_slices_batch(
         _prune_superseded_hashed_slices(
             slices_dir,
             all_built,
-            [meta for _, meta, _ in variants],
+            variants[0][1].slug,
         )
 
     return all_variant_files

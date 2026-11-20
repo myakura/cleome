@@ -6,7 +6,6 @@ import hashlib
 import re
 from collections.abc import Sequence
 from pathlib import Path
-from typing import Protocol
 
 from stixis import (
     CommentNode,
@@ -21,7 +20,7 @@ from stixis import (
 
 from cleome._font.metadata import FontMetadata
 from cleome._output.paths import _resolve_url_prefix
-from cleome._plan.config import SliceConfig, SliceSpec
+from cleome._plan.config import BuiltSliceFile, SliceConfig
 
 _CLEOME_CSS_OPTIONS = SerializationOptions.cleome()
 _CACHE_FORMAT_VERSION = 1
@@ -33,24 +32,7 @@ _BLOCK_GLYPHS_RE = re.compile(
 )
 
 
-class _SliceFileLike(Protocol):
-    @property
-    def spec(self) -> SliceSpec: ...
-
-    @property
-    def filename(self) -> str: ...
-
-    @property
-    def path(self) -> Path: ...
-
-    @property
-    def size_bytes(self) -> int: ...
-
-    @property
-    def glyph_count(self) -> int: ...
-
-
-def _compute_slices_output_digest(built_files: Sequence[_SliceFileLike]) -> str:
+def _compute_slices_output_digest(built_files: Sequence[BuiltSliceFile]) -> str:
     """Compute a single 32-hex-char SHA-256 digest over all built `.woff2` slice files in order."""
     hasher = hashlib.sha256()
     for bf in built_files:
@@ -67,7 +49,7 @@ def _format_cache_comment(cache_key: str, out_digest: str) -> str:
 
 
 def generate_css(
-    fonts_and_files: Sequence[tuple[FontMetadata, Sequence[_SliceFileLike]]],
+    fonts_and_files: Sequence[tuple[FontMetadata, Sequence[BuiltSliceFile]]],
     config: SliceConfig | None = None,
     *,
     cache_key: str | None = None,
@@ -142,8 +124,3 @@ def generate_css(
             ),
         )
         return dumps(sheet)
-
-
-__all__ = [
-    "generate_css",
-]
