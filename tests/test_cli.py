@@ -200,9 +200,9 @@ class TestCleomeCLI(unittest.TestCase):
             finally:
                 os.chdir(orig_cwd)
 
-    def test_cli_build_cache_force_and_dry_run(self) -> None:
+    def test_cli_build_and_dry_run(self) -> None:
         """
-        Verify `cleome build` output, caching, `--no-filename-hash`, `--force`, and `--dry-run`.
+        Verify `cleome build` JSON/text output, `--no-filename-hash`, and `--dry-run`.
         """
         sample_cps = [ord("A"), ord("あ"), ord("日"), 0x4E02]
         with tempfile.TemporaryDirectory() as tmp:
@@ -233,7 +233,8 @@ class TestCleomeCLI(unittest.TestCase):
             build_data = json.loads(buf_build_json.getvalue())
             self.assertTrue(build_data["ok"])
             self.assertEqual(build_data["command"], "build")
-            self.assertFalse(build_data["cached"])
+            self.assertFalse(build_data["dry_run"])
+            self.assertNotIn("cached", build_data)
             self.assertEqual(build_data["locale"], "jp")
             self.assertTrue(build_data["filename_hash"])
             self.assertEqual(build_data["slice_count"], 4)
@@ -250,33 +251,10 @@ class TestCleomeCLI(unittest.TestCase):
             self.assertTrue((build_out / "subcmd-test.css").exists())
             self.assertEqual(len(list((build_out / "slices").glob("*.woff2"))), 4)
 
-            # 2. Second `cleome build` hits the cache (`cached: true` in JSON, `Cached ... (up to date)` in text)
-            buf_cached_json = StringIO()
-            with redirect_stdout(buf_cached_json):
-                rc_cached = cli_main(
-                    [
-                        "build",
-                        str(font_path),
-                        "-o",
-                        str(build_out),
-                        "--locale",
-                        "jp",
-                        "-j",
-                        "1",
-                        "--json",
-                    ]
-                )
-            self.assertEqual(rc_cached, 0)
-            cached_data = json.loads(buf_cached_json.getvalue())
-            self.assertTrue(cached_data["cached"])
-            self.assertEqual(cached_data["slice_count"], 4)
-            self.assertEqual(
-                cached_data["total_woff2_bytes"], build_data["total_woff2_bytes"]
-            )
-
-            buf_cached_text = StringIO()
-            with redirect_stdout(buf_cached_text):
-                rc_cached_txt = cli_main(
+            # 2. Repeat `cleome build` in text mode always prints `Built` and preload hints
+            buf_build_text = StringIO()
+            with redirect_stdout(buf_build_text):
+                rc_build_txt = cli_main(
                     [
                         "build",
                         str(font_path),
@@ -288,16 +266,16 @@ class TestCleomeCLI(unittest.TestCase):
                         "1",
                     ]
                 )
-            self.assertEqual(rc_cached_txt, 0)
-            self.assertIn("[cleome] Cached 4 WOFF2 slices", buf_cached_text.getvalue())
-            self.assertIn("(up to date)", buf_cached_text.getvalue())
-            self.assertIn("Preload (Tier 1):", buf_cached_text.getvalue())
+            self.assertEqual(rc_build_txt, 0)
+            self.assertIn("[cleome] Built 4 WOFF2 slices", buf_build_text.getvalue())
+            self.assertNotIn("(up to date)", buf_build_text.getvalue())
+            self.assertIn("Preload (Tier 1):", buf_build_text.getvalue())
             self.assertIn(
                 'as="font" type="font/woff2" crossorigin>',
-                buf_cached_text.getvalue(),
+                buf_build_text.getvalue(),
             )
 
-            # 3. `cleome build --no-filename-hash` writes unhashed filenames and hits cache on repeat
+            # 3. `cleome build --no-filename-hash` writes unhashed filenames
             unhashed_out = tmp_path / "built_unhashed"
             buf_unhashed_json = StringIO()
             with redirect_stdout(buf_unhashed_json):
@@ -322,48 +300,8 @@ class TestCleomeCLI(unittest.TestCase):
                 [p["filename"] for p in unhashed_data["preload_slices"]],
                 ["subcmd-test-kana-core.woff2", "subcmd-test-latin.woff2"],
             )
-            buf_unhashed_cached = StringIO()
-            with redirect_stdout(buf_unhashed_cached):
-                rc_unhashed_2 = cli_main(
-                    [
-                        "build",
-                        str(font_path),
-                        "-o",
-                        str(unhashed_out),
-                        "--locale",
-                        "jp",
-                        "--no-filename-hash",
-                        "-j",
-                        "1",
-                        "--json",
-                    ]
-                )
-            self.assertEqual(rc_unhashed_2, 0)
-            self.assertTrue(json.loads(buf_unhashed_cached.getvalue())["cached"])
 
-            # 4. `cleome build --force` bypasses cache and rebuilds (`cached: false`)
-            buf_force_json = StringIO()
-            with redirect_stdout(buf_force_json):
-                rc_force = cli_main(
-                    [
-                        "build",
-                        str(font_path),
-                        "-o",
-                        str(build_out),
-                        "--locale",
-                        "jp",
-                        "-j",
-                        "1",
-                        "--force",
-                        "--json",
-                    ]
-                )
-            self.assertEqual(rc_force, 0)
-            force_data = json.loads(buf_force_json.getvalue())
-            self.assertFalse(force_data["cached"])
-            self.assertFalse(force_data["dry_run"])
-
-            # 5. `cleome build --dry-run` validates inputs and paths without creating directories or files
+            # 4. `cleome build --dry-run` validates inputs and paths without creating directories or files
             dry_out = tmp_path / "never_created_dir"
             dry_css = tmp_path / "never_created_css" / "fonts.css"
             buf_dry_json = StringIO()
@@ -391,6 +329,7 @@ class TestCleomeCLI(unittest.TestCase):
             dry_data = json.loads(buf_dry_json.getvalue())
             self.assertTrue(dry_data["ok"])
             self.assertTrue(dry_data["dry_run"])
+            self.assertNotIn("cached", dry_data)
             self.assertEqual(dry_data["slice_count"], 4)
             self.assertEqual(
                 [p["filename"] for p in dry_data["preload_slices"]],
@@ -476,31 +415,10 @@ class TestCleomeCLI(unittest.TestCase):
                 )
             self.assertEqual(rc_build, 0)
             build_data = json.loads(buf_build.getvalue())
-            self.assertFalse(build_data["cached"])
             self.assertEqual(build_data["locale"], "sc")
             self.assertEqual(build_data["locale"], plan_data["locale"])
 
-            buf_cached = StringIO()
-            with redirect_stdout(buf_cached):
-                rc_cached = cli_main(
-                    [
-                        "build",
-                        str(font_latin),
-                        str(font_sc),
-                        "-o",
-                        str(out_dir),
-                        "-j",
-                        "1",
-                        "--json",
-                    ]
-                )
-            self.assertEqual(rc_cached, 0)
-            cached_data = json.loads(buf_cached.getvalue())
-            self.assertTrue(cached_data["cached"])
-            self.assertEqual(cached_data["locale"], "sc")
-
             res = slice_fonts([font_latin, font_sc], out_dir=out_dir, workers=1)
-            self.assertTrue(res.cached)
             self.assertEqual(res.locale, "sc")
 
             # Issue 55: scalar axis overrides (--weight / --stretch / --style) with 2+ fonts fail with exit code 2
@@ -588,7 +506,7 @@ class TestCleomeCLI(unittest.TestCase):
                 font_path, reorderTables=False
             )
 
-            # 1. `cleome build --css-out` writes stylesheet to a separate directory and hits cache on repeat
+            # 1. `cleome build --css-out` writes stylesheet to a separate directory
             sep_slices_out = tmp_path / "public_fonts"
             sep_css_out = tmp_path / "src" / "styles" / "custom-fonts.css"
             buf_css_out = StringIO()
@@ -610,33 +528,12 @@ class TestCleomeCLI(unittest.TestCase):
                 )
             self.assertEqual(rc_css_out, 0)
             css_out_data = json.loads(buf_css_out.getvalue())
-            self.assertFalse(css_out_data["cached"])
             self.assertEqual(Path(css_out_data["css_path"]), sep_css_out)
             self.assertTrue(sep_css_out.is_file())
             self.assertIn(
                 "url('/fonts/slices/subcmd-test-",
                 sep_css_out.read_text(encoding="utf-8"),
             )
-
-            buf_css_out_2 = StringIO()
-            with redirect_stdout(buf_css_out_2):
-                rc_css_out_2 = cli_main(
-                    [
-                        "build",
-                        str(font_path),
-                        "-o",
-                        str(sep_slices_out),
-                        "--url-prefix",
-                        "/fonts/slices",
-                        "--css-out",
-                        str(sep_css_out),
-                        "-j",
-                        "1",
-                        "--json",
-                    ]
-                )
-            self.assertEqual(rc_css_out_2, 0)
-            self.assertTrue(json.loads(buf_css_out_2.getvalue())["cached"])
 
             # 2. `cleome build --css-out` without `--url-prefix` computes a relative URL prefix to `slices_dir`
             rel_css_out = tmp_path / "src" / "styles" / "rel-fonts.css"

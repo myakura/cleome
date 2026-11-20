@@ -1053,166 +1053,21 @@ class TestSubsetterAndShaping(unittest.TestCase):
             css_out = generate_css([(meta, [bf])], config=cfg)
             self.assertIn(expected_src_url, css_out)
 
-    def test_build_cache_skip_subsetting_and_invalidation(self) -> None:
+    def test_hashed_slice_pruning_and_atomic_css_write(self) -> None:
         """
-        Verify build caching across single- and multi-font bundles:
-        1. Second invocation with identical inputs and `SliceConfig` skips `_export_woff2_slices_batch`,
-           returns `cached=True`, and preserves `built_files` (`size_bytes`, `glyph_count`, `spec`,
-           `variant_suffix`), `slice_specs`, `variant_slice_specs`, and `css_text` without creating
-           extra files in `out_dir` or `slices_dir`.
-        2. Changing `SliceConfig` (e.g. `rare_chunk_size`, `locale`, `url_prefix`), override args
-           (`weight`, `family_name`), or input font bytes invalidates the cache and triggers a rebuild.
-        3. Deleting or truncating/corrupting any `.woff2` slice or modifying the CSS file invalidates
-           the cache and rebuilds the intact files.
-        4. `force=True` bypasses a valid cache and rebuilds.
+        Verify content-hashed slice pruning and atomic CSS write ordering:
+        1. Updating only one tier keeps unchanged hashes and prunes the superseded hashed slice.
+        2. Issue 12: if an exception occurs between WOFF2 export and CSS write, existing CSS and
+           every slice file it references remain intact on disk.
+        3. Two builds into the same `slices_dir` with the same slug, different `css_path`, and
+           different subsetting options prune the earlier build's hashed slices.
         """
         from unittest.mock import patch
 
-        cps_reg = [ord("A"), ord("あ"), ord("日"), 0x4E02, 0x4E04]
-        cps_bold = [ord("A"), ord("あ"), ord("日"), 0x4E02, 0x4E04, 0x4E05]
-
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
-            p_reg = tmp_path / "Cache-Regular.ttf"
-            p_bold = tmp_path / "Cache-Bold.ttf"
-            create_synthetic_ttfont(cps_reg, family_name="Cache Sans", weight=400).save(
-                p_reg, reorderTables=False
-            )
-            create_synthetic_ttfont(
-                cps_bold, family_name="Cache Sans", weight=700
-            ).save(p_bold, reorderTables=False)
 
-            out_dir = tmp_path / "dist_cache"
-
-            # 1. Initial build -> cached=False
-            res1 = slice_fonts([p_reg, p_bold], out_dir=out_dir, workers=1)
-            self.assertFalse(res1.cached)
-            self.assertTrue(res1.css_path.exists())
-            css_lines = res1.css_text.splitlines()
-            self.assertEqual(len(css_lines[1]), 96)
-            self.assertRegex(
-                css_lines[1],
-                r"^/\* cleome-cache: v1 key=[0-9a-f]{32} out=[0-9a-f]{32} \*/$",
-            )
-            self.assertIn(" glyphs, ", css_lines[4])
-            # Ensure no dotfile or JSON manifest polluted out_dir or slices_dir
-            self.assertEqual(
-                [p.name for p in out_dir.iterdir() if p.is_file()], [res1.css_path.name]
-            )
-            self.assertTrue(
-                all(p.suffix == ".woff2" for p in res1.slices_dir.iterdir())
-            )
-
-            # 2. Second call -> skips _export_woff2_slices_batch completely and returns identical metadata
-            with patch(
-                "cleome._pipeline._export_woff2_slices_batch",
-                side_effect=AssertionError(
-                    "_export_woff2_slices_batch should be skipped on cache hit"
-                ),
-            ) as mock_export:
-                res2 = slice_fonts([p_reg, p_bold], out_dir=out_dir, workers=1)
-                self.assertEqual(mock_export.call_count, 0)
-
-            self.assertTrue(res2.cached)
-            self.assertEqual(res2.css_text, res1.css_text)
-            self.assertEqual(res2.total_woff2_bytes, res1.total_woff2_bytes)
-            self.assertEqual(res2.slice_specs, res1.slice_specs)
-            self.assertEqual(res2.variant_slice_specs, res1.variant_slice_specs)
-            self.assertEqual(res2.built_files, res1.built_files)
-
-            # 3. Changing SliceConfig (e.g. rare_chunk_size=1) invalidates cache -> cached=False
-            res_cfg = slice_fonts(
-                [p_reg, p_bold],
-                out_dir=out_dir,
-                config=SliceConfig(rare_chunk_size=1),
-                workers=1,
-            )
-            self.assertFalse(res_cfg.cached)
-            self.assertGreater(len(res_cfg.built_files), len(res1.built_files))
-
-            # Repeat with rare_chunk_size=1 -> cached=True
-            res_cfg_hit = slice_fonts(
-                [p_reg, p_bold],
-                out_dir=out_dir,
-                config=SliceConfig(rare_chunk_size=1),
-                workers=1,
-            )
-            self.assertTrue(res_cfg_hit.cached)
-
-            # 4. Missing .woff2 slice invalidates cache and restores the deleted file
-            victim = res_cfg_hit.built_files[0].path
-            victim.unlink()
-            res_missing = slice_fonts(
-                [p_reg, p_bold],
-                out_dir=out_dir,
-                config=SliceConfig(rare_chunk_size=1),
-                workers=1,
-            )
-            self.assertFalse(res_missing.cached)
-            self.assertTrue(victim.exists())
-
-            # 5. Truncated / corrupted .woff2 slice (both size mismatch and same-size content corruption)
-            orig_bytes = victim.read_bytes()
-            victim.write_bytes(orig_bytes[:10])
-            res_corrupt = slice_fonts(
-                [p_reg, p_bold],
-                out_dir=out_dir,
-                config=SliceConfig(rare_chunk_size=1),
-                workers=1,
-            )
-            self.assertFalse(res_corrupt.cached)
-            self.assertEqual(victim.read_bytes(), orig_bytes)
-
-            # 5b. Same-size content modification (e.g. overwritten by another build with identical byte length)
-            flipped = bytes([orig_bytes[0] ^ 0xFF]) + orig_bytes[1:]
-            self.assertEqual(len(flipped), len(orig_bytes))
-            victim.write_bytes(flipped)
-            res_same_size_corrupt = slice_fonts(
-                [p_reg, p_bold],
-                out_dir=out_dir,
-                config=SliceConfig(rare_chunk_size=1),
-                workers=1,
-            )
-            self.assertFalse(res_same_size_corrupt.cached)
-            self.assertEqual(victim.read_bytes(), orig_bytes)
-
-            # 6. Modified input font binary invalidates cache
-            create_synthetic_ttfont(
-                [*cps_reg, ord("B")], family_name="Cache Sans", weight=400
-            ).save(p_reg, reorderTables=False)
-            res_font_changed = slice_fonts(
-                [p_reg, p_bold],
-                out_dir=out_dir,
-                config=SliceConfig(rare_chunk_size=1),
-                workers=1,
-            )
-            self.assertFalse(res_font_changed.cached)
-
-            # 7. force=True bypasses cache even when everything is up to date
-            res_forced = slice_fonts(
-                [p_reg, p_bold],
-                out_dir=out_dir,
-                config=SliceConfig(rare_chunk_size=1),
-                workers=1,
-                force=True,
-            )
-            self.assertFalse(res_forced.cached)
-
-            # 8. Custom slugs containing ',', ':', or '*' hit the cache on second build
-            for special_slug in ("cache,font", "cache:font", "cache*font"):
-                special_out = tmp_path / f"out_{special_slug}"
-                r1 = slice_font(
-                    p_reg, out_dir=special_out, slug=special_slug, workers=1
-                )
-                r2 = slice_font(
-                    p_reg, out_dir=special_out, slug=special_slug, workers=1
-                )
-                self.assertFalse(r1.cached)
-                self.assertTrue(
-                    r2.cached, f"Expected cache hit for slug={special_slug!r}"
-                )
-
-            # 9. Stale hashed slice cleanup: updating only one tier keeps unchanged hashes and prunes old hash
+            # 1. Stale hashed slice cleanup: updating only one tier keeps unchanged hashes and prunes old hash
             stale_out = tmp_path / "stale_hash_out"
             font_v1 = tmp_path / "Stale-v1.ttf"
             font_v2 = tmp_path / "Stale-v2.ttf"
@@ -1223,6 +1078,15 @@ class TestSubsetterAndShaping(unittest.TestCase):
                 [ord("A"), ord("あ"), 0x4E02, 0x4E04], family_name="Stale Test"
             ).save(font_v2, reorderTables=False)
             res_v1 = slice_font(font_v1, out_dir=stale_out, workers=1)
+            self.assertNotIn("cleome-cache:", res_v1.css_text)
+            self.assertIn(" glyphs, ", res_v1.css_text)
+            self.assertEqual(
+                [p.name for p in stale_out.iterdir() if p.is_file()],
+                [res_v1.css_path.name],
+            )
+            self.assertTrue(
+                all(p.suffix == ".woff2" for p in res_v1.slices_dir.iterdir())
+            )
             v1_by_id = {bf.spec.slice_id: bf for bf in res_v1.built_files}
             res_v2 = slice_font(font_v2, out_dir=stale_out, workers=1)
             v2_by_id = {bf.spec.slice_id: bf for bf in res_v2.built_files}
@@ -1241,7 +1105,7 @@ class TestSubsetterAndShaping(unittest.TestCase):
             )
             self.assertTrue(v2_by_id["kanji-rare-01"].path.exists())
 
-            # 10. Issue 12: if an exception occurs between WOFF2 export and CSS write,
+            # 2. Issue 12: if an exception occurs between WOFF2 export and CSS write,
             # existing CSS and every slice file it references must remain intact on disk.
             atomic_out = tmp_path / "atomic_prune_out"
             res_init = slice_font(font_v1, out_dir=atomic_out, workers=1)
@@ -1267,7 +1131,7 @@ class TestSubsetterAndShaping(unittest.TestCase):
                     f"Existing slice referenced by CSS was deleted before new CSS was written: {p.name}",
                 )
 
-            # 11. Two builds into the same slices_dir with the same slug, different css_path,
+            # 3. Two builds into the same slices_dir with the same slug, different css_path,
             # and different subsetting options prune the earlier build's hashed slices.
             shared_out = tmp_path / "shared_slices_out"
             vf_shared = tmp_path / "Shared-VF.ttf"
@@ -1294,118 +1158,6 @@ class TestSubsetterAndShaping(unittest.TestCase):
             b_paths = [bf.path for bf in res_b.built_files]
             self.assertTrue(all(p.is_file() for p in b_paths))
             self.assertTrue(all(not p.exists() for p in a_paths))
-
-    def test_stixis_comment_serialization_matches_cache_regexes(self) -> None:
-        """
-        Verify directly against `stixis` output (`generate_css` -> `stixis.dumps` with
-        `SerializationOptions.cleome()`) that `_CACHE_COMMENT_RE` and `_BLOCK_GLYPHS_RE`
-        round-trip the cache header and every `@font-face` block's glyph count.
-        """
-        from cleome._font.subset import BuiltSliceFile
-        from cleome._output.css import (
-            _BLOCK_GLYPHS_RE,
-            _CACHE_COMMENT_RE,
-            _CACHE_FORMAT_VERSION,
-            generate_css,
-        )
-        from cleome._plan.config import SliceSpec
-
-        tt = create_synthetic_ttfont(
-            [ord("A"), ord("あ"), ord("日")],
-            family_name="Stixis Roundtrip",
-            is_variable=True,
-        )
-        ital_ax = Axis()
-        ital_ax.axisTag = "ital"
-        ital_ax.minValue = 0.0
-        ital_ax.defaultValue = 0.0
-        ital_ax.maxValue = 1.0
-        ital_ax.axisNameID = 256
-        tt["fvar"].axes.append(ital_ax)
-        meta = extract_font_metadata(tt)
-        self.assertEqual(meta.styles_css, ("normal", "italic"))
-
-        specs = [
-            SliceSpec(
-                slice_id="kanji-freq-01",
-                tier=3,
-                category="kanji-freq",
-                description="Tier 3: Frequent Kanji (Rank 1-200)",
-                binary_codepoints=frozenset({ord("日")}),
-                css_unicode_range="U+65E5",
-            ),
-            SliceSpec(
-                slice_id="kana-core",
-                tier=1,
-                category="kana-core",
-                description="Tier 1: Core Kana, CJK Punctuation & Fullwidth ASCII",
-                binary_codepoints=frozenset({ord("あ")}),
-                css_unicode_range="U+3042",
-            ),
-            SliceSpec(
-                slice_id="latin",
-                tier=1,
-                category="latin",
-                description="Tier 1: Basic Latin, Western Punctuation & Combining Marks",
-                binary_codepoints=frozenset({ord("A")}),
-                css_unicode_range="U+41",
-            ),
-        ]
-        built_files = [
-            BuiltSliceFile(
-                spec=specs[0],
-                filename="stixis-roundtrip-kanji-freq-01-11111111.woff2",
-                path=Path("slices/stixis-roundtrip-kanji-freq-01-11111111.woff2"),
-                size_bytes=12345,
-                glyph_count=205,
-            ),
-            BuiltSliceFile(
-                spec=specs[1],
-                filename="stixis-roundtrip-kana-core-22222222.woff2",
-                path=Path("slices/stixis-roundtrip-kana-core-22222222.woff2"),
-                size_bytes=28400,
-                glyph_count=380,
-            ),
-            BuiltSliceFile(
-                spec=specs[2],
-                filename="stixis-roundtrip-latin-33333333.woff2",
-                path=Path("slices/stixis-roundtrip-latin-33333333.woff2"),
-                size_bytes=9120,
-                glyph_count=142,
-            ),
-        ]
-
-        sample_key = "0123456789abcdef0123456789abcdef"
-        sample_out = "fedcba9876543210fedcba9876543210"
-        css_text = generate_css(
-            [(meta, built_files)],
-            cache_key=sample_key,
-            out_digest=sample_out,
-        )
-        lines = css_text.splitlines()
-        self.assertGreaterEqual(len(lines), 2)
-
-        cache_match = _CACHE_COMMENT_RE.match(lines[1].strip())
-        self.assertIsNotNone(
-            cache_match,
-            f"stixis cache comment line {lines[1]!r} did not match _CACHE_COMMENT_RE",
-        )
-        assert cache_match is not None
-        self.assertEqual(int(cache_match.group("version")), _CACHE_FORMAT_VERSION)
-        self.assertEqual(cache_match.group("key"), sample_key)
-        self.assertEqual(cache_match.group("out"), sample_out)
-
-        extracted_glyphs = [
-            int(bm.group("glyphs"))
-            for line in lines[2:]
-            if (bm := _BLOCK_GLYPHS_RE.match(line.strip())) is not None
-        ]
-        # 2 styles ("normal", "italic") * 3 slices = 6 @font-face comment headers
-        self.assertEqual(
-            extracted_glyphs,
-            [205, 380, 142, 205, 380, 142],
-            f"_BLOCK_GLYPHS_RE failed to round-trip glyph counts from stixis CSS:\n{css_text}",
-        )
 
     def test_issue14_concurrent_slice_font_workers_1_across_threads(self) -> None:
         """
@@ -1770,14 +1522,12 @@ class TestSubsetterAndShaping(unittest.TestCase):
                     slice_fonts([f1, f2], out_dir=err_dir, workers=1, **kw)
                 self.assertFalse(err_dir.exists())
 
-    def test_slice_config_slices_subdir_normalization_and_cache_sharing(self) -> None:
+    def test_slice_config_slices_subdir_normalization(self) -> None:
         """
         Verify `SliceConfig.slices_subdir` normalizes relative paths lexically after rejecting
-        prohibited inputs, emits clean URL prefixes, and shares bundle cache keys across
+        prohibited inputs, emits clean URL prefixes, and produces identical CSS across
         equivalent relative directory spellings.
         """
-        from unittest.mock import patch
-
         from cleome._output.paths import _resolve_url_prefix
 
         norm_cases = (
@@ -1807,7 +1557,7 @@ class TestSubsetterAndShaping(unittest.TestCase):
             with self.assertRaises(ValueError):
                 SliceConfig(slices_subdir=bad_subdir)
 
-        tt = create_synthetic_ttfont([ord("A"), ord("あ")], family_name="Subdir Cache")
+        tt = create_synthetic_ttfont([ord("A"), ord("あ")], family_name="Subdir Norm")
         with tempfile.TemporaryDirectory() as tmp:
             out_dir = Path(tmp) / "out"
             r1 = slice_font(
@@ -1816,25 +1566,18 @@ class TestSubsetterAndShaping(unittest.TestCase):
                 config=SliceConfig(slices_subdir="slices"),
                 workers=1,
             )
-            self.assertFalse(r1.cached)
-            with patch(
-                "cleome._pipeline._export_woff2_slices_batch",
-                side_effect=AssertionError("Expected cache hit"),
-            ):
-                r2 = slice_font(
-                    tt,
-                    out_dir=out_dir,
-                    config=SliceConfig(slices_subdir="./slices"),
-                    workers=1,
-                )
-                r3 = slice_font(
-                    tt,
-                    out_dir=out_dir,
-                    config=SliceConfig(slices_subdir="  slices/ "),
-                    workers=1,
-                )
-            self.assertTrue(r2.cached)
-            self.assertTrue(r3.cached)
+            r2 = slice_font(
+                tt,
+                out_dir=out_dir,
+                config=SliceConfig(slices_subdir="./slices"),
+                workers=1,
+            )
+            r3 = slice_font(
+                tt,
+                out_dir=out_dir,
+                config=SliceConfig(slices_subdir="  slices/ "),
+                workers=1,
+            )
             self.assertEqual(r2.css_text, r1.css_text)
             self.assertEqual(r3.css_text, r1.css_text)
 
@@ -1842,7 +1585,7 @@ class TestSubsetterAndShaping(unittest.TestCase):
         """
         Verify `SliceConfig` chunk-size fields and `workers` reject `bool` and non-`int`
         values with `TypeError` and out-of-range integers with `ValueError`, including on
-        warm cache hits and zero-task invocations.
+        zero-task invocations.
         """
         # Scalar positive-int fields on SliceConfig
         for field_name in (
@@ -1888,17 +1631,12 @@ class TestSubsetterAndShaping(unittest.TestCase):
         plan = build_slice_plan(meta.codepoints)
 
         with tempfile.TemporaryDirectory() as tmp:
-            warm_dir = Path(tmp) / "warm"
-            r_warm = slice_font(tt, out_dir=warm_dir, workers=1)
-            self.assertFalse(r_warm.cached)
-            self.assertTrue(slice_font(tt, out_dir=warm_dir, workers=None).cached)
-
+            out_dir = Path(tmp) / "out"
             for bad_w_type in (True, False, 1.5, "2"):
-                # Warm cache hit path must NOT bypass workers validation
                 with self.assertRaises(TypeError):
-                    slice_font(tt, out_dir=warm_dir, workers=bad_w_type)  # type: ignore[arg-type]
+                    slice_font(tt, out_dir=out_dir, workers=bad_w_type)  # type: ignore[arg-type]
                 with self.assertRaises(TypeError):
-                    slice_fonts([tt], out_dir=warm_dir, workers=bad_w_type)  # type: ignore[arg-type]
+                    slice_fonts([tt], out_dir=out_dir, workers=bad_w_type)  # type: ignore[arg-type]
                 # Zero-task / empty-cmap / empty-variants paths must NOT bypass workers validation
                 with self.assertRaises(TypeError):
                     slice_font(
@@ -1923,7 +1661,7 @@ class TestSubsetterAndShaping(unittest.TestCase):
 
             for bad_w_val in (0, -2):
                 with self.assertRaises(ValueError):
-                    slice_font(tt, out_dir=warm_dir, workers=bad_w_val)
+                    slice_font(tt, out_dir=out_dir, workers=bad_w_val)
                 with self.assertRaises(ValueError):
                     export_woff2_slices(
                         tt, meta, plan, Path(tmp) / "exp_bad", workers=bad_w_val
@@ -1933,11 +1671,10 @@ class TestSubsetterAndShaping(unittest.TestCase):
                         [], Path(tmp) / "batch_bad", workers=bad_w_val
                     )
 
-    def test_empty_cmap_font_creates_slices_dir_and_hits_cache(self) -> None:
+    def test_empty_cmap_font_creates_slices_dir_without_workers(self) -> None:
         """
         Verify an input font with an empty Unicode `cmap` (0 active slices) creates an empty
-        `slices_dir` and comment-only CSS on the first build without spawning workers, and
-        returns `cached=True` on repeat runs via `_try_load_cached_bundle`.
+        `slices_dir` and comment-only CSS without spawning workers.
         """
         from unittest.mock import patch
 
@@ -1972,8 +1709,7 @@ class TestSubsetterAndShaping(unittest.TestCase):
             self.assertTrue(low_slices_dir.is_dir())
             self.assertEqual(list(low_slices_dir.iterdir()), [])
 
-            # High-level slice_font: first run creates empty slices_dir + comment-only CSS (cached=False),
-            # second run hits _try_load_cached_bundle (cached=True) without calling export
+            # High-level slice_font creates empty slices_dir + comment-only CSS without spawning workers
             out_dir = Path(tmp) / "empty_bundle"
             with (
                 patch(
@@ -1986,23 +1722,12 @@ class TestSubsetterAndShaping(unittest.TestCase):
                 ),
             ):
                 r1 = slice_font(empty_tt, out_dir=out_dir, workers=2)
-            self.assertFalse(r1.cached)
             self.assertEqual(r1.built_files, [])
             self.assertEqual(r1.slice_specs, [])
             self.assertTrue(r1.css_path.is_file())
             self.assertTrue(r1.slices_dir.is_dir())
             self.assertEqual(list(r1.slices_dir.iterdir()), [])
             self.assertNotIn("@font-face", r1.css_text)
-
-            with patch(
-                "cleome._pipeline._export_woff2_slices_batch",
-                side_effect=AssertionError("Expected cache hit on empty-cmap font"),
-            ):
-                r2 = slice_font(empty_tt, out_dir=out_dir, workers=2)
-            self.assertTrue(r2.cached)
-            self.assertEqual(r2.built_files, [])
-            self.assertEqual(r2.css_text, r1.css_text)
-            self.assertEqual(r2.slices_dir, r1.slices_dir)
 
 
 if __name__ == "__main__":
