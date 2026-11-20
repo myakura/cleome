@@ -12,7 +12,7 @@ import hashlib
 import io
 import os
 import secrets
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from concurrent.futures import ProcessPoolExecutor
 from concurrent.futures.process import BrokenProcessPool
 from dataclasses import dataclass
@@ -416,6 +416,8 @@ def _export_woff2_slices_batch(
     *,
     is_woff_hints: list[bool | None] | None = None,
     prune_superseded: bool = True,
+    prevalidated_tasks: Sequence[Sequence[tuple[SliceSpec, list[int], str]]]
+    | None = None,
 ) -> list[list[BuiltSliceFile]]:
     """
     Generate `.woff2` slice files in `slices_dir` for one or more font variants using a single
@@ -426,42 +428,64 @@ def _export_woff2_slices_batch(
         raise ValueError(
             f"is_woff_hints length ({len(is_woff_hints)}) must match variants length ({len(variants)})"
         )
+    if prevalidated_tasks is not None and len(prevalidated_tasks) != len(variants):
+        raise ValueError(
+            f"prevalidated_tasks length ({len(prevalidated_tasks)}) must match variants length ({len(variants)})"
+        )
     if not variants:
         return []
     if config is None:
         config = SliceConfig()
 
-    _ensure_directory_creatable(slices_dir, "slices_dir")
-    slices_dir_resolved = slices_dir.resolve()
     hints = is_woff_hints if is_woff_hints is not None else [None] * len(variants)
-
     sources: list[tuple[bytes | Path, bool]] = []
     # (sort_weight, font_idx, spec_idx, cps, out_str)
     sortable_tasks: list[tuple[int, int, int, list[int], str]] = []
-    per_font_items: list[list[tuple[SliceSpec, str, str]]] = []
-    seen_out_paths: set[str] = set()
+    per_font_items: list[list[tuple[SliceSpec, str]]] = []
 
-    for font_idx, ((font_or_bytes, meta, slice_specs), woff_hint) in enumerate(
-        zip(variants, hints)
-    ):
-        sources.append(
-            _prepare_worker_source(font_or_bytes, meta, config, is_woff_hint=woff_hint)
-        )
-        font_items: list[tuple[SliceSpec, str, str]] = []
-        for spec_idx, (spec, cps) in enumerate(
-            _filter_active_slices(meta, slice_specs)
-        ):
-            fname, out_str = _validate_slice_output_path(
-                meta,
-                spec,
-                slices_dir,
-                slices_dir_resolved,
-                seen_out_paths,
-                filename_hash=config.filename_hash,
+    if prevalidated_tasks is not None:
+        for font_idx, (
+            (font_or_bytes, meta, _slice_specs),
+            woff_hint,
+            variant_tasks,
+        ) in enumerate(zip(variants, hints, prevalidated_tasks)):
+            sources.append(
+                _prepare_worker_source(
+                    font_or_bytes, meta, config, is_woff_hint=woff_hint
+                )
             )
-            sortable_tasks.append((-len(cps), font_idx, spec_idx, cps, out_str))
-            font_items.append((spec, fname, out_str))
-        per_font_items.append(font_items)
+            font_items: list[tuple[SliceSpec, str]] = []
+            for spec_idx, (spec, cps, out_str) in enumerate(variant_tasks):
+                sortable_tasks.append((-len(cps), font_idx, spec_idx, cps, out_str))
+                font_items.append((spec, out_str))
+            per_font_items.append(font_items)
+    else:
+        _ensure_directory_creatable(slices_dir, "slices_dir")
+        slices_dir_resolved = slices_dir.resolve()
+        seen_out_paths: set[str] = set()
+        for font_idx, ((font_or_bytes, meta, slice_specs), woff_hint) in enumerate(
+            zip(variants, hints)
+        ):
+            sources.append(
+                _prepare_worker_source(
+                    font_or_bytes, meta, config, is_woff_hint=woff_hint
+                )
+            )
+            font_items = []
+            for spec_idx, (spec, cps) in enumerate(
+                _filter_active_slices(meta, slice_specs)
+            ):
+                _fname, out_str = _validate_slice_output_path(
+                    meta,
+                    spec,
+                    slices_dir,
+                    slices_dir_resolved,
+                    seen_out_paths,
+                    filename_hash=config.filename_hash,
+                )
+                sortable_tasks.append((-len(cps), font_idx, spec_idx, cps, out_str))
+                font_items.append((spec, out_str))
+            per_font_items.append(font_items)
 
     slices_dir.mkdir(parents=True, exist_ok=True)
     if not sortable_tasks:
@@ -521,7 +545,7 @@ def _export_woff2_slices_batch(
     all_built: list[BuiltSliceFile] = []
     for (_, meta, _), font_items in zip(variants, per_font_items):
         built_files: list[BuiltSliceFile] = []
-        for spec, _base_fname, base_out_str in font_items:
+        for spec, base_out_str in font_items:
             final_fname, sz, ng = results_map[base_out_str]
             final_path = slices_dir / final_fname
             bf = BuiltSliceFile(

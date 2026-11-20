@@ -24,10 +24,7 @@ from cleome._font.subset import (
     _prune_superseded_hashed_slices,
     serialize_font_to_bytes,
 )
-from cleome._names import (
-    _split_hashed_stem,
-    _validate_filename_token,
-)
+from cleome._names import _split_hashed_stem
 from cleome._output.css import (
     _BLOCK_GLYPHS_RE,
     _CACHE_COMMENT_RE,
@@ -107,7 +104,7 @@ def _get_toolchain_versions() -> dict[str, str]:
 def _compute_cache_key(
     font_digests: list[str],
     metas: list[FontMetadata],
-    active_variant_plans: list[list[SliceSpec]],
+    active_variant_slices: list[list[tuple[SliceSpec, list[int], str]]],
     config: SliceConfig,
     *,
     family_name: str | None,
@@ -149,12 +146,12 @@ def _compute_cache_key(
                         "category": s.category,
                         "description": s.description,
                         "css_unicode_range": s.css_unicode_range,
-                        "cps": sorted(s.binary_codepoints),
+                        "cps": cps,
                     }
-                    for s in active_plan
+                    for s, cps, _ in active_slices
                 ],
             }
-            for m, active_plan in zip(metas, active_variant_plans)
+            for m, active_slices in zip(metas, active_variant_slices)
         ],
     }
     raw = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
@@ -167,7 +164,7 @@ def _try_load_cached_bundle(
     cache_key: str,
     metas: list[FontMetadata],
     variant_plans: list[list[SliceSpec]],
-    active_variant_plans: list[list[SliceSpec]],
+    active_variant_slices: list[list[tuple[SliceSpec, list[int], str]]],
     slice_specs: list[SliceSpec],
     config: SliceConfig,
     *,
@@ -200,8 +197,8 @@ def _try_load_cached_bundle(
             block_glyphs.append(int(bm.group("glyphs")))
 
     expected_block_count = sum(
-        len(m.styles_css) * len(active_plan)
-        for m, active_plan in zip(metas, active_variant_plans)
+        len(m.styles_css) * len(active_slices)
+        for m, active_slices in zip(metas, active_variant_slices)
     )
     if len(block_glyphs) != expected_block_count:
         return None
@@ -229,27 +226,23 @@ def _try_load_cached_bundle(
     out_hasher = hashlib.sha256()
 
     block_cursor = 0
-    for m, active_specs in zip(metas, active_variant_plans):
+    for m, active_slices in zip(metas, active_variant_slices):
         num_styles = len(m.styles_css)
-        n_specs = len(active_specs)
+        n_specs = len(active_slices)
         # First style block carries the glyph counts for this variant's active slices
         variant_glyph_counts = block_glyphs[block_cursor : block_cursor + n_specs]
         block_cursor += num_styles * n_specs
         variant_files: list[BuiltSliceFile] = []
 
-        for spec, glyph_count in zip(active_specs, variant_glyph_counts):
+        for (spec, _cps, base_fname), glyph_count in zip(
+            active_slices, variant_glyph_counts
+        ):
             if glyph_count <= 0:
                 return None
-            base_fname = _validate_filename_token(
-                spec.filename(m.slug, m.variant_suffix), "slice filename"
-            )
             if config.filename_hash:
                 expected_fname = hashed_by_stem.get(Path(base_fname).stem, "")
                 if not expected_fname:
                     return None
-                expected_fname = _validate_filename_token(
-                    expected_fname, "slice filename"
-                )
             else:
                 expected_fname = base_fname
             slice_path = slices_dir / expected_fname
@@ -391,7 +384,7 @@ def slice_fonts(
             out_dir,
             config,
             prepared.metas,
-            prepared.active_variant_plans,
+            prepared.active_variant_slices,
             css_filename=css_filename,
             css_path=css_path,
         )
@@ -400,7 +393,7 @@ def slice_fonts(
         cache_key = _compute_cache_key(
             font_digests,
             prepared.metas,
-            prepared.active_variant_plans,
+            prepared.active_variant_slices,
             config,
             family_name=family_name,
             slug=slug,
@@ -418,7 +411,7 @@ def slice_fonts(
                 cache_key,
                 prepared.metas,
                 prepared.variant_plans,
-                prepared.active_variant_plans,
+                prepared.active_variant_slices,
                 prepared.union_plan,
                 config,
                 resolved_locale=prepared.resolved_locale,
@@ -432,12 +425,7 @@ def slice_fonts(
 
         batch_variants: list[
             tuple[TTFont | bytes | Path | str, FontMetadata, list[SliceSpec]]
-        ] = [
-            (lf.export_source, m, variant_specs)
-            for lf, m, variant_specs in zip(
-                loaded_fonts, prepared.metas, prepared.active_variant_plans
-            )
-        ]
+        ] = [(lf.export_source, m, []) for lf, m in zip(loaded_fonts, prepared.metas)]
         woff_hints = [lf.is_woff_hint for lf in loaded_fonts]
         variant_built_lists = _export_woff2_slices_batch(
             batch_variants,
@@ -446,6 +434,7 @@ def slice_fonts(
             workers=workers,
             is_woff_hints=woff_hints,
             prune_superseded=False,
+            prevalidated_tasks=outputs.variant_slice_tasks,
         )
 
         fonts_and_files = list(zip(prepared.metas, variant_built_lists))

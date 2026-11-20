@@ -62,11 +62,11 @@ def _resolve_url_prefix(
         if not encoded_rel.startswith("."):
             return f"./{encoded_rel}/"
         return f"{encoded_rel}/"
-    subdir = config.slices_subdir.strip().strip("/")
-    if not subdir or subdir == ".":
+    subdir = config.slices_subdir
+    if subdir == ".":
         return "./"
     encoded_subdir = "/".join(
-        quote(part, safe="-._~:@!$&()*+,;=") for part in subdir.split("/") if part
+        quote(part, safe="-._~:@!$&()*+,;=") for part in subdir.split("/")
     )
     return f"./{encoded_subdir}/"
 
@@ -83,6 +83,7 @@ class _ResolvedOutputs:
     url_prefix: str
     total_active_slices: int
     preload_slices: list[dict[str, str]]
+    variant_slice_tasks: list[list[tuple[SliceSpec, list[int], str]]]
 
 
 def _validate_slice_output_path(
@@ -143,7 +144,7 @@ def _resolve_and_validate_outputs(
     out_dir: Path | str,
     config: SliceConfig,
     metas: Sequence[FontMetadata],
-    active_variant_plans: Sequence[Sequence[SliceSpec]],
+    active_variant_slices: Sequence[Sequence[tuple[SliceSpec, list[int], str]]],
     *,
     css_filename: str | None = None,
     css_path: Path | str | None = None,
@@ -172,8 +173,8 @@ def _resolve_and_validate_outputs(
     _ensure_directory_creatable(out_path, "out_dir")
     out_resolved = out_path.resolve()
 
-    subdir = config.slices_subdir.strip().rstrip("/")
-    slices_dir = out_path if (not subdir or subdir == ".") else (out_path / subdir)
+    subdir = config.slices_subdir
+    slices_dir = out_path if subdir == "." else (out_path / subdir)
     slices_resolved = slices_dir.resolve()
     if not slices_resolved.is_relative_to(out_resolved):
         raise ValueError(
@@ -212,29 +213,39 @@ def _resolve_and_validate_outputs(
 
     total_active_slices = 0
     preload_items: list[tuple[SliceSpec, str, str]] = []
-    seen_slice_paths: set[str] = set()
+    variant_slice_tasks: list[list[tuple[SliceSpec, list[int], str]]] = []
     hash_placeholder = "<hash8>" if config.filename_hash else ""
 
-    for m, active_plan in zip(metas, active_variant_plans):
-        for spec in active_plan:
-            _validate_slice_output_path(
-                m,
-                spec,
-                slices_dir,
-                slices_resolved,
-                seen_slice_paths,
-                filename_hash=config.filename_hash,
-                css_resolved=css_resolved,
-                css_path_for_err=resolved_css_path,
-            )
+    for m, active_slices in zip(metas, active_variant_slices):
+        variant_tasks: list[tuple[SliceSpec, list[int], str]] = []
+        for spec, cps, base_fname in active_slices:
+            slice_out = slices_dir / base_fname
+            slice_resolved = slice_out.resolve()
+            if not slice_resolved.is_relative_to(slices_resolved):
+                raise ValueError(
+                    f"Slice output path {slice_out!r} resolves outside slices_dir {slices_dir!r}"
+                )
+            if not config.filename_hash:
+                if slice_out.exists() and slice_out.is_dir():
+                    raise ValueError(
+                        f"Slice output path must be a file, not an existing directory: {slice_out!r}"
+                    )
+                if slice_resolved == css_resolved:
+                    raise ValueError(
+                        f"css_path {resolved_css_path!r} collides with planned slice output {slice_out!r}"
+                    )
+            variant_tasks.append((spec, cps, str(slice_out)))
             total_active_slices += 1
             preload_items.append(
                 (
                     spec,
                     m.variant_suffix,
-                    spec.filename(m.slug, m.variant_suffix, hash_placeholder),
+                    spec.filename(m.slug, m.variant_suffix, hash_placeholder)
+                    if hash_placeholder
+                    else base_fname,
                 )
             )
+        variant_slice_tasks.append(variant_tasks)
 
     preload_slices = _build_preload_slices(preload_items, url_prefix)
 
@@ -247,4 +258,5 @@ def _resolve_and_validate_outputs(
         url_prefix=url_prefix,
         total_active_slices=total_active_slices,
         preload_slices=preload_slices,
+        variant_slice_tasks=variant_slice_tasks,
     )
