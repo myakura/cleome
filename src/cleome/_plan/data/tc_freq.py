@@ -68,25 +68,26 @@ TC_HANZI_FREQ_CHARS: str = (
 
 HK_EXTRA_CANTONESE_CHARS: str = "𨋢𠵱噃吖噉揾𥄫𠺌𡃁𣈳𠻹𠹌"
 
-# 37 high-frequency Cantonese colloquial & HKSCS characters co-located at rank 1,201
-# (`hanzi-freq-13`) so written Traditional Chinese top-1,200 slices (`hanzi-freq-01..12`)
-# remain 100% aligned with `TC_HANZI_FREQ_CHARS[:1200]` while Cantonese colloquial prose
-# hits a single 70-char slice instead of 12 scattered tail slices.
+_TC_TOP_ALIGNED_COUNT: int = 1200
+
 HK_COLOCATED_CANTONESE_CHARS: str = (
     "嘅唔喺咗啲冇佢咁睇嘢嚟仲哋嗰畀揾諗攞揀傾呀喎咩咋嘛喇𨋢噉噃𡃁𥄫𠵱吖𠺌𣈳𠻹𠹌"
 )
 _HK_COLOCATED_SET: frozenset[str] = frozenset(HK_COLOCATED_CANTONESE_CHARS)
 
 HK_HANZI_FREQ_CHARS: str = (
-    TC_HANZI_FREQ_CHARS[:1200]
+    TC_HANZI_FREQ_CHARS[:_TC_TOP_ALIGNED_COUNT]
     + HK_COLOCATED_CANTONESE_CHARS
-    + "".join(c for c in TC_HANZI_FREQ_CHARS[1200:] if c not in _HK_COLOCATED_SET)
+    + "".join(
+        c
+        for c in TC_HANZI_FREQ_CHARS[_TC_TOP_ALIGNED_COUNT:]
+        if c not in _HK_COLOCATED_SET
+    )
 )
 
 TC_HANZI_FREQ_CODEPOINTS: tuple[int, ...] = tuple(ord(c) for c in TC_HANZI_FREQ_CHARS)
 HK_HANZI_FREQ_CODEPOINTS: tuple[int, ...] = tuple(ord(c) for c in HK_HANZI_FREQ_CHARS)
 
-# Python 3.15 (PEP 814) built-in immutable mappings from codepoint to 1-based frequency rank
 TC_HANZI_FREQ_RANK: frozendict[int, int] = frozendict(
     {cp: rank for rank, cp in enumerate(TC_HANZI_FREQ_CODEPOINTS, start=1)}
 )

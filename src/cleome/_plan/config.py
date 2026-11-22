@@ -29,32 +29,31 @@ def _validate_workers(workers: int | None) -> None:
 
 @dataclass(frozen=True, slots=True)
 class SliceConfig:
-    """Configuration parameters for dynamic unicode-range slicing."""
+    """Configuration parameters for dynamic unicode-range slicing.
 
-    # Target CJK slicing profile: "auto" (detect from family name & cmap), "jp", "kr", "sc", "tc", or "hk".
+    Attributes:
+        locale: Target CJK slicing profile (`"auto"`, `"jp"`, `"kr"`, `"sc"`, `"tc"`, or `"hk"`).
+        freq_chunks: Progressive `(chunk_size, num_chunks)` schedule for Tier 3 frequency-ranked
+            characters from rank 1 downward; remaining ranked characters use `freq_tail_chunk_size`.
+        freq_tail_chunk_size: Target character count per slice for remaining Tier 3 ranked characters.
+        rare_chunk_size: Target character count per slice for Tier 4 rare characters.
+        symbols_ext_chunk_size: Target character count per slice for Tier 2 `symbols-ext`.
+    """
+
     locale: str = "auto"
-
-    # Progressive (Inverted-Pyramid) chunk schedule for Tier 3 (frequency-ranked Kanji/Hanzi/Hangul):
-    # List of (chunk_size, num_chunks) from highest frequency (rank 1) downward.
-    # Any remaining frequency-ranked characters in the font's cmap after these chunks
-    # are sliced using `freq_tail_chunk_size`.
     freq_chunks: tuple[tuple[int, int], ...] = (
-        (200, 2),  # Rank 1..400: 200 chars x 2 slices
-        (80, 10),  # Rank 401..1200: 80 chars x 10 slices
+        (200, 2),
+        (80, 10),
     )
-    freq_tail_chunk_size: int = 70  # Rank 1201..N: ~70 chars/slice
-
-    # Target character count per slice for Tier 4 (rare Kanji/Hanzi/Hanja/Hangul) and Tier 2 (`symbols-ext`):
+    freq_tail_chunk_size: int = 70
     rare_chunk_size: int = 250
     symbols_ext_chunk_size: int = 350
 
-    # Subsetting & WOFF2 options:
     layout_closure: bool = True
     layout_features: tuple[str, ...] = ("*",)
     drop_tables: tuple[str, ...] = ()
     uvs_base_repair: bool = True
 
-    # CSS generation options:
     slices_subdir: str = "slices"
     url_prefix: str | None = None
     font_display: str = "swap"

@@ -13,7 +13,6 @@ from stixis import SerializationOptions, canonicalize
 from cleome._font.uvs import _collect_uvs_missing_base_additions
 from cleome._names import _validate_filename_token
 
-# OpenType OS/2.usWidthClass (1..9) to CSS font-stretch percentage (5 = 100% normal is omitted)
 OS2_WIDTH_CLASS_TO_CSS: frozendict[int, str] = frozendict(
     {
         1: "50%",
@@ -188,6 +187,122 @@ def _fmt_num(val: float) -> str:
     return f"{val:.2f}".rstrip("0").rstrip(".")
 
 
+def _detect_family_name(font: TTFont) -> str:
+    if "name" not in font:
+        return "Custom Font"
+    name_table = font["name"]
+    for name_id in (16, 1, 4):
+        rec = (
+            name_table.getName(name_id, 3, 1, 0x0409)
+            or name_table.getName(name_id, 3, 10, 0x0409)
+            or name_table.getName(name_id, 1, 0, 0)
+            or name_table.getDebugName(name_id)
+        )
+        if rec:
+            val = rec.toUnicode() if hasattr(rec, "toUnicode") else str(rec)
+            if val.strip():
+                return val.strip()
+    return "Custom Font"
+
+
+def _extract_fvar_axes(font: TTFont) -> dict[str, tuple[float, float, float]]:
+    if "fvar" not in font:
+        return {}
+    return {
+        ax.axisTag: (
+            float(ax.minValue),
+            float(ax.defaultValue),
+            float(ax.maxValue),
+        )
+        for ax in font["fvar"].axes
+    }
+
+
+def _detect_weight_css(
+    font: TTFont,
+    axes: dict[str, tuple[float, float, float]],
+    weight_override: str | None,
+) -> str:
+    if weight_override is not None:
+        return weight_override
+    if "wght" in axes:
+        w_min, _, w_max = axes["wght"]
+        if abs(w_min - w_max) < 1e-4:
+            return _fmt_num(w_min)
+        return f"{_fmt_num(w_min)} {_fmt_num(w_max)}"
+    if "OS/2" in font:
+        return str(int(font["OS/2"].usWeightClass))
+    return "400"
+
+
+def _detect_stretch_css(
+    font: TTFont,
+    axes: dict[str, tuple[float, float, float]],
+    *,
+    is_variable: bool,
+    stretch_override: str | None,
+) -> str | None:
+    if stretch_override is not None:
+        return stretch_override
+    if "wdth" in axes:
+        d_min, _, d_max = axes["wdth"]
+        if abs(d_min - d_max) < 1e-4:
+            return f"{_fmt_num(d_min)}%" if abs(d_min - 100.0) > 1e-4 else None
+        return f"{_fmt_num(d_min)}% {_fmt_num(d_max)}%"
+    if not is_variable and "OS/2" in font:
+        return OS2_WIDTH_CLASS_TO_CSS.get(int(font["OS/2"].usWidthClass))
+    return None
+
+
+def _detect_styles_css(
+    font: TTFont,
+    axes: dict[str, tuple[float, float, float]],
+    style_override: str | None,
+) -> tuple[str, ...]:
+    if style_override is not None:
+        return (style_override,)
+
+    has_ital = "ital" in axes
+    has_slnt = "slnt" in axes
+    slnt_oblique: str | None = None
+    slnt_has_zero = True
+    if has_slnt:
+        s_min, _, s_max = axes["slnt"]
+        if abs(s_min - s_max) < 1e-4:
+            if abs(s_min) >= 1e-4:
+                slnt_oblique = f"oblique {_fmt_num(-s_min)}deg"
+                slnt_has_zero = False
+        else:
+            lo_deg = min(-s_min, -s_max)
+            hi_deg = max(-s_min, -s_max)
+            slnt_oblique = f"oblique {_fmt_num(lo_deg)}deg {_fmt_num(hi_deg)}deg"
+            slnt_has_zero = lo_deg - 1e-4 <= 0.0 <= hi_deg + 1e-4
+
+    if has_ital or has_slnt:
+        ital_has_normal = (axes["ital"][0] < 0.5) if has_ital else True
+        ital_has_italic = (axes["ital"][2] >= 0.5) if has_ital else False
+        styles_list: list[str] = []
+        if ital_has_normal and slnt_has_zero:
+            styles_list.append("normal")
+        if ital_has_italic:
+            styles_list.append("italic")
+        if slnt_oblique is not None:
+            styles_list.append(slnt_oblique)
+        if not styles_list:
+            styles_list.append("normal")
+        return tuple(styles_list)
+
+    static_oblique = "OS/2" in font and bool(font["OS/2"].fsSelection & 0x0200)
+    static_italic = ("OS/2" in font and bool(font["OS/2"].fsSelection & 0x01)) or (
+        "post" in font and getattr(font["post"], "italicAngle", 0.0) != 0.0
+    )
+    if static_oblique:
+        return ("oblique",)
+    if static_italic:
+        return ("italic",)
+    return ("normal",)
+
+
 def extract_font_metadata(
     font: TTFont,
     *,
@@ -206,111 +321,14 @@ def extract_font_metadata(
         else ()
     )
 
-    # 1. Detect family name (prefer Typographic Family Name ID 16, then Family Name ID 1)
-    detected_family = "Custom Font"
-    if "name" in font:
-        name_table = font["name"]
-        for name_id in (16, 1, 4):
-            rec = (
-                name_table.getName(name_id, 3, 1, 0x0409)
-                or name_table.getName(name_id, 3, 10, 0x0409)
-                or name_table.getName(name_id, 1, 0, 0)
-                or name_table.getDebugName(name_id)
-            )
-            if rec:
-                val = rec.toUnicode() if hasattr(rec, "toUnicode") else str(rec)
-                if val.strip():
-                    detected_family = val.strip()
-                    break
-
-    family_name = family_override or detected_family
-
-    # 2. Detect Variable axes (`fvar`) vs Static (`OS/2`)
+    family_name = family_override or _detect_family_name(font)
     is_variable = "fvar" in font
-    axes: dict[str, tuple[float, float, float]] = {}
-    if is_variable:
-        for ax in font["fvar"].axes:
-            axes[ax.axisTag] = (
-                float(ax.minValue),
-                float(ax.defaultValue),
-                float(ax.maxValue),
-            )
-
-    # Weight
-    if weight_override is not None:
-        weight_css = weight_override
-    elif "wght" in axes:
-        w_min, _, w_max = axes["wght"]
-        if abs(w_min - w_max) < 1e-4:
-            weight_css = _fmt_num(w_min)
-        else:
-            weight_css = f"{_fmt_num(w_min)} {_fmt_num(w_max)}"
-    elif "OS/2" in font:
-        weight_css = str(int(font["OS/2"].usWeightClass))
-    else:
-        weight_css = "400"
-
-    # Stretch (wdth axis for Variable Fonts, or OS/2.usWidthClass for Static Fonts)
-    if stretch_override is not None:
-        stretch_css = stretch_override
-    elif "wdth" in axes:
-        d_min, _, d_max = axes["wdth"]
-        if abs(d_min - d_max) < 1e-4:
-            stretch_css = f"{_fmt_num(d_min)}%" if abs(d_min - 100.0) > 1e-4 else None
-        else:
-            stretch_css = f"{_fmt_num(d_min)}% {_fmt_num(d_max)}%"
-    elif not is_variable and "OS/2" in font:
-        stretch_css = OS2_WIDTH_CLASS_TO_CSS.get(int(font["OS/2"].usWidthClass))
-    else:
-        stretch_css = None
-
-    # Style (ital / slnt / OS/2 / post)
-    static_oblique = "OS/2" in font and bool(font["OS/2"].fsSelection & 0x0200)
-    static_italic = ("OS/2" in font and bool(font["OS/2"].fsSelection & 0x01)) or (
-        "post" in font and getattr(font["post"], "italicAngle", 0.0) != 0.0
+    axes = _extract_fvar_axes(font)
+    weight_css = _detect_weight_css(font, axes, weight_override)
+    stretch_css = _detect_stretch_css(
+        font, axes, is_variable=is_variable, stretch_override=stretch_override
     )
-    if style_override is not None:
-        styles_css: tuple[str, ...] = (style_override,)
-    else:
-        has_ital = "ital" in axes
-        has_slnt = "slnt" in axes
-        slnt_oblique: str | None = None
-        slnt_has_zero = True
-        if has_slnt:
-            s_min, _, s_max = axes["slnt"]
-            if abs(s_min - s_max) < 1e-4:
-                if abs(s_min) >= 1e-4:
-                    slnt_oblique = f"oblique {_fmt_num(-s_min)}deg"
-                    slnt_has_zero = False
-                else:
-                    slnt_oblique = None
-                    slnt_has_zero = True
-            else:
-                lo_deg = min(-s_min, -s_max)
-                hi_deg = max(-s_min, -s_max)
-                slnt_oblique = f"oblique {_fmt_num(lo_deg)}deg {_fmt_num(hi_deg)}deg"
-                slnt_has_zero = lo_deg - 1e-4 <= 0.0 <= hi_deg + 1e-4
-
-        if has_ital or has_slnt:
-            ital_has_normal = (axes["ital"][0] < 0.5) if has_ital else True
-            ital_has_italic = (axes["ital"][2] >= 0.5) if has_ital else False
-            styles_list: list[str] = []
-            if ital_has_normal and slnt_has_zero:
-                styles_list.append("normal")
-            if ital_has_italic:
-                styles_list.append("italic")
-            if slnt_oblique is not None:
-                styles_list.append(slnt_oblique)
-            if not styles_list:
-                styles_list.append("normal")
-            styles_css = tuple(styles_list)
-        elif static_oblique:
-            styles_css = ("oblique",)
-        elif static_italic:
-            styles_css = ("italic",)
-        else:
-            styles_css = ("normal",)
-
+    styles_css = _detect_styles_css(font, axes, style_override)
     style_css = styles_css[0]
     slug = slug_override or _slugify_family(family_name)
 

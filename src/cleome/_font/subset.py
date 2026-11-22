@@ -16,6 +16,7 @@ from collections.abc import Iterator
 from concurrent.futures import ProcessPoolExecutor
 from concurrent.futures.process import BrokenProcessPool
 from dataclasses import dataclass
+from enum import IntEnum
 from pathlib import Path
 
 from fontTools.subset import Options, Subsetter
@@ -37,6 +38,20 @@ from cleome._plan.config import (
 )
 
 
+class _OpenTypeNameID(IntEnum):
+    COPYRIGHT = 0
+    FAMILY = 1
+    SUBFAMILY = 2
+    UNIQUE_ID = 3
+    FULL_NAME = 4
+    VERSION = 5
+    POSTSCRIPT_NAME = 6
+    LICENSE_DESCRIPTION = 13
+    LICENSE_INFO_URL = 14
+    TYPOGRAPHIC_FAMILY = 16
+    TYPOGRAPHIC_SUBFAMILY = 17
+
+
 def _create_subset_options(
     layout_closure: bool = True,
     layout_features: tuple[str, ...] = ("*",),
@@ -45,16 +60,10 @@ def _create_subset_options(
     options = Options()
     options.flavor = "woff2"
     options.desubroutinize = False
-    # Retain specified layout features and all scripts so forward GSUB closure preserves
-    # intra-slice lookups (single-glyph substitutions `vert`/`vrt2`, proportional metrics
-    # `palt`/`vpal`/`halt`/`vhal`, kerning, ligatures, and `ccmp`/`mark`/`mkmk` composition
-    # when both base and mark reside in the same slice).
     options.layout_features = list(layout_features)
     options.layout_scripts = ["*"]
     options.layout_closure = layout_closure
-    # Preserve Copyright (0), Family/Subfamily/Version/PS (1..6), License Description (13),
-    # License Info URL (14), and Typographic Family/Subfamily (16, 17).
-    options.name_IDs = [0, 1, 2, 3, 4, 5, 6, 13, 14, 16, 17]
+    options.name_IDs = [int(name_id) for name_id in _OpenTypeNameID]
     options.name_legacy = True
     options.name_languages = ["*"]
     options.notdef_glyph = True
@@ -89,7 +98,14 @@ class _SubsetWorkerContext:
     filename_hash: bool = True
 
 
-# Per-worker state initialized inside child processes via ProcessPoolExecutor(initializer=...)
+@dataclass(frozen=True, slots=True)
+class _SliceTask:
+    font_idx: int
+    spec_idx: int
+    cps: list[int]
+    out_str: str
+
+
 _WORKER_CONTEXT: _SubsetWorkerContext | None = None
 
 
@@ -422,8 +438,7 @@ def _export_woff2_slices_batch(
     hints = is_woff_hints if is_woff_hints is not None else [None] * len(variants)
 
     sources: list[tuple[bytes | Path, bool]] = []
-    # (sort_weight, font_idx, spec_idx, cps, out_str)
-    sortable_tasks: list[tuple[int, int, int, list[int], str]] = []
+    tasks: list[_SliceTask] = []
     per_font_items: list[list[tuple[SliceSpec, str, str]]] = []
     seen_out_paths: set[str] = set()
 
@@ -445,18 +460,17 @@ def _export_woff2_slices_batch(
                 seen_out_paths,
                 filename_hash=config.filename_hash,
             )
-            sortable_tasks.append((-len(cps), font_idx, spec_idx, cps, out_str))
+            tasks.append(_SliceTask(font_idx, spec_idx, cps, out_str))
             font_items.append((spec, fname, out_str))
         per_font_items.append(font_items)
 
     slices_dir.mkdir(parents=True, exist_ok=True)
-    if not sortable_tasks:
+    if not tasks:
         return [[] for _ in variants]
 
-    # Schedule largest slices first with deterministic (font_idx, spec_idx) tie-breaking
-    sortable_tasks.sort(key=lambda item: (item[0], item[1], item[2]))
+    tasks.sort(key=lambda task: (-len(task.cps), task.font_idx, task.spec_idx))
     scheduled_tasks: list[tuple[int, list[int], str]] = [
-        (font_idx, cps, out_str) for _, font_idx, _, cps, out_str in sortable_tasks
+        (task.font_idx, task.cps, task.out_str) for task in tasks
     ]
 
     max_workers = (
