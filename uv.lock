@@ -76,7 +76,7 @@ wheels = [
 
 [[package]]
 name = "cleome"
-version = "0.6.0"
+version = "0.7.0"
 source = { editable = "." }
 dependencies = [
     { name = "brotli" },
@@ -95,7 +95,7 @@ dev = [
 requires-dist = [
     { name = "brotli", specifier = ">=1.2.1" },
     { name = "fonttools", extras = ["woff"], specifier = ">=4.67.0" },
-    { name = "stixis", specifier = ">=0.4.0,<0.5" },
+    { name = "stixis", specifier = ">=0.5.0,<0.6" },
 ]
 
 [package.metadata.requires-dev]
@@ -234,11 +234,11 @@ wheels = [
 
 [[package]]
 name = "stixis"
-version = "0.4.0"
+version = "0.5.0"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/5a/b2/88b0c88a2d805f1759dd14099c2967f5421090a3e35bd0966eb86d985e4b/stixis-0.4.0.tar.gz", hash = "sha256:1aec0139a1613f34d6c1e8d8c4acb3be380aada308802bd58fc164c79eeb92d8", size = 210610, upload-time = "2026-11-14T21:58:34.733Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/35/e8/18a7f807d51c65bfefd272a18b82c8d9ec16af2edc9774ce10b05c724bc9/stixis-0.5.0.tar.gz", hash = "sha256:f914146d846d413219e56c9e5fe267f5dd03e201732e6495b3ca08c923518f09", size = 201811, upload-time = "2026-11-22T01:05:21.278Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/a7/25/c076612ea80113d55eff69187c62444436669ff61dedcbfabee77288a0d0/stixis-0.4.0-py3-none-any.whl", hash = "sha256:b348c367e450d2a5dbc22455575b01cd88f71496c2543c7c19ae69d19389588b", size = 105579, upload-time = "2026-11-14T21:58:33.002Z" },
+    { url = "https://files.pythonhosted.org/packages/9d/49/afc8fc7399abe6086f41d7e72f2d611c0cec6fff90e9275e52fdfc3ab32c/stixis-0.5.0-py3-none-any.whl", hash = "sha256:549d2a5fa2b002beeeddf8a6251c2a55975cdad2b4df24d4f376e26c6e6dbe25", size = 100394, upload-time = "2026-11-22T01:05:19.59Z" },
 ]
 
 [[package]]
