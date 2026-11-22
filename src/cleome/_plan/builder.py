@@ -38,7 +38,6 @@ from cleome._plan.locale import (
 )
 
 _CLEOME_CSS_OPTIONS = SerializationOptions.cleome()
-# Maximum missing codepoints bridged in Tiers 1-2 (`cp - prev_end - 1 <= 0x7F`, i.e. `cp - prev_end <= 0x80`).
 _MAX_COMPACT_GAP = 0x7F
 
 
@@ -223,15 +222,12 @@ def _build_ideograph_slice_plan(
     core_cps: set[int] = set()
     sym_ui_cps: set[int] = set()
     sym_ext_cps: set[int] = set()
+    core_pred = is_tier1_kana_core if is_jp else is_tier1_cjk_core
     for cp in non_ideograph_cps:
-        # Check `is_tier1_cjk_core` before `is_tier1_latin` for Chinese profiles so Bopomofo tone marks
-        # (`U+02C7`, `U+02C9..02CB`, `U+02D9`) co-locate with Bopomofo letters in `cjk-core`.
-        if not is_jp and is_tier1_cjk_core(cp):
+        if core_pred(cp):
             core_cps.add(cp)
         elif is_tier1_latin(cp):
             latin_cps.add(cp)
-        elif is_jp and is_tier1_kana_core(cp):
-            core_cps.add(cp)
         elif is_tier2_symbols_ui(cp):
             sym_ui_cps.add(cp)
         else:
@@ -325,7 +321,6 @@ def _build_kr_slice_plan(all_cps: set[int], config: SliceConfig) -> list[SliceSp
     rare_hangul_sorted = sorted(hangul_syl_cps - tier3_hangul_set)
     rare_hanja_sorted = sorted(hanja_cps)
 
-    # Tier 4a: Rare Hanja (1-token hex range per Unicode ideograph region)
     slices: list[SliceSpec] = _build_rare_ideograph_slices(
         rare_hanja_sorted,
         config,
@@ -333,7 +328,6 @@ def _build_kr_slice_plan(all_cps: set[int], config: SliceConfig) -> list[SliceSp
         label="Rare/Extended Hanja",
     )
 
-    # Tier 4b: Rare Hangul Syllables (U+AC00..D7A3, 1-token hex range, shadowed by Tier 3 hangul-freq)
     rare_hangul_chunks = _chunk_sorted_codepoints(
         rare_hangul_sorted, config.rare_chunk_size
     )

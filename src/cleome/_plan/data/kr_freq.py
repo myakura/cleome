@@ -45,7 +45,6 @@ KR_HANGUL_FREQ_CHARS: str = (
 
 KR_HANGUL_FREQ_CODEPOINTS: tuple[int, ...] = tuple(ord(c) for c in KR_HANGUL_FREQ_CHARS)
 
-# Python 3.15 (PEP 814) built-in immutable mapping from codepoint to 1-based frequency rank
 KR_HANGUL_FREQ_RANK: frozendict[int, int] = frozendict(
     {cp: rank for rank, cp in enumerate(KR_HANGUL_FREQ_CODEPOINTS, start=1)}
 )
